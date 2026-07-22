@@ -1,0 +1,26 @@
+# voidshell — Caddy config (reverse proxy + automatic HTTPS)
+#
+# 1. Replace example.com with your domain.
+# 2. Copy this to /etc/caddy/Caddyfile on the droplet.
+# 3. sudo systemctl reload caddy
+
+example.com {
+	root * /var/www/voidshell
+	encode zstd gzip
+
+	# Single-page shell: any unknown path falls back to index.html.
+	try_files {path} /index.html
+	file_server
+
+	# Vite emits content-hashed files in /assets — safe to cache forever.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# LATER: when you add a key-holding backend on localhost:3000, uncomment:
+	# reverse_proxy /api/* localhost:3000
+}
