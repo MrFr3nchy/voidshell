@@ -90,6 +90,10 @@ export const terminal: VoidModule = {
           input.value = "";
         });
 
+        // render() runs before the surface is mounted, so `autofocus` can miss.
+        // Grab focus on the next frame, once the input is actually in the DOM.
+        requestAnimationFrame(() => input.focus());
+
         return () => root.replaceChildren();
       },
     });

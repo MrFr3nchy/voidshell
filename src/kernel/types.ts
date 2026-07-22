@@ -14,9 +14,6 @@ export interface Vec3 {
   z: number;
 }
 
-/** The kinds of celestial body the world can hold. */
-export type BodyKind = "sun" | "moon" | "planet";
-
 /**
  * A surface is "a thing that wants to exist in space and show some DOM."
  * The kernel tracks surfaces; the compositor gives them a body.
@@ -56,14 +53,10 @@ export interface Compositor {
   init(mounts: { gl: HTMLElement; overlay: HTMLElement }): void | Promise<void>;
   /** Give a surface a body in the world. Returns a disposer. */
   mountSurface(surface: Surface): () => void;
+  /** Bring an existing surface forward and focus it (used on singleton re-launch). */
+  focusSurface?(id: string): void;
   /** The world can be mutated by modules (fog, sky, gravity...). Free-form. */
   applyWorldPatch?(patch: Record<string, unknown>): void;
-  /** Spawn a celestial body. Returns its id. */
-  spawnBody?(kind: BodyKind): string;
-  /** Anchor a surface onto a body so it rides along, or pass null to release it. */
-  attachSurface?(surfaceId: string, bodyId: string | null): void;
-  /** Everything currently orbiting out there. */
-  listBodies?(): { id: string; kind: BodyKind }[];
   /** Per-frame hook if the compositor animates. */
   start?(): void;
   dispose(): void;
@@ -80,6 +73,11 @@ export interface ModuleManifest {
   kind: "app" | "world" | "service";
   /** A single glyph shown in the radial launcher. Keep it weird. */
   glyph?: string;
+  /**
+   * If false, launching again spawns another instance. Defaults to true:
+   * re-launching a running app focuses the existing window instead of cloning it.
+   */
+  singleton?: boolean;
   version?: string;
 }
 
@@ -117,16 +115,8 @@ export interface KernelContext {
   /** Open a window into the world. */
   openSurface(req: SurfaceRequest): Surface;
   closeSurface(id: string): void;
-  /** Every surface currently open — for launchers, task lists, merge pickers. */
-  openSurfaces(): { id: string; title: string }[];
   /** Ask the active compositor to mutate the world. */
   patchWorld(patch: Record<string, unknown>): void;
-  /** Spawn a celestial body; returns its id (empty string if unsupported). */
-  spawnBody(kind: BodyKind): string;
-  /** Merge a window onto a body so it rides along, or null to release it. */
-  attachSurface(surfaceId: string, bodyId: string | null): void;
-  /** The bodies currently in the sky. */
-  listBodies(): { id: string; kind: BodyKind }[];
   /** Launch another module by id (e.g. terminal launching a viewer). */
   launch(moduleId: string): void;
   /** Everything currently registered — for launchers, task lists, etc. */

@@ -1,7 +1,6 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
 import type {
-  BodyKind,
   Compositor,
   KernelContext,
   ModuleManifest,
@@ -9,6 +8,9 @@ import type {
   SurfaceRequest,
   VoidModule,
 } from "./types";
+
+/** Hard backstop so a stuck key or a bug can never spawn infinite windows. */
+const MAX_SURFACES = 24;
 
 let surfaceCounter = 0;
 
@@ -28,6 +30,8 @@ export class Kernel {
   private deactivators = new Map<string, () => void>();
   private surfaces = new Map<string, Surface>();
   private surfaceDisposers = new Map<string, () => void>();
+  /** The module currently inside its launch() call, so new surfaces get tagged. */
+  private activeModuleId: string | null = null;
 
   constructor(compositor: Compositor) {
     this.compositor = compositor;
@@ -45,12 +49,7 @@ export class Kernel {
       },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
-      openSurfaces: () =>
-        [...this.surfaces.values()].map((s) => ({ id: s.id, title: s.title })),
       patchWorld: (patch) => this.compositor.applyWorldPatch?.(patch),
-      spawnBody: (kind: BodyKind) => this.compositor.spawnBody?.(kind) ?? "",
-      attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
-      listBodies: () => this.compositor.listBodies?.() ?? [],
       launch: (id) => this.launch(id),
       registry: () => [...this.modules.values()].map((m) => m.manifest),
     };
@@ -80,7 +79,33 @@ export class Kernel {
   launch(moduleId: string): void {
     const mod = this.modules.get(moduleId);
     if (!mod) return console.warn(`[kernel] no module "${moduleId}"`);
-    mod.launch?.(this.context());
+
+    // Singleton by default: re-launching a running app focuses its existing
+    // window instead of spawning a clone. Opt out with manifest.singleton = false.
+    if (mod.manifest.singleton !== false) {
+      const existing = [...this.surfaces.values()].find(
+        (s) => s.moduleId === moduleId
+      );
+      if (existing) {
+        this.compositor.focusSurface?.(existing.id);
+        this.bus.emit("module.focused", { id: moduleId, surface: existing.id });
+        return;
+      }
+    }
+
+    // Hard backstop against runaway spawning (stuck Enter, loops, etc.).
+    if (this.surfaces.size >= MAX_SURFACES) {
+      console.warn(`[kernel] surface limit (${MAX_SURFACES}) reached; not opening more`);
+      this.bus.emit("kernel.limit", { max: MAX_SURFACES });
+      return;
+    }
+
+    this.activeModuleId = moduleId;
+    try {
+      mod.launch?.(this.context());
+    } finally {
+      this.activeModuleId = null;
+    }
     this.bus.emit("module.launched", { id: moduleId });
   }
 
@@ -95,7 +120,7 @@ export class Kernel {
 
     const surface: Surface = {
       id,
-      moduleId: "unknown",
+      moduleId: this.activeModuleId ?? "unknown",
       title: req.title,
       element,
       width: req.width ?? 420,
