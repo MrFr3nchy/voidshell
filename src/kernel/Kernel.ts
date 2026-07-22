@@ -1,6 +1,7 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
 import type {
+  BodyKind,
   Compositor,
   KernelContext,
   ModuleManifest,
@@ -44,7 +45,12 @@ export class Kernel {
       },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
+      openSurfaces: () =>
+        [...this.surfaces.values()].map((s) => ({ id: s.id, title: s.title })),
       patchWorld: (patch) => this.compositor.applyWorldPatch?.(patch),
+      spawnBody: (kind: BodyKind) => this.compositor.spawnBody?.(kind) ?? "",
+      attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
+      listBodies: () => this.compositor.listBodies?.() ?? [],
       launch: (id) => this.launch(id),
       registry: () => [...this.modules.values()].map((m) => m.manifest),
     };

@@ -7,9 +7,9 @@ interface SpawnerDeps {
 
 /**
  * No taskbar, no dock, no start menu. You summon a constellation of the
- * installed apps around a center point and pick one. Toggle with the ◎ button
- * or the Space key. Only "app" modules surface here — world and service
- * modules stay invisible, exactly like daemons.
+ * installed apps and pick one. The nodes fan out in an upward arc above the
+ * core button so they never run off the bottom of the viewport, however many
+ * apps are installed. Toggle with the button or the Space key.
  */
 export function createSpawner(hud: HTMLElement, deps: SpawnerDeps): void {
   const root = document.createElement("div");
@@ -18,14 +18,14 @@ export function createSpawner(hud: HTMLElement, deps: SpawnerDeps): void {
   const summon = document.createElement("button");
   summon.className = "spawner-core";
   summon.setAttribute("aria-label", "Summon apps");
-  summon.textContent = "◎";
+  summon.textContent = "\u25ce";
 
   const ring = document.createElement("div");
   ring.className = "spawner-ring";
 
   const hint = document.createElement("div");
   hint.className = "spawner-hint";
-  hint.textContent = "space to summon · drag the void to look around";
+  hint.textContent = "space to summon \u00b7 drag the void to look around";
 
   root.append(ring, summon, hint);
   hud.appendChild(root);
@@ -36,15 +36,21 @@ export function createSpawner(hud: HTMLElement, deps: SpawnerDeps): void {
     ring.replaceChildren();
     const apps = deps.registry().filter((m) => m.kind === "app");
     const n = apps.length;
+    const radius = 118;
+    // Fan across an upward arc centred on straight-up (-90deg). Capped below a
+    // half-turn so the outermost nodes never dip past horizontal.
+    const spread = Math.min(Math.PI * 0.92, 0.5 * Math.PI + (n - 1) * 0.34);
+    const start = -Math.PI / 2 - spread / 2;
+
     apps.forEach((m, i) => {
-      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const radius = 96;
+      const t = n === 1 ? 0.5 : i / (n - 1);
+      const angle = start + t * spread;
       const node = document.createElement("button");
       node.className = "spawner-node";
-      node.style.setProperty("--x", `${Math.cos(angle) * radius}px`);
-      node.style.setProperty("--y", `${Math.sin(angle) * radius}px`);
+      node.style.setProperty("--x", `${(Math.cos(angle) * radius).toFixed(1)}px`);
+      node.style.setProperty("--y", `${(Math.sin(angle) * radius).toFixed(1)}px`);
       node.title = m.name;
-      node.innerHTML = `<span class="node-glyph">${m.glyph ?? "·"}</span><span class="node-name">${m.name}</span>`;
+      node.innerHTML = `<span class="node-glyph">${m.glyph ?? "\u00b7"}</span><span class="node-name">${m.name}</span>`;
       node.addEventListener("click", () => {
         deps.launch(m.id);
         toggle(false);

@@ -6,12 +6,15 @@ import { createSpawner } from "./ui/spawner";
 import { terminal } from "./modules/terminal";
 import { chronos } from "./modules/chronos";
 import { auroraForge } from "./modules/aurora-forge";
+import { cosmos } from "./modules/cosmos";
 
 async function main() {
   const gl = document.getElementById("void")!;
   const hud = document.getElementById("hud")!;
 
-  // The CSS3D panel layer sits above the WebGL canvas, below the HUD.
+  // The panel overlay sits above the WebGL canvas, below the HUD. It ignores
+  // pointer events itself so drags on empty space reach the canvas; the panels
+  // inside it re-enable pointer events and are fully interactive DOM.
   const overlay = document.createElement("div");
   overlay.id = "panel-layer";
   document.body.insertBefore(overlay, hud);
@@ -22,7 +25,11 @@ async function main() {
   const compositor = new ThreeCompositor();
   const kernel = new Kernel(compositor);
 
-  kernel.register(terminal).register(chronos).register(auroraForge);
+  kernel
+    .register(terminal)
+    .register(chronos)
+    .register(auroraForge)
+    .register(cosmos);
 
   // Panels emit a DOM event when their close button is hit; route it home.
   window.addEventListener("voidshell:close-surface", (e) => {
