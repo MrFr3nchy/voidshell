@@ -7,6 +7,10 @@
  *   npm i --no-save jsdom @types/jsdom
  *   npx esbuild tools/smoke.mts --bundle --platform=node --format=esm \
  *     --outfile=smoke.mjs --external:jsdom && node smoke.mjs && rm smoke.mjs
+ *
+ * jsdom has no canvas backend, so the ambient apps log one "not implemented"
+ * notice each and mount an inert canvas. That's the intended fallback path in
+ * `mountStage` — no 2D context means no resize observer and no frame loop.
  */
 import { JSDOM } from "jsdom";
 
@@ -44,6 +48,11 @@ const { vitals } = await import("../src/modules/vitals");
 const { terminal } = await import("../src/modules/terminal");
 const { chronos } = await import("../src/modules/chronos");
 const { cosmos } = await import("../src/modules/cosmos");
+const { cradle } = await import("../src/modules/cradle");
+const { driftfield } = await import("../src/modules/driftfield");
+const { sandbox } = await import("../src/modules/sandbox");
+const { harmonograph } = await import("../src/modules/harmonograph");
+const { lunaria } = await import("../src/modules/lunaria");
 const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
 const { createAppDrawer } = await import("../src/ui/appDrawer");
 const { createPalette } = await import("../src/ui/palette");
@@ -122,19 +131,26 @@ kernel
   .register(settings)
   .register(dashboards)
   .register(notes)
-  .register(vitals);
+  .register(vitals)
+  .register(cradle)
+  .register(driftfield)
+  .register(sandbox)
+  .register(harmonograph)
+  .register(lunaria);
+
+const MODULE_COUNT = 15;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
 await kernel.boot({ gl, overlay: hud, hud });
 const ctx = kernel.context();
 
-check("modules registered", ctx.registry().length === 10);
+check("modules registered", ctx.registry().length === MODULE_COUNT);
 check("world patches flushed at boot", patches.length > 0);
 check("settings registry populated", ctx.settings().length >= 20);
 check(
   "settings cover every group",
-  ["Appearance", "Launcher", "World", "System", "Links"].every((grp) =>
+  ["Appearance", "Launcher", "World", "System", "Links", "Apps"].every((grp) =>
     ctx.settings().some((d) => d.group === grp)
   )
 );
@@ -165,7 +181,10 @@ createToasts(hud, ctx);
 
 check("launcher slots resolve", resolveSlots(ctx).length === 6);
 check("ring rendered nodes", hud.querySelectorAll(".spawner-node").length === 7);
-check("drawer listed every module", hud.querySelectorAll(".drawer-tile").length === 10);
+check(
+  "drawer listed every module",
+  hud.querySelectorAll(".drawer-tile").length === MODULE_COUNT
+);
 check("palette listed rows", hud.querySelectorAll(".palette-row").length > 0);
 
 // Settings must render a control for every def in the active group.
@@ -208,6 +227,10 @@ check("session recorded", JSON.stringify(ctx.state.get("system.session", [])).le
 // Notes actually persist their text.
 ctx.state.set("notes.doc.test", "hello void");
 check("note text stored", ctx.state.get("notes.doc.test", "") === "hello void");
+
+// The moon is computed, not fetched — so it must answer without a network.
+const moonRow = hud.ownerDocument.querySelector(".luna-value");
+check("lunaria reported a phase", (moonRow?.textContent ?? "").length > 1);
 
 // Closing everything must not throw.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
