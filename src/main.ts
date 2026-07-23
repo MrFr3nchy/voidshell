@@ -27,6 +27,9 @@ import { ripple } from "./modules/ripple";
 import { flock } from "./modules/flock";
 import { orrery } from "./modules/orrery";
 import { lavalamp } from "./modules/lavalamp";
+import { turmite } from "./modules/turmite";
+import { chaos } from "./modules/chaos";
+import { sunclock } from "./modules/sunclock";
 
 async function main() {
   const gl = document.getElementById("void")!;
@@ -68,7 +71,10 @@ async function main() {
     .register(ripple)
     .register(flock)
     .register(orrery)
-    .register(lavalamp);
+    .register(lavalamp)
+    .register(turmite)
+    .register(chaos)
+    .register(sunclock);
 
   // Panels emit a DOM event when their close button is hit; route it home.
   window.addEventListener("voidshell:close-surface", (e) => {

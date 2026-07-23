@@ -28,10 +28,12 @@
   touch-action: none;
 }
 
-.cradle-canvas {
+.cradle-canvas,
+.chaos-canvas {
   cursor: grab;
 }
-.cradle-canvas:active {
+.cradle-canvas:active,
+.chaos-canvas:active {
   cursor: grabbing;
 }
 .drift-canvas,
@@ -75,7 +77,7 @@
   background: color-mix(in srgb, var(--cyan) 14%, transparent);
 }
 
-/* ---------- Readout rows (lunaria, orrery) ---------- */
+/* ---------- Readout rows (lunaria, orrery, chaos, sunclock) ---------- */
 .stage-facts {
   flex: none;
   display: flex;
