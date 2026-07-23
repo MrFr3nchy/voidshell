@@ -2,7 +2,8 @@
  * A two-tone volumetric aurora painted on the inside of a giant sphere.
  * FBM noise drifts over time; the palette lerps between a cool and a warm
  * pole so the void never reads as a flat black background. Uniforms are
- * exposed so a "world" module can retune the whole sky at runtime.
+ * exposed so a "world" module can retune the whole sky at runtime — the sky
+ * is a setting, and the setting is just a uniform.
  */
 export const nebulaVertex = /* glsl */ `
   varying vec3 vDir;
@@ -18,6 +19,8 @@ export const nebulaFragment = /* glsl */ `
 
   uniform float uTime;
   uniform float uIntensity;
+  uniform float uStars;
+  uniform float uGrain;
   uniform vec3 uColorCool;
   uniform vec3 uColorWarm;
   uniform vec3 uColorVoid;
@@ -63,8 +66,13 @@ export const nebulaFragment = /* glsl */ `
     float band = exp(-abs(dir.y) * 3.0) * 0.15 * uIntensity;
     col += aurora * band;
 
-    float star = step(0.997, hash(floor(dir * 320.0)));
-    col += vec3(star) * 0.6;
+    // uStars 0..1 walks the threshold from "empty sky" to "absurd sky".
+    float cut = mix(1.0, 0.988, clamp(uStars, 0.0, 1.0));
+    float star = step(cut, hash(floor(dir * 320.0)));
+    col += vec3(star) * 0.6 * step(0.001, uStars);
+
+    // A whisper of film grain keeps the gradients from banding on wide screens.
+    col += (hash(dir * 900.0 + uTime) - 0.5) * uGrain;
 
     gl_FragColor = vec4(col, 1.0);
   }
