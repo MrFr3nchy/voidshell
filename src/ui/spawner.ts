@@ -26,7 +26,7 @@ export function createSpawner(hud: HTMLElement, deps: SpawnerDeps): void {
   const hint = document.createElement("div");
   hint.className = "spawner-hint";
   hint.textContent =
-    "space to summon \u00b7 drag the void to look around \u00b7 drag a title bar to move \u00b7 scroll to push away";
+    "space to summon \u00b7 right-click the void for new files \u00b7 drag titles to move \u00b7 scroll for depth";
 
   root.append(ring, summon, hint);
   hud.appendChild(root);

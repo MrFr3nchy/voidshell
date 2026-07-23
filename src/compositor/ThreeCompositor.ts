@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { BodyKind, Compositor, Surface } from "../kernel/types";
+import type { AnchorHandle, BodyKind, Compositor, Surface, Vec3 } from "../kernel/types";
 import { nebulaFragment, nebulaVertex } from "../world/nebulaShader";
 
 interface PanelEntry {
@@ -9,6 +9,14 @@ interface PanelEntry {
   bodyId: string | null;
   /** World-space offset from a body when merged. */
   offset: THREE.Vector3;
+  /** Monotonic counter; the highest wins the z-order fight when focused. */
+  focusOrder: number;
+}
+
+/** A piece of DOM pinned to a world position — desktop icons and the like. */
+interface AnchorEntry {
+  el: HTMLElement;
+  anchor: THREE.Vector3;
 }
 
 interface BodyEntry {
@@ -35,6 +43,16 @@ const MAX_DEPTH = 2200;
 // stays legible rather than vanishing.
 const FADE_START = 700;
 const FADE_RANGE = 1400;
+
+/** Which edges a panel can be dragged by. */
+type ResizeAxis = "e" | "s" | "se";
+const RESIZE_AXES: ResizeAxis[] = ["e", "s", "se"];
+
+// Logical panel bounds, before the distance scale is applied.
+const MIN_PANEL_W = 260;
+const MIN_PANEL_H = 150;
+const MAX_PANEL_W = 1600;
+const MAX_PANEL_H = 1100;
 
 /**
  * The spectacle compositor.
@@ -66,8 +84,10 @@ export class ThreeCompositor implements Compositor {
   };
 
   private panels = new Map<string, PanelEntry>();
+  private anchors = new Set<AnchorEntry>();
   private bodies = new Map<string, BodyEntry>();
   private bodyCounter = 0;
+  private focusCounter = 0;
 
   // Camera rig: drag-only. The camera never moves on its own — ambient motion
   // lives in the world (nebula, dust, orbiting bodies) instead, so panels stay
@@ -162,6 +182,16 @@ export class ThreeCompositor implements Compositor {
     body.appendChild(surface.element);
 
     panel.append(bar, body);
+
+    // Resize grips, appended last so they stack above the panel content.
+    const grips = {} as Record<ResizeAxis, HTMLElement>;
+    for (const axis of RESIZE_AXES) {
+      const grip = document.createElement("div");
+      grip.className = `vs-resize vs-resize-${axis}`;
+      grips[axis] = grip;
+      panel.appendChild(grip);
+    }
+
     this.overlay.appendChild(panel);
 
     // Anchor the new panel in front of wherever the camera is currently looking
@@ -186,10 +216,24 @@ export class ThreeCompositor implements Compositor {
       anchor,
       bodyId: null,
       offset: new THREE.Vector3(),
+      focusOrder: ++this.focusCounter,
     });
+
+    // Click anywhere in a window to raise it. Capture phase so it still fires
+    // when the click is consumed by content inside the panel.
+    panel.addEventListener(
+      "pointerdown",
+      () => {
+        for (const other of this.panels.values()) other.el.classList.remove("focused");
+        panel.classList.add("focused");
+        this.focusSurface(surface.id);
+      },
+      true
+    );
 
     this.bindPanelDrag(surface.id, bar, close);
     this.bindPanelDepth(surface.id, panel);
+    this.bindPanelResize(surface.id, panel, grips);
 
     requestAnimationFrame(() => panel.classList.replace("materializing", "active"));
 
@@ -205,6 +249,50 @@ export class ThreeCompositor implements Compositor {
       panel.classList.add("dissolving");
       setTimeout(() => panel.remove(), 320);
     };
+  }
+
+  /**
+   * Pin arbitrary DOM to a world position. Shares the projection pass with
+   * panels but skips all the window chrome — this is what desktop icons ride
+   * on, so they live in the void exactly like windows do rather than being
+   * stuck to the screen in a separate 2D plane.
+   */
+  mountAnchored(el: HTMLElement, anchor: Vec3): AnchorHandle {
+    const entry: AnchorEntry = {
+      el,
+      anchor: new THREE.Vector3(anchor.x, anchor.y, anchor.z),
+    };
+    this.overlay.appendChild(el);
+    this.anchors.add(entry);
+    return {
+      setAnchor: (p) => entry.anchor.set(p.x, p.y, p.z),
+      getAnchor: () => ({ x: entry.anchor.x, y: entry.anchor.y, z: entry.anchor.z }),
+      dispose: () => {
+        this.anchors.delete(entry);
+        el.remove();
+      },
+    };
+  }
+
+  /** A point `dist` units straight ahead of the camera. */
+  focalPoint(dist = 620): Vec3 {
+    const v = new THREE.Vector3(0, 0, -1)
+      .applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, "YXZ"))
+      .multiplyScalar(dist)
+      .add(this.camera.position);
+    return { x: v.x, y: v.y, z: v.z };
+  }
+
+  screenToWorld(x: number, y: number, dist: number): Vec3 {
+    const v = new THREE.Vector3();
+    this.anchorFromScreen(v, x, y, dist);
+    return { x: v.x, y: v.y, z: v.z };
+  }
+
+  /** Bring a surface to the front of the stack without moving it in space. */
+  focusSurface(id: string): void {
+    const p = this.panels.get(id);
+    if (p) p.focusOrder = ++this.focusCounter;
   }
 
   applyWorldPatch(patch: Record<string, unknown>): void {
@@ -312,8 +400,35 @@ export class ThreeCompositor implements Compositor {
 
       this.renderer.render(this.scene, this.camera);
       this.projectPanels();
+      this.projectAnchors();
     };
     loop();
+  }
+
+  /**
+   * Desktop icons and other bare anchors. Simpler than panels: no depth
+   * control, no fade, and they sit below every window so a dragged file never
+   * hides behind an icon.
+   */
+  private projectAnchors(): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    for (const a of this.anchors) {
+      this.tmpCam.copy(a.anchor).applyMatrix4(this.camera.matrixWorldInverse);
+      if (this.tmpCam.z > -1) {
+        a.el.style.display = "none";
+        continue;
+      }
+      a.el.style.display = "";
+
+      const ndc = a.anchor.clone().project(this.camera);
+      const dist = a.anchor.distanceTo(this.camera.position);
+      const scale = Math.max(0.45, Math.min(1.35, 700 / dist));
+      a.el.style.left = `${((ndc.x * 0.5 + 0.5) * w).toFixed(1)}px`;
+      a.el.style.top = `${((-ndc.y * 0.5 + 0.5) * h).toFixed(1)}px`;
+      a.el.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+      a.el.style.zIndex = `${Math.max(0, Math.round(50000 - dist))}`;
+    }
   }
 
   /** Place every panel's DOM at the screen projection of its 3D anchor. */
@@ -352,7 +467,10 @@ export class ThreeCompositor implements Compositor {
 
       // Stack by real depth so a near panel always occludes a far one, and fade
       // distant panels into the void so depth reads as depth, not just size.
-      p.el.style.zIndex = `${Math.max(0, Math.round(100000 - dist))}`;
+      // Focus wins over depth: clicking a window raises it, as in any OS, and
+      // the focusOrder tiebreak keeps successive clicks stacking predictably.
+      const depthZ = Math.max(0, Math.round(100000 - dist));
+      p.el.style.zIndex = `${depthZ + p.focusOrder * 200000}`;
       // Set as a custom property, not inline opacity: the materialize/dissolve
       // class rules are more specific and so still win during those animations.
       const fade = 1 - Math.min(0.55, Math.max(0, (dist - FADE_START) / FADE_RANGE));
@@ -452,6 +570,89 @@ export class ThreeCompositor implements Compositor {
     const b = this.bodies.get(p.bodyId);
     if (b) p.anchor.copy(b.position).add(p.offset);
     p.bodyId = null;
+  }
+
+  /**
+   * Drag-to-resize from the right edge, bottom edge, or corner.
+   *
+   * Two things make this less trivial than setting width/height. The panel is
+   * drawn at a distance-dependent scale, so a drag of N screen pixels is
+   * N/scale *logical* pixels. And the panel is centred on its anchor, so
+   * growing it would push out in both directions — to keep the top-left corner
+   * pinned where the user sees it, the anchor has to move by half the growth.
+   */
+  private bindPanelResize(
+    id: string,
+    panel: HTMLElement,
+    grips: Record<ResizeAxis, HTMLElement>
+  ): void {
+    for (const axis of RESIZE_AXES) {
+      const grip = grips[axis];
+      let resizing = false;
+      let startX = 0;
+      let startY = 0;
+      let startW = 0;
+      let startH = 0;
+      let centerX = 0;
+      let centerY = 0;
+      let scale = 1;
+      let dist = 0;
+
+      grip.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        const p = this.panels.get(id);
+        if (!p) return;
+
+        const rect = panel.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startW = panel.offsetWidth;
+        startH = panel.offsetHeight;
+        centerX = rect.left + rect.width / 2;
+        centerY = rect.top + rect.height / 2;
+
+        // offsetWidth is the layout size; rect.width includes the scale.
+        scale = startW > 0 ? rect.width / startW : 1;
+        dist = p.anchor.distanceTo(this.camera.position);
+
+        resizing = true;
+        grip.setPointerCapture(e.pointerId);
+        panel.classList.add("resizing");
+        e.preventDefault();
+        e.stopPropagation();
+      });
+
+      grip.addEventListener("pointermove", (e) => {
+        if (!resizing) return;
+        const p = this.panels.get(id);
+        if (!p) return;
+
+        const wantW = axis === "s" ? startW : startW + (e.clientX - startX) / scale;
+        const wantH = axis === "e" ? startH : startH + (e.clientY - startY) / scale;
+        const w = Math.max(MIN_PANEL_W, Math.min(MAX_PANEL_W, wantW));
+        const h = Math.max(MIN_PANEL_H, Math.min(MAX_PANEL_H, wantH));
+
+        panel.style.width = `${Math.round(w)}px`;
+        panel.style.height = `${Math.round(h)}px`;
+
+        // Shift the anchor so the top-left corner stays put. Skipped for merged
+        // panels, whose position comes from the body they ride, not the anchor.
+        if (!p.bodyId) {
+          const grewX = (w - startW) * scale;
+          const grewY = (h - startH) * scale;
+          this.anchorFromScreen(p.anchor, centerX + grewX / 2, centerY + grewY / 2, dist);
+        }
+      });
+
+      const end = (e: PointerEvent) => {
+        if (!resizing) return;
+        resizing = false;
+        grip.releasePointerCapture(e.pointerId);
+        panel.classList.remove("resizing");
+      };
+      grip.addEventListener("pointerup", end);
+      grip.addEventListener("pointercancel", end);
+    }
   }
 
   /** Screen point -> world anchor at a fixed distance from the camera. */

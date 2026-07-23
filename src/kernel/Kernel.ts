@@ -1,9 +1,11 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
+import { VFS } from "./vfs";
 import type {
   BodyKind,
   Compositor,
   KernelContext,
+  LaunchArgs,
   ModuleManifest,
   Surface,
   SurfaceRequest,
@@ -23,6 +25,8 @@ export class Kernel {
   private bus = new EventBus();
   private store = new Store();
   private compositor: Compositor;
+  /** Public so main.ts can mount /projects before boot. */
+  readonly fs = new VFS();
 
   private modules = new Map<string, VoidModule>();
   private deactivators = new Map<string, () => void>();
@@ -43,6 +47,20 @@ export class Kernel {
         set: (k, v) => this.store.set(k, v),
         subscribe: (k, h) => this.store.subscribe(k, h),
       },
+      fs: {
+        ls: (p) => this.fs.ls(p),
+        read: (p) => this.fs.read(p),
+        write: (p, c) => this.fs.write(p, c),
+        mkdir: (p) => this.fs.mkdir(p),
+        mkdirp: (p) => this.fs.mkdirp(p),
+        rm: (p, r) => this.fs.rm(p, r),
+        mv: (a, b) => this.fs.mv(a, b),
+        stat: (p) => this.fs.stat(p),
+        exists: (p) => this.fs.exists(p),
+        isDir: (p) => this.fs.isDir(p),
+        onChange: (fn) => this.fs.onChange(fn),
+        usage: () => this.fs.usage(),
+      },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
       openSurfaces: () =>
@@ -51,7 +69,18 @@ export class Kernel {
       spawnBody: (kind: BodyKind) => this.compositor.spawnBody?.(kind) ?? "",
       attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
       listBodies: () => this.compositor.listBodies?.() ?? [],
-      launch: (id) => this.launch(id),
+      launch: (id, args) => this.launch(id, args),
+      openPath: (p) => this.openPath(p),
+      focalPoint: (dist) => this.compositor.focalPoint?.(dist) ?? { x: 0, y: 0, z: -600 },
+      mountAnchored: (el, anchor) =>
+        this.compositor.mountAnchored?.(el, anchor) ?? {
+          setAnchor: () => {},
+          getAnchor: () => anchor,
+          dispose: () => el.remove(),
+        },
+      screenToWorld: (x, y, d) =>
+        this.compositor.screenToWorld?.(x, y, d) ?? { x: 0, y: 0, z: -d },
+      focusSurface: (id) => this.compositor.focusSurface?.(id),
       registry: () => [...this.modules.values()].map((m) => m.manifest),
     };
   }
@@ -70,6 +99,18 @@ export class Kernel {
   async boot(mounts: { gl: HTMLElement; overlay: HTMLElement }): Promise<void> {
     await this.compositor.init(mounts);
     this.compositor.start?.();
+
+    // Restore the user's files, then persist on every later mutation. Debounced
+    // because a shell loop can touch the tree many times in one frame, and each
+    // save re-serialises the whole home tree.
+    this.fs.load();
+    let saveTimer = 0;
+    this.fs.onChange(() => {
+      clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => this.fs.save(), 250);
+    });
+    window.addEventListener("beforeunload", () => this.fs.save());
+
     for (const mod of this.modules.values()) {
       const off = mod.activate(this.context());
       if (typeof off === "function") this.deactivators.set(mod.manifest.id, off);
@@ -77,11 +118,33 @@ export class Kernel {
     this.bus.emit("kernel.booted", { modules: this.registry() });
   }
 
-  launch(moduleId: string): void {
+  launch(moduleId: string, args?: LaunchArgs): void {
     const mod = this.modules.get(moduleId);
     if (!mod) return console.warn(`[kernel] no module "${moduleId}"`);
-    mod.launch?.(this.context());
-    this.bus.emit("module.launched", { id: moduleId });
+    mod.launch?.(this.context(), args);
+    this.bus.emit("module.launched", { id: moduleId, args });
+  }
+
+  /**
+   * Route a path to the module registered for its extension. Directories
+   * always go to the file manager; unknown types fall back to whichever module
+   * declared `handles: ["*"]`.
+   */
+  openPath(path: string): void {
+    if (!this.fs.exists(path)) return console.warn(`[kernel] no such path: ${path}`);
+
+    if (this.fs.isDir(path)) {
+      const browser = [...this.modules.values()].find((m) => m.handles?.includes("dir"));
+      if (browser) this.launch(browser.manifest.id, { path });
+      return;
+    }
+
+    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+    const mods = [...this.modules.values()];
+    const owner =
+      mods.find((m) => m.handles?.includes(ext)) ?? mods.find((m) => m.handles?.includes("*"));
+    if (owner) this.launch(owner.manifest.id, { path });
+    else console.warn(`[kernel] nothing handles ${path}`);
   }
 
   registry(): ModuleManifest[] {
