@@ -80,6 +80,7 @@ export function createAppDrawer(
 
     let downX = 0;
     let downY = 0;
+    let down = false;
     let dragging = false;
     let suppressClick = false;
     let ghost: HTMLElement | null = null;
@@ -87,11 +88,15 @@ export function createAppDrawer(
     tile.addEventListener("pointerdown", (e) => {
       downX = e.clientX;
       downY = e.clientY;
+      down = true;
       dragging = false;
       tile.setPointerCapture(e.pointerId);
     });
 
     tile.addEventListener("pointermove", (e) => {
+      // pointermove fires on hover too; without this the threshold measures
+      // from (0,0) and a stray ghost appears just from moving over a tile.
+      if (!down) return;
       if (!dragging && Math.hypot(e.clientX - downX, e.clientY - downY) < 10) return;
       if (!dragging) {
         dragging = true;
@@ -112,6 +117,7 @@ export function createAppDrawer(
     });
 
     const finish = (e: PointerEvent) => {
+      down = false;
       tile.releasePointerCapture?.(e.pointerId);
       ghost?.remove();
       ghost = null;
@@ -137,6 +143,7 @@ export function createAppDrawer(
     tile.addEventListener("pointercancel", () => {
       ghost?.remove();
       ghost = null;
+      down = false;
       dragging = false;
       root.classList.remove("passthrough", "over-slot");
     });

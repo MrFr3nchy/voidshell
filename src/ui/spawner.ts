@@ -135,6 +135,7 @@ export function createSpawner(
   ) => {
     let downX = 0;
     let downY = 0;
+    let down = false;
     let dragging = false;
     let suppressClick = false;
     let ghost: HTMLElement | null = null;
@@ -142,12 +143,15 @@ export function createSpawner(
     node.addEventListener("pointerdown", (e) => {
       downX = e.clientX;
       downY = e.clientY;
+      down = true;
       dragging = false;
       node.setPointerCapture(e.pointerId);
     });
 
     node.addEventListener("pointermove", (e) => {
-      if (slot < 0 || !moduleId) return;
+      // pointermove fires on hover too. Without the button-held guard the
+      // threshold below measures from (0,0) and a drag "starts" on hover.
+      if (!down || slot < 0 || !moduleId) return;
       if (!dragging && Math.hypot(e.clientX - downX, e.clientY - downY) < 10) return;
       if (!dragging) {
         dragging = true;
@@ -162,6 +166,7 @@ export function createSpawner(
     });
 
     const finish = (e: PointerEvent) => {
+      down = false;
       node.releasePointerCapture?.(e.pointerId);
       root.classList.remove("dragging-node");
       ghost?.remove();
@@ -182,6 +187,7 @@ export function createSpawner(
     node.addEventListener("pointercancel", (e) => {
       ghost?.remove();
       ghost = null;
+      down = false;
       dragging = false;
       root.classList.remove("dragging-node");
       node.releasePointerCapture?.(e.pointerId);
