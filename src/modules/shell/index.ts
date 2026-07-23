@@ -19,11 +19,14 @@ const KEYBINDS: [string, string][] = [
   ["\u2318 / ctrl + ,", "settings"],
   ["home", "recentre the view"],
   ["escape", "close whatever is open"],
+  ["\u2318 / ctrl + shift + u", "dissolve every constellation"],
+  ["\u2318 / ctrl + shift + k", "close every window"],
   ["drag the void", "look around"],
   ["scroll a window", "push it away / pull it closer"],
   ["drag \u2059 onto a window", "link them into a constellation"],
   ["drag \u2059 onto a body", "merge \u2014 the window rides its orbit"],
   ["drag \u2059 onto a singularity", "let it be eaten"],
+  ["click a thread", "harden or loosen that constellation"],
 ];
 
 /**
@@ -179,6 +182,17 @@ export const shell: VoidModule = {
       hint: "every knob in the void",
       glyph: "\u2699",
       run: (c) => c.launch("settings"),
+    });
+    ctx.defineCommand({
+      id: "shell.unlinkAll",
+      label: "dissolve every constellation",
+      hint: "frees every window without closing anything",
+      glyph: "\u2059",
+      run: (c) => {
+        const groups = c.listGroups();
+        for (const g of groups) c.unlinkGroup(g.id);
+        c.notify(`dissolved ${groups.length} constellation${groups.length === 1 ? "" : "s"}`, "good");
+      },
     });
     ctx.defineCommand({
       id: "shell.closeAll",
