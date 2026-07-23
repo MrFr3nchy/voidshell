@@ -175,9 +175,13 @@ check("settings app rendered controls", (setBody?.children.length ?? 0) > 0);
 // Constellation controls must be published and default sanely.
 check(
   "link settings registered",
-  ctx.settings().filter((d) => d.group === "Links").length === 8
+  ctx.settings().filter((d) => d.group === "Links").length === 6
 );
 check("orbit drag is the default", ctx.state.get("links.orbit", false) === true);
+check(
+  "no collapsing spread control survives",
+  !ctx.settings().some((d) => d.key === "links.spread")
+);
 
 // Rebinding a slot must persist and reshape the ring.
 ctx.state.set("launcher.count", 3);
