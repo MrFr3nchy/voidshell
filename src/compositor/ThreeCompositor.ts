@@ -136,6 +136,16 @@ export class ThreeCompositor implements Compositor {
     compass: true,
     tethers: true,
     baseIntensity: 1,
+    // Constellations
+    linkOpacity: 0.5,
+    linkWidth: 1.2,
+    linkGlow: 6,
+    linkDashed: true,
+    linkLabels: true,
+    /** Rotate a constellation about the camera rather than translating it. */
+    linkOrbit: true,
+    linkSpread: 260,
+    linkAutoTidy: true,
   };
 
   // Camera rig: drag-only. The camera never moves on its own — ambient motion
@@ -411,14 +421,35 @@ export class ThreeCompositor implements Compositor {
       "nebulaSpin",
       "orbitSpeed",
       "driftAmount",
+      "linkOpacity",
+      "linkWidth",
+      "linkGlow",
     ] as const) {
       const v = num(key);
       if (v !== null) this.cfg[key] = v;
     }
-    for (const key of ["drift", "storms", "compass", "tethers"] as const) {
+    for (const key of [
+      "drift",
+      "storms",
+      "compass",
+      "tethers",
+      "linkDashed",
+      "linkLabels",
+      "linkOrbit",
+      "linkAutoTidy",
+    ] as const) {
       const v = bool(key);
       if (v !== null) this.cfg[key] = v;
     }
+
+    // Spread is direct manipulation: moving the slider should visibly breathe
+    // every live constellation in or out, not just affect the next one made.
+    const spread = num("linkSpread");
+    if (spread !== null && spread !== this.cfg.linkSpread) {
+      this.cfg.linkSpread = spread;
+      for (const id of this.groups.keys()) this.tidyGroup(id);
+    }
+
     this.compass?.setEnabled(this.cfg.compass);
     if (!this.cfg.tethers) this.clearTethers();
   }
@@ -646,6 +677,7 @@ export class ThreeCompositor implements Compositor {
       p.el.classList.add("linked");
       p.el.style.setProperty("--vs-group", entry.color);
     }
+    if (this.cfg.linkAutoTidy) this.tidyGroup(id);
     return id;
   }
 
@@ -670,6 +702,44 @@ export class ThreeCompositor implements Compositor {
       name: g.name,
       members: [...g.members],
     }));
+  }
+
+  /**
+   * Fan a constellation's members evenly around their shared centre, all at
+   * the same distance from the camera so they read as one object at one size.
+   */
+  private tidyGroup(id: string): void {
+    const g = this.groups.get(id);
+    if (!g) return;
+    const members = [...g.members]
+      .map((m) => this.panels.get(m))
+      .filter((p): p is PanelEntry => Boolean(p) && !p!.pinned);
+    if (members.length < 2) return;
+
+    const centre = this.groupCentre(g);
+    if (!centre) return;
+
+    const camPos = this.camera.position;
+    const dist = centre.distanceTo(camPos);
+    const dir = centre.clone().sub(camPos).normalize();
+    // Any stable basis perpendicular to the view direction will do.
+    const seed = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(dir, seed).normalize();
+    const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+
+    const r = this.cfg.linkSpread;
+    members.forEach((p, i) => {
+      this.freeFromBody(p);
+      const a = (i / members.length) * Math.PI * 2;
+      p.anchor
+        .copy(centre)
+        .addScaledVector(right, Math.cos(a) * r)
+        .addScaledVector(up, Math.sin(a) * r)
+        .sub(camPos)
+        .normalize()
+        .multiplyScalar(dist)
+        .add(camPos);
+    });
   }
 
   private groupCentre(g: GroupEntry): THREE.Vector3 | null {
@@ -949,11 +1019,19 @@ export class ThreeCompositor implements Compositor {
         .map((p) => `${cx.toFixed(0)},${cy.toFixed(0)} ${p.sx.toFixed(0)},${p.sy.toFixed(0)}`)
         .join(" ");
 
+      // Styled inline rather than by attribute: the stylesheet's class rules
+      // out-rank presentation attributes, so only inline style can be tuned.
       const line = node.querySelector(".vs-tether-line") as SVGPolylineElement;
       line.setAttribute("points", path);
-      line.setAttribute("stroke", g.color);
+      line.style.stroke = g.color;
+      line.style.strokeWidth = String(this.cfg.linkWidth);
+      line.style.strokeOpacity = String(this.cfg.linkOpacity);
+      line.style.strokeDasharray = this.cfg.linkDashed ? "3 6" : "none";
+      line.style.filter =
+        this.cfg.linkGlow > 0 ? `drop-shadow(0 0 ${this.cfg.linkGlow}px ${g.color})` : "none";
 
       const label = node.querySelector(".vs-tether-label") as SVGTextElement;
+      label.style.display = this.cfg.linkLabels ? "" : "none";
       label.setAttribute("x", cx.toFixed(0));
       label.setAttribute("y", (cy - 10).toFixed(0));
       label.setAttribute("fill", g.color);
@@ -1120,7 +1198,22 @@ export class ThreeCompositor implements Compositor {
         return;
       }
       this.anchorFromScreen(p.anchor, e.clientX - grabX, e.clientY - grabY, dist);
-      if (others.length) {
+      if (!others.length) return;
+
+      if (this.cfg.linkOrbit) {
+        // Panel scale is 760/distance, so translating a constellation rigidly
+        // would push one member towards the camera and the other away, and the
+        // group would visibly grow at one end. Rotating the whole formation
+        // about the camera instead keeps every member's distance -- and so
+        // every member's size -- exactly constant while it travels.
+        const camPos = this.camera.position;
+        const from = start.clone().sub(camPos).normalize();
+        const to = p.anchor.clone().sub(camPos).normalize();
+        const q = new THREE.Quaternion().setFromUnitVectors(from, to);
+        for (const o of others) {
+          o.p.anchor.copy(o.base).sub(camPos).applyQuaternion(q).add(camPos);
+        }
+      } else {
         const delta = p.anchor.clone().sub(start);
         for (const o of others) o.p.anchor.copy(o.base).add(delta);
       }
