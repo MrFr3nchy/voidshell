@@ -87,7 +87,7 @@ async function main() {
   window.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
 
-    if (mod && e.key.toLowerCase() === "k") {
+    if (mod && e.key.toLowerCase() === "k" && !e.shiftKey) {
       e.preventDefault();
       palette.toggle();
       return;
@@ -95,6 +95,22 @@ async function main() {
     if (mod && e.shiftKey && e.key.toLowerCase() === "a") {
       e.preventDefault();
       drawer.toggle();
+      return;
+    }
+    // Escape hatches. These have to work when the layout is broken enough
+    // that reaching a window or a menu isn't realistic.
+    if (mod && e.shiftKey && e.key.toLowerCase() === "u") {
+      e.preventDefault();
+      const groups = ctx.listGroups();
+      for (const g of groups) ctx.unlinkGroup(g.id);
+      ctx.notify(`dissolved ${groups.length} constellation${groups.length === 1 ? "" : "s"}`, "good");
+      return;
+    }
+    if (mod && e.shiftKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      const open = ctx.openSurfaces();
+      for (const s of open) kernel.closeSurface(s.id);
+      ctx.notify(`closed ${open.length} window${open.length === 1 ? "" : "s"}`, "good");
       return;
     }
     if (mod && e.key === ",") {
