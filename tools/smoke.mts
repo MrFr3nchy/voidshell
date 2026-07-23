@@ -53,6 +53,11 @@ const { driftfield } = await import("../src/modules/driftfield");
 const { sandbox } = await import("../src/modules/sandbox");
 const { harmonograph } = await import("../src/modules/harmonograph");
 const { lunaria } = await import("../src/modules/lunaria");
+const { bubblewrap } = await import("../src/modules/bubblewrap");
+const { ripple } = await import("../src/modules/ripple");
+const { flock } = await import("../src/modules/flock");
+const { orrery } = await import("../src/modules/orrery");
+const { lavalamp } = await import("../src/modules/lavalamp");
 const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
 const { createAppDrawer } = await import("../src/ui/appDrawer");
 const { createPalette } = await import("../src/ui/palette");
@@ -136,9 +141,14 @@ kernel
   .register(driftfield)
   .register(sandbox)
   .register(harmonograph)
-  .register(lunaria);
+  .register(lunaria)
+  .register(bubblewrap)
+  .register(ripple)
+  .register(flock)
+  .register(orrery)
+  .register(lavalamp);
 
-const MODULE_COUNT = 15;
+const MODULE_COUNT = 20;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -228,9 +238,12 @@ check("session recorded", JSON.stringify(ctx.state.get("system.session", [])).le
 ctx.state.set("notes.doc.test", "hello void");
 check("note text stored", ctx.state.get("notes.doc.test", "") === "hello void");
 
-// The moon is computed, not fetched — so it must answer without a network.
-const moonRow = hud.ownerDocument.querySelector(".luna-value");
-check("lunaria reported a phase", (moonRow?.textContent ?? "").length > 1);
+// The astronomy apps are computed, not fetched — they must answer offline.
+const readouts = [...hud.ownerDocument.querySelectorAll(".stage-value")];
+check(
+  "lunaria reported a phase",
+  readouts.some((el) => /crescent|gibbous|quarter|full|new/i.test(el.textContent ?? ""))
+);
 
 // Closing everything must not throw.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);

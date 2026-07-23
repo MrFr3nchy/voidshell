@@ -22,6 +22,11 @@ import { driftfield } from "./modules/driftfield";
 import { sandbox } from "./modules/sandbox";
 import { harmonograph } from "./modules/harmonograph";
 import { lunaria } from "./modules/lunaria";
+import { bubblewrap } from "./modules/bubblewrap";
+import { ripple } from "./modules/ripple";
+import { flock } from "./modules/flock";
+import { orrery } from "./modules/orrery";
+import { lavalamp } from "./modules/lavalamp";
 
 async function main() {
   const gl = document.getElementById("void")!;
@@ -58,7 +63,12 @@ async function main() {
     .register(driftfield)
     .register(sandbox)
     .register(harmonograph)
-    .register(lunaria);
+    .register(lunaria)
+    .register(bubblewrap)
+    .register(ripple)
+    .register(flock)
+    .register(orrery)
+    .register(lavalamp);
 
   // Panels emit a DOM event when their close button is hit; route it home.
   window.addEventListener("voidshell:close-surface", (e) => {
