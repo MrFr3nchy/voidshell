@@ -1,10 +1,19 @@
 import type { BodyKind, KernelContext, VoidModule } from "../../kernel/types";
 
+const KINDS: { kind: BodyKind; glyph: string; blurb: string }[] = [
+  { kind: "sun", glyph: "\u2609", blurb: "a burning anchor" },
+  { kind: "moon", glyph: "\u263d", blurb: "quiet and pale" },
+  { kind: "planet", glyph: "\u2295", blurb: "ringed, indifferent" },
+  { kind: "singularity", glyph: "\u2b24", blurb: "eats what you feed it" },
+];
+
 /**
- * Cosmos spawns celestial bodies into the void and lets you merge open windows
- * onto them. A merged window anchors to the body's position and rides along as
- * the body drifts — the "windows on a planet" idea made literal, using the same
- * projected-anchor mechanism every panel already uses.
+ * Cosmos spawns celestial bodies into the void and lets windows ride them.
+ *
+ * Merging is a drag now, not a form: pull a window's \u2059 handle onto a body and
+ * the window anchors to it and rides its orbit. Pull one onto a singularity
+ * and it's gone — which makes the black hole the most honest wastebasket any
+ * OS has ever shipped.
  */
 export const cosmos: VoidModule = {
   manifest: {
@@ -12,124 +21,116 @@ export const cosmos: VoidModule = {
     name: "Cosmos",
     kind: "app",
     glyph: "\u2609",
-    version: "0.1.0",
+    blurb: "put things in the sky",
+    version: "0.2.0",
   },
 
-  activate() {},
+  activate(ctx: KernelContext) {
+    ctx.defineCommand({
+      id: "cosmos.singularity",
+      label: "spawn a singularity",
+      hint: "a wastebasket with gravity",
+      glyph: "\u2b24",
+      run: (c) => {
+        c.spawnBody("singularity");
+        c.notify("singularity forming \u2014 feed it with the \u2059 handle", "good");
+      },
+    });
+  },
 
   launch(ctx: KernelContext) {
     ctx.openSurface({
       title: "cosmos",
       width: 340,
-      height: 340,
+      height: 360,
       render: (root) => {
         root.innerHTML = "";
 
-        const spawnLabel = document.createElement("div");
-        spawnLabel.className = "cos-label";
-        spawnLabel.textContent = "spawn a body";
-
+        const spawnLabel = label("spawn a body");
         const spawnRow = document.createElement("div");
-        spawnRow.className = "cos-row";
-        (["sun", "moon", "planet"] as BodyKind[]).forEach((kind) => {
+        spawnRow.className = "cos-kinds";
+
+        for (const k of KINDS) {
           const b = document.createElement("button");
-          b.className = "cos-btn";
-          b.textContent = kind;
+          b.className = "cos-kind";
+          b.title = k.blurb;
+          b.innerHTML = `<span class="cos-kind-glyph">${k.glyph}</span><span class="cos-kind-name">${k.kind}</span>`;
           b.addEventListener("click", () => {
-            ctx.spawnBody(kind);
+            ctx.spawnBody(k.kind);
             refresh();
           });
           spawnRow.appendChild(b);
-        });
+        }
 
+        const skyLabel = label("in orbit");
         const chips = document.createElement("div");
         chips.className = "cos-chips";
 
         const divider = document.createElement("div");
         divider.className = "cos-divider";
 
-        const mergeLabel = document.createElement("div");
-        mergeLabel.className = "cos-label";
-        mergeLabel.textContent = "merge a window onto a body";
-
-        const winSel = document.createElement("select");
-        winSel.className = "cos-select";
-        const bodySel = document.createElement("select");
-        bodySel.className = "cos-select";
+        const how = document.createElement("div");
+        how.className = "cos-how";
+        how.innerHTML =
+          "drag a window's <b>\u2059</b> handle onto a body to merge it \u2014 the window rides that orbit.<br>drop it on a <b>singularity</b> and it's eaten.";
 
         const actions = document.createElement("div");
         actions.className = "cos-actions";
-        const mergeBtn = document.createElement("button");
-        mergeBtn.className = "cos-btn";
-        mergeBtn.textContent = "merge";
-        const detachBtn = document.createElement("button");
-        detachBtn.className = "cos-btn";
-        detachBtn.textContent = "release";
-        actions.append(mergeBtn, detachBtn);
-
-        mergeBtn.addEventListener("click", () => {
-          if (winSel.value && bodySel.value) ctx.attachSurface(winSel.value, bodySel.value);
+        const releaseBtn = document.createElement("button");
+        releaseBtn.className = "cos-btn";
+        releaseBtn.textContent = "release all";
+        releaseBtn.addEventListener("click", () => {
+          for (const s of ctx.openSurfaces()) ctx.attachSurface(s.id, null);
+          ctx.notify("every window released", "good");
         });
-        detachBtn.addEventListener("click", () => {
-          if (winSel.value) ctx.attachSurface(winSel.value, null);
+        const clearBtn = document.createElement("button");
+        clearBtn.className = "cos-btn";
+        clearBtn.textContent = "empty the sky";
+        clearBtn.addEventListener("click", () => {
+          for (const b of ctx.listBodies()) ctx.destroyBody(b.id);
+          refresh();
         });
+        actions.append(releaseBtn, clearBtn);
 
-        const refreshBtn = document.createElement("button");
-        refreshBtn.className = "cos-btn";
-        refreshBtn.textContent = "refresh list";
-        refreshBtn.style.marginTop = "8px";
-        refreshBtn.style.width = "100%";
-        refreshBtn.addEventListener("click", () => refresh());
+        root.append(spawnLabel, spawnRow, skyLabel, chips, divider, how, actions);
 
         function refresh() {
           const bodies = ctx.listBodies();
           chips.replaceChildren();
-          if (bodies.length === 0) {
+          if (!bodies.length) {
             const empty = document.createElement("span");
             empty.className = "cos-chip";
-            empty.textContent = "no bodies yet";
+            empty.textContent = "the sky is empty";
             chips.appendChild(empty);
+            return;
           }
           for (const b of bodies) {
             const chip = document.createElement("span");
-            chip.className = "cos-chip";
+            chip.className = "cos-chip has-kill";
             chip.textContent = `${b.kind} ${b.id.replace("body-", "#")}`;
+            const kill = document.createElement("button");
+            kill.className = "cos-kill";
+            kill.textContent = "\u2715";
+            kill.title = "remove this body";
+            kill.addEventListener("click", () => {
+              ctx.destroyBody(b.id);
+              refresh();
+            });
+            chip.appendChild(kill);
             chips.appendChild(chip);
-          }
-
-          bodySel.replaceChildren();
-          for (const b of bodies) {
-            const o = document.createElement("option");
-            o.value = b.id;
-            o.textContent = `${b.kind} ${b.id.replace("body-", "#")}`;
-            bodySel.appendChild(o);
-          }
-
-          winSel.replaceChildren();
-          for (const s of ctx.openSurfaces()) {
-            if (s.title === "cosmos") continue;
-            const o = document.createElement("option");
-            o.value = s.id;
-            o.textContent = s.title;
-            winSel.appendChild(o);
           }
         }
 
-        root.append(
-          spawnLabel,
-          spawnRow,
-          chips,
-          divider,
-          mergeLabel,
-          winSel,
-          bodySel,
-          actions,
-          refreshBtn
-        );
         refresh();
-
         return () => root.replaceChildren();
       },
     });
   },
 };
+
+function label(text: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "cos-label";
+  el.textContent = text;
+  return el;
+}
