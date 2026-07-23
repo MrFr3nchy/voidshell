@@ -92,6 +92,31 @@ body {
   scale: 1.12;
   filter: blur(10px);
 }
+/* Flashed by the compositor when a re-launch focuses an already-open panel. */
+.vs-panel.pulse {
+  animation: vs-pulse 0.55s ease;
+}
+@keyframes vs-pulse {
+  0% {
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.3),
+      0 24px 60px -20px rgba(0, 0, 0, 0.7),
+      inset 0 1px 0 var(--glass-hi);
+  }
+  40% {
+    box-shadow:
+      0 0 0 2px var(--cyan),
+      0 0 34px -4px rgba(79, 227, 208, 0.65),
+      0 24px 60px -20px rgba(0, 0, 0, 0.7),
+      inset 0 1px 0 var(--glass-hi);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.3),
+      0 24px 60px -20px rgba(0, 0, 0, 0.7),
+      inset 0 1px 0 var(--glass-hi);
+  }
+}
 
 .vs-panel-bar {
   display: flex;

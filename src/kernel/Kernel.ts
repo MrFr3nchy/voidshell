@@ -10,6 +10,9 @@ import type {
   VoidModule,
 } from "./types";
 
+/** Hard backstop so a stuck key or a bug can never spawn infinite windows. */
+const MAX_SURFACES = 24;
+
 let surfaceCounter = 0;
 
 /**
@@ -28,6 +31,8 @@ export class Kernel {
   private deactivators = new Map<string, () => void>();
   private surfaces = new Map<string, Surface>();
   private surfaceDisposers = new Map<string, () => void>();
+  /** The module currently inside its launch() call, so new surfaces get tagged. */
+  private activeModuleId: string | null = null;
 
   constructor(compositor: Compositor) {
     this.compositor = compositor;
@@ -80,7 +85,33 @@ export class Kernel {
   launch(moduleId: string): void {
     const mod = this.modules.get(moduleId);
     if (!mod) return console.warn(`[kernel] no module "${moduleId}"`);
-    mod.launch?.(this.context());
+
+    // Singleton by default: re-launching a running app brings its existing
+    // window back instead of cloning it. Opt out with manifest.singleton = false.
+    if (mod.manifest.singleton !== false) {
+      const existing = [...this.surfaces.values()].find(
+        (s) => s.moduleId === moduleId
+      );
+      if (existing) {
+        this.compositor.focusSurface?.(existing.id);
+        this.bus.emit("module.focused", { id: moduleId, surface: existing.id });
+        return;
+      }
+    }
+
+    // Hard backstop against runaway spawning (stuck Enter, loops, etc.).
+    if (this.surfaces.size >= MAX_SURFACES) {
+      console.warn(`[kernel] surface limit (${MAX_SURFACES}) reached; not opening more`);
+      this.bus.emit("kernel.limit", { max: MAX_SURFACES });
+      return;
+    }
+
+    this.activeModuleId = moduleId;
+    try {
+      mod.launch?.(this.context());
+    } finally {
+      this.activeModuleId = null;
+    }
     this.bus.emit("module.launched", { id: moduleId });
   }
 
@@ -95,7 +126,7 @@ export class Kernel {
 
     const surface: Surface = {
       id,
-      moduleId: "unknown",
+      moduleId: this.activeModuleId ?? "unknown",
       title: req.title,
       element,
       width: req.width ?? 420,

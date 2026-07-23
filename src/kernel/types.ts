@@ -56,6 +56,8 @@ export interface Compositor {
   init(mounts: { gl: HTMLElement; overlay: HTMLElement }): void | Promise<void>;
   /** Give a surface a body in the world. Returns a disposer. */
   mountSurface(surface: Surface): () => void;
+  /** Bring an existing surface back to the user and focus it (singleton re-launch). */
+  focusSurface?(id: string): void;
   /** The world can be mutated by modules (fog, sky, gravity...). Free-form. */
   applyWorldPatch?(patch: Record<string, unknown>): void;
   /** Spawn a celestial body. Returns its id. */
@@ -80,6 +82,11 @@ export interface ModuleManifest {
   kind: "app" | "world" | "service";
   /** A single glyph shown in the radial launcher. Keep it weird. */
   glyph?: string;
+  /**
+   * If false, launching again spawns another instance. Defaults to true:
+   * re-launching a running app focuses the existing window instead of cloning it.
+   */
+  singleton?: boolean;
   version?: string;
 }
 

@@ -54,6 +54,8 @@ export function createSpawner(hud: HTMLElement, deps: SpawnerDeps): void {
       node.innerHTML = `<span class="node-glyph">${m.glyph ?? "\u00b7"}</span><span class="node-name">${m.name}</span>`;
       node.addEventListener("click", () => {
         deps.launch(m.id);
+        // Drop focus so a held or repeated Enter can't re-fire this button.
+        node.blur();
         toggle(false);
       });
       ring.appendChild(node);

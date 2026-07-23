@@ -214,6 +214,40 @@ export class ThreeCompositor implements Compositor {
     if (typeof patch.voidColor === "number") this.uniforms.uColorVoid.value.setHex(patch.voidColor);
   }
 
+  /**
+   * Bring an already-open panel back to the user instead of cloning the app.
+   * The panel keeps its own anchor direction but is pulled to a comfortable
+   * reading depth, released from any body it was riding, flashed so the eye
+   * can find it, and handed keyboard focus.
+   */
+  focusSurface(id: string): void {
+    const p = this.panels.get(id);
+    if (!p) return;
+
+    this.freeFromBody(p);
+
+    // Pull it back to spawn depth so a panel pushed far away still comes back.
+    const dist = p.anchor.distanceTo(this.camera.position);
+    if (dist > 560) {
+      p.anchor
+        .sub(this.camera.position)
+        .normalize()
+        .multiplyScalar(560)
+        .add(this.camera.position);
+    }
+
+    // Restart the highlight even if it's mid-animation from a previous focus.
+    p.el.classList.remove("pulse");
+    void p.el.offsetWidth;
+    p.el.classList.add("pulse");
+
+    // Focus the first editable control in the body — never the titlebar close.
+    const focusable = p.el.querySelector<HTMLElement>(
+      ".vs-panel-content input, .vs-panel-content textarea, .vs-panel-content select"
+    );
+    focusable?.focus();
+  }
+
   spawnBody(kind: BodyKind): string {
     const id = `body-${++this.bodyCounter}`;
     const group = this.makeBody(kind);
