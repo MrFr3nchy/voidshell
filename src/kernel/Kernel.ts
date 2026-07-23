@@ -1,6 +1,7 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
 import type {
+  BodyKind,
   Compositor,
   KernelContext,
   ModuleManifest,
@@ -49,7 +50,12 @@ export class Kernel {
       },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
+      openSurfaces: () =>
+        [...this.surfaces.values()].map((s) => ({ id: s.id, title: s.title })),
       patchWorld: (patch) => this.compositor.applyWorldPatch?.(patch),
+      spawnBody: (kind: BodyKind) => this.compositor.spawnBody?.(kind) ?? "",
+      attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
+      listBodies: () => this.compositor.listBodies?.() ?? [],
       launch: (id) => this.launch(id),
       registry: () => [...this.modules.values()].map((m) => m.manifest),
     };
@@ -80,8 +86,8 @@ export class Kernel {
     const mod = this.modules.get(moduleId);
     if (!mod) return console.warn(`[kernel] no module "${moduleId}"`);
 
-    // Singleton by default: re-launching a running app focuses its existing
-    // window instead of spawning a clone. Opt out with manifest.singleton = false.
+    // Singleton by default: re-launching a running app brings its existing
+    // window back instead of cloning it. Opt out with manifest.singleton = false.
     if (mod.manifest.singleton !== false) {
       const existing = [...this.surfaces.values()].find(
         (s) => s.moduleId === moduleId
