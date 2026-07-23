@@ -6,6 +6,7 @@ import {
   toolButton,
   withAlpha,
 } from "../../ui/canvasStage";
+import { burst } from "../../ui/blip";
 
 const BALLS = 5;
 const G = 9.81;
@@ -89,43 +90,18 @@ export const cradle: VoidModule = {
 
         /* ---------------- sound ---------------- */
 
-        let audio: AudioContext | null = null;
-        let noise: AudioBuffer | null = null;
         let soundOn = ctx.state.get<boolean>(SOUND_KEY, false);
 
+        // Steel on steel: a short, sharp band of noise. Louder impacts ring a
+        // little higher, which is most of what sells it as a real collision.
         const clack = (strength: number) => {
           if (!soundOn) return;
-          try {
-            if (!audio) {
-              const Ctor =
-                window.AudioContext ??
-                (window as unknown as { webkitAudioContext?: typeof AudioContext })
-                  .webkitAudioContext;
-              if (!Ctor) return;
-              audio = new Ctor();
-            }
-            if (audio.state === "suspended") void audio.resume();
-            if (!noise) {
-              const len = Math.floor(audio.sampleRate * 0.05);
-              noise = audio.createBuffer(1, len, audio.sampleRate);
-              const data = noise.getChannelData(0);
-              for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-            }
-            const src = audio.createBufferSource();
-            src.buffer = noise;
-            const band = audio.createBiquadFilter();
-            band.type = "bandpass";
-            band.frequency.value = 1500 + Math.random() * 500;
-            band.Q.value = 3;
-            const gain = audio.createGain();
-            const peak = Math.min(0.22, strength * 0.09);
-            gain.gain.setValueAtTime(peak, audio.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.05);
-            src.connect(band).connect(gain).connect(audio.destination);
-            src.start();
-          } catch {
-            /* audio is a nicety; never let it take the app down */
-          }
+          burst({
+            freq: 1500 + Math.min(strength, 4) * 190,
+            q: 3,
+            gain: strength * 0.045,
+            decay: 0.05,
+          });
         };
 
         /* ---------------- physics ---------------- */
@@ -250,8 +226,10 @@ export const cradle: VoidModule = {
         const onDown = (e: PointerEvent) => {
           if (!canvas) return;
           const rect = canvas.getBoundingClientRect();
-          const px = e.clientX - rect.left;
-          const py = e.clientY - rect.top;
+          // Via the rect ratio, not raw offsets: the compositor is free to
+          // scale a panel with distance, and raw offsets would drift with it.
+          const px = ((e.clientX - rect.left) / rect.width) * canvas.clientWidth;
+          const py = ((e.clientY - rect.top) / rect.height) * canvas.clientHeight;
           let best = -1;
           let bestD = radius * 2.2;
           for (let i = 0; i < BALLS; i++) {
@@ -276,8 +254,8 @@ export const cradle: VoidModule = {
           const rect = canvas.getBoundingClientRect();
           const next = angleFromPointer(
             dragging,
-            e.clientX - rect.left,
-            e.clientY - rect.top
+            ((e.clientX - rect.left) / rect.width) * canvas.clientWidth,
+            ((e.clientY - rect.top) / rect.height) * canvas.clientHeight
           );
           const now = performance.now();
           const dt = Math.max(0.008, (now - lastTime) / 1000);
@@ -327,7 +305,6 @@ export const cradle: VoidModule = {
           canvas?.removeEventListener("pointerdown", onDown);
           window.removeEventListener("pointermove", onMove);
           window.removeEventListener("pointerup", onUp);
-          void audio?.close();
         };
       },
     });
