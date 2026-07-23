@@ -56,7 +56,7 @@ export const lunaria: VoidModule = {
         root.appendChild(stageHost);
 
         const facts = document.createElement("div");
-        facts.className = "luna-facts";
+        facts.className = "stage-facts";
         root.appendChild(facts);
 
         const bar = toolbar(root);
@@ -68,12 +68,12 @@ export const lunaria: VoidModule = {
         const rows = new Map<string, HTMLElement>();
         for (const label of ["phase", "lit", "age", "next full", "next new"]) {
           const row = document.createElement("div");
-          row.className = "luna-row";
+          row.className = "stage-row";
           const l = document.createElement("span");
-          l.className = "luna-label";
+          l.className = "stage-label";
           l.textContent = label;
           const v = document.createElement("span");
-          v.className = "luna-value";
+          v.className = "stage-value";
           v.textContent = "\u2014";
           row.append(l, v);
           facts.appendChild(row);

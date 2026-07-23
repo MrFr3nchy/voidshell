@@ -118,6 +118,32 @@ export function withAlpha(color: string, alpha: number): string {
   return `color-mix(in srgb, ${color} ${Math.round(a * 100)}%, transparent)`;
 }
 
+/**
+ * A theme colour as raw channel numbers, for apps that write pixels directly
+ * into an ImageData buffer and can't hand the canvas a CSS string. Falls back
+ * to a mid grey rather than throwing, so an exotic Aurora colour space costs
+ * you accuracy and nothing else.
+ */
+export function rgbOf(color: string): [number, number, number] {
+  if (color.startsWith("#")) {
+    const hex = color.slice(1);
+    const full =
+      hex.length === 3
+        ? hex
+            .split("")
+            .map((ch) => ch + ch)
+            .join("")
+        : hex.slice(0, 6);
+    const n = parseInt(full, 16);
+    if (!Number.isNaN(n)) return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const m = color.match(/-?\d+(\.\d+)?/g);
+  if (m && m.length >= 3) {
+    return [Number(m[0]) | 0, Number(m[1]) | 0, Number(m[2]) | 0];
+  }
+  return [128, 128, 128];
+}
+
 /** A small row of pill buttons — the common chrome under an ambient canvas. */
 export function toolbar(host: HTMLElement): HTMLElement {
   const bar = document.createElement("div");
