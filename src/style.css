@@ -72,11 +72,15 @@ body {
     inset 0 1px 0 var(--glass-hi);
   color: var(--text);
   overflow: hidden;
-  opacity: 1;
+  /* Driven per-frame by the compositor from the panel's distance to camera. */
+  opacity: var(--vs-depth-fade, 1);
   scale: 1;
   filter: blur(0);
   transition: opacity 0.42s ease, scale 0.42s cubic-bezier(0.2, 0.9, 0.2, 1),
     filter 0.42s ease;
+}
+.vs-panel.dragging .vs-panel-bar {
+  cursor: grabbing;
 }
 .vs-panel.materializing {
   opacity: 0;
@@ -94,6 +98,9 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
   border-bottom: 1px solid var(--glass-hi);
   background: linear-gradient(
     180deg,

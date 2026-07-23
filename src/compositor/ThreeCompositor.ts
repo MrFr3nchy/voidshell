@@ -24,6 +24,17 @@ interface BodyEntry {
 }
 
 const PLANET_COLORS = [0x6ec6ff, 0xb98cff, 0x5fd6a8, 0xff9d6e];
+// Depth range a panel can be scrolled through. Chosen to line up with the
+// on-screen scale clamp in projectPanels, so every notch of the wheel produces
+// a visible size change instead of dead-zoning at the ends.
+const MIN_DEPTH = 480;
+const MAX_DEPTH = 2200;
+
+// Distance fade. Starts past the spawn depth so a freshly summoned panel is
+// always fully opaque, and bottoms out before MAX_DEPTH so a pushed-away panel
+// stays legible rather than vanishing.
+const FADE_START = 700;
+const FADE_RANGE = 1400;
 
 /**
  * The spectacle compositor.
@@ -58,7 +69,9 @@ export class ThreeCompositor implements Compositor {
   private bodies = new Map<string, BodyEntry>();
   private bodyCounter = 0;
 
-  // Camera rig: look-around by drag + gentle autonomous drift.
+  // Camera rig: drag-only. The camera never moves on its own — ambient motion
+  // lives in the world (nebula, dust, orbiting bodies) instead, so panels stay
+  // genuinely fixed in space rather than sliding across the screen.
   private yaw = 0;
   private pitch = 0;
   private targetYaw = 0;
@@ -157,7 +170,9 @@ export class ThreeCompositor implements Compositor {
       new THREE.Euler(this.pitch, this.yaw, 0, "YXZ")
     );
     const anchor = dir
-      .multiplyScalar(460)
+      // Spawn comfortably inside [MIN_DEPTH, MAX_DEPTH] so the first scroll
+      // moves the panel instead of clamping it the wrong way.
+      .multiplyScalar(560)
       .add(
         new THREE.Vector3(
           (Math.random() - 0.5) * 160,
@@ -172,6 +187,9 @@ export class ThreeCompositor implements Compositor {
       bodyId: null,
       offset: new THREE.Vector3(),
     });
+
+    this.bindPanelDrag(surface.id, bar, close);
+    this.bindPanelDepth(surface.id, panel);
 
     requestAnimationFrame(() => panel.classList.replace("materializing", "active"));
 
@@ -278,11 +296,12 @@ export class ThreeCompositor implements Compositor {
       const dt = this.clock.getDelta();
       this.uniforms.uTime.value += dt;
 
-      this.targetYaw += dt * 0.015;
       this.yaw += (this.targetYaw - this.yaw) * 0.06;
       this.pitch += (this.targetPitch - this.pitch) * 0.06;
       this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
 
+      // The void turns, not the viewer.
+      this.nebula.rotation.y += dt * 0.015;
       this.particles.rotation.y += dt * 0.01;
 
       for (const b of this.bodies.values()) {
@@ -305,6 +324,7 @@ export class ThreeCompositor implements Compositor {
 
     for (const p of this.panels.values()) {
       if (p.bodyId) {
+        // Merged panels deliberately ride their body around its orbit.
         const b = this.bodies.get(p.bodyId);
         if (b) this.tmpWorld.copy(b.position).add(p.offset);
         else this.tmpWorld.copy(p.anchor);
@@ -324,12 +344,137 @@ export class ThreeCompositor implements Compositor {
       const x = (ndc.x * 0.5 + 0.5) * w;
       const y = (-ndc.y * 0.5 + 0.5) * h;
       const dist = this.tmpWorld.distanceTo(camPos);
-      const scale = Math.max(0.35, Math.min(1.25, 760 / dist));
+      const scale = Math.max(0.35, Math.min(1.6, 760 / dist));
 
       p.el.style.left = `${x.toFixed(1)}px`;
       p.el.style.top = `${y.toFixed(1)}px`;
       p.el.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+
+      // Stack by real depth so a near panel always occludes a far one, and fade
+      // distant panels into the void so depth reads as depth, not just size.
+      p.el.style.zIndex = `${Math.max(0, Math.round(100000 - dist))}`;
+      // Set as a custom property, not inline opacity: the materialize/dissolve
+      // class rules are more specific and so still win during those animations.
+      const fade = 1 - Math.min(0.55, Math.max(0, (dist - FADE_START) / FADE_RANGE));
+      p.el.style.setProperty("--vs-depth-fade", fade.toFixed(3));
     }
+  }
+
+  /**
+   * Title-bar dragging. The panel's screen position is recomputed from its 3D
+   * anchor every frame, so a drag can't just set left/top — it has to move the
+   * anchor itself. We cast a ray through the cursor and slide the anchor along
+   * it, holding the panel's distance from the camera constant so its apparent
+   * size doesn't change mid-drag.
+   */
+  private bindPanelDrag(id: string, bar: HTMLElement, close: HTMLElement): void {
+    let dragging = false;
+    let dist = 0;
+    // Cursor-to-panel-center offset, so the panel doesn't snap under the cursor.
+    let grabX = 0;
+    let grabY = 0;
+
+    bar.addEventListener("pointerdown", (e) => {
+      if (close.contains(e.target as Node)) return;
+      const p = this.panels.get(id);
+      if (!p) return;
+
+      this.freeFromBody(p);
+      dist = p.anchor.distanceTo(this.camera.position);
+      grabX = e.clientX - parseFloat(p.el.style.left || "0");
+      grabY = e.clientY - parseFloat(p.el.style.top || "0");
+
+      dragging = true;
+      bar.setPointerCapture(e.pointerId);
+      p.el.classList.add("dragging");
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    bar.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const p = this.panels.get(id);
+      if (!p) return;
+      this.anchorFromScreen(p.anchor, e.clientX - grabX, e.clientY - grabY, dist);
+    });
+
+    const end = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      bar.releasePointerCapture(e.pointerId);
+      this.panels.get(id)?.el.classList.remove("dragging");
+    };
+    bar.addEventListener("pointerup", end);
+    bar.addEventListener("pointercancel", end);
+  }
+
+  /**
+   * Scroll over a panel to push it deeper into the void or pull it closer.
+   * Scrollable panel content wins — a terminal's backlog still scrolls normally,
+   * and only panels with nothing to scroll take the wheel as a depth change.
+   */
+  private bindPanelDepth(id: string, panel: HTMLElement): void {
+    panel.addEventListener(
+      "wheel",
+      (e) => {
+        const p = this.panels.get(id);
+        if (!p) return;
+
+        const content = (e.target as HTMLElement).closest?.(".vs-panel-content");
+        if (content && content.scrollHeight > content.clientHeight) return;
+        e.preventDefault();
+
+        this.freeFromBody(p);
+
+        // Exponential so each notch feels the same at any depth.
+        const dist = p.anchor.distanceTo(this.camera.position);
+        const next = Math.max(
+          MIN_DEPTH,
+          Math.min(MAX_DEPTH, dist * Math.exp(e.deltaY * 0.0012))
+        );
+
+        p.anchor
+          .sub(this.camera.position)
+          .normalize()
+          .multiplyScalar(next)
+          .add(this.camera.position);
+      },
+      { passive: false }
+    );
+  }
+
+  /**
+   * Detach a panel from its celestial body, leaving it exactly where it
+   * currently sits instead of snapping back to its pre-merge anchor.
+   */
+  private freeFromBody(p: PanelEntry): void {
+    if (!p.bodyId) return;
+    const b = this.bodies.get(p.bodyId);
+    if (b) p.anchor.copy(b.position).add(p.offset);
+    p.bodyId = null;
+  }
+
+  /** Screen point -> world anchor at a fixed distance from the camera. */
+  private anchorFromScreen(
+    out: THREE.Vector3,
+    cx: number,
+    cy: number,
+    dist: number
+  ): void {
+    this.tmpCam
+      .set(
+        (cx / window.innerWidth) * 2 - 1,
+        -(cy / window.innerHeight) * 2 + 1,
+        0.5
+      )
+      .unproject(this.camera);
+
+    out
+      .copy(this.tmpCam)
+      .sub(this.camera.position)
+      .normalize()
+      .multiplyScalar(dist)
+      .add(this.camera.position);
   }
 
   private bindInput(el: HTMLElement): void {
