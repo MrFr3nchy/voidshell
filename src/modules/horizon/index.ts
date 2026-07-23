@@ -82,6 +82,66 @@ const KNOBS: Knob[] = [
   { key: "driftAmount", patch: "driftAmount", label: "drift amount", min: 0, max: 4, step: 0.05, def: 1, order: 62 },
 ];
 
+/**
+ * Constellation settings live in their own tab. Threads are cosmetic; spread
+ * and motion are behavioural, and both are things you only discover you care
+ * about once you've actually dragged a bound pair around.
+ */
+const LINK_KNOBS: {
+  key: string;
+  patch: string;
+  label: string;
+  hint?: string;
+  min: number;
+  max: number;
+  step: number;
+  def: number;
+  order: number;
+}[] = [
+  { key: "links.opacity", patch: "linkOpacity", label: "thread brightness", min: 0, max: 1, step: 0.01, def: 0.5, order: 10 },
+  { key: "links.width", patch: "linkWidth", label: "thread thickness", min: 0.5, max: 6, step: 0.1, def: 1.2, order: 11 },
+  { key: "links.glow", patch: "linkGlow", label: "thread glow", min: 0, max: 24, step: 1, def: 6, order: 12 },
+  {
+    key: "links.spread",
+    patch: "linkSpread",
+    label: "how far apart",
+    hint: "moving this re-forms every live constellation, not just the next one",
+    min: 80,
+    max: 900,
+    step: 10,
+    def: 260,
+    order: 20,
+  },
+];
+
+const LINK_TOGGLES: {
+  key: string;
+  patch: string;
+  label: string;
+  hint?: string;
+  def: boolean;
+  order: number;
+}[] = [
+  { key: "links.dashed", patch: "linkDashed", label: "dashed threads", def: true, order: 13 },
+  { key: "links.labels", patch: "linkLabels", label: "show constellation names", def: true, order: 14 },
+  {
+    key: "links.orbit",
+    patch: "linkOrbit",
+    label: "hold sizes steady while dragging",
+    hint: "swings the whole formation around you instead of sliding it sideways, so no member creeps closer than another",
+    def: true,
+    order: 21,
+  },
+  {
+    key: "links.autoTidy",
+    patch: "linkAutoTidy",
+    label: "form up when linked",
+    hint: "newly bound windows fan out evenly instead of staying where they were",
+    def: true,
+    order: 22,
+  },
+];
+
 const ARRANGEMENTS: { mode: ArrangeMode; label: string; glyph: string }[] = [
   { mode: "arc", label: "arrange \u2014 arc", glyph: "\u25dc" },
   { mode: "wall", label: "arrange \u2014 wall", glyph: "\u25a6" },
@@ -128,6 +188,39 @@ export const horizon: VoidModule = {
         hint: t.hint,
         kind: "toggle",
         group: "World",
+        order: t.order,
+        default: t.def,
+      });
+      offs.push(
+        ctx.state.subscribe(t.key, (v) => ctx.patchWorld({ [t.patch]: Boolean(v) }))
+      );
+    }
+
+    for (const k of LINK_KNOBS) {
+      ctx.defineSetting({
+        key: k.key,
+        label: k.label,
+        hint: k.hint,
+        kind: "slider",
+        group: "Links",
+        order: k.order,
+        default: k.def,
+        min: k.min,
+        max: k.max,
+        step: k.step,
+      });
+      offs.push(
+        ctx.state.subscribe(k.key, (v) => ctx.patchWorld({ [k.patch]: Number(v) }))
+      );
+    }
+
+    for (const t of LINK_TOGGLES) {
+      ctx.defineSetting({
+        key: t.key,
+        label: t.label,
+        hint: t.hint,
+        kind: "toggle",
+        group: "Links",
         order: t.order,
         default: t.def,
       });
@@ -183,6 +276,8 @@ export const horizon: VoidModule = {
       const patch: Record<string, unknown> = {};
       for (const k of KNOBS) patch[k.patch] = ctx.state.get<number>(KEYS[k.key], k.def);
       for (const t of TOGGLES) patch[t.patch] = ctx.state.get<boolean>(t.key, t.def);
+      for (const k of LINK_KNOBS) patch[k.patch] = ctx.state.get<number>(k.key, k.def);
+      for (const t of LINK_TOGGLES) patch[t.patch] = ctx.state.get<boolean>(t.key, t.def);
       ctx.patchWorld(patch);
     };
     flush();
