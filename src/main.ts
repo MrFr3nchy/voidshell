@@ -1,4 +1,5 @@
 import "./style.css";
+import "./ui/canvasStage.css";
 import { Kernel } from "./kernel/Kernel";
 import { ThreeCompositor } from "./compositor/ThreeCompositor";
 import { runBootSequence } from "./boot/bootSequence";
@@ -16,6 +17,11 @@ import { settings } from "./modules/settings";
 import { dashboards } from "./modules/dashboards";
 import { notes } from "./modules/notes";
 import { vitals } from "./modules/vitals";
+import { cradle } from "./modules/cradle";
+import { driftfield } from "./modules/driftfield";
+import { sandbox } from "./modules/sandbox";
+import { harmonograph } from "./modules/harmonograph";
+import { lunaria } from "./modules/lunaria";
 
 async function main() {
   const gl = document.getElementById("void")!;
@@ -46,7 +52,13 @@ async function main() {
     .register(settings)
     .register(dashboards)
     .register(notes)
-    .register(vitals);
+    .register(vitals)
+    // ambient apps — things to leave open and look at
+    .register(cradle)
+    .register(driftfield)
+    .register(sandbox)
+    .register(harmonograph)
+    .register(lunaria);
 
   // Panels emit a DOM event when their close button is hit; route it home.
   window.addEventListener("voidshell:close-surface", (e) => {
