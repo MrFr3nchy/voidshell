@@ -134,7 +134,7 @@ check("world patches flushed at boot", patches.length > 0);
 check("settings registry populated", ctx.settings().length >= 20);
 check(
   "settings cover every group",
-  ["Appearance", "Launcher", "World", "System"].every((grp) =>
+  ["Appearance", "Launcher", "World", "System", "Links"].every((grp) =>
     ctx.settings().some((d) => d.group === grp)
   )
 );
@@ -171,6 +171,13 @@ check("palette listed rows", hud.querySelectorAll(".palette-row").length > 0);
 // Settings must render a control for every def in the active group.
 const setBody = hud.ownerDocument.querySelector(".set-body");
 check("settings app rendered controls", (setBody?.children.length ?? 0) > 0);
+
+// Constellation controls must be published and default sanely.
+check(
+  "link settings registered",
+  ctx.settings().filter((d) => d.group === "Links").length === 8
+);
+check("orbit drag is the default", ctx.state.get("links.orbit", false) === true);
 
 // Rebinding a slot must persist and reshape the ring.
 ctx.state.set("launcher.count", 3);
