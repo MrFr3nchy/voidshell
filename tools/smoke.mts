@@ -23,6 +23,7 @@ const dom = new JSDOM(
 const g = globalThis as Record<string, unknown>;
 g.window = dom.window;
 g.document = dom.window.document;
+g.navigator = dom.window.navigator;
 g.localStorage = dom.window.localStorage;
 g.HTMLElement = dom.window.HTMLElement;
 g.HTMLInputElement = dom.window.HTMLInputElement;
@@ -58,6 +59,9 @@ const { ripple } = await import("../src/modules/ripple");
 const { flock } = await import("../src/modules/flock");
 const { orrery } = await import("../src/modules/orrery");
 const { lavalamp } = await import("../src/modules/lavalamp");
+const { turmite } = await import("../src/modules/turmite");
+const { chaos } = await import("../src/modules/chaos");
+const { sunclock } = await import("../src/modules/sunclock");
 const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
 const { createAppDrawer } = await import("../src/ui/appDrawer");
 const { createPalette } = await import("../src/ui/palette");
@@ -146,9 +150,12 @@ kernel
   .register(ripple)
   .register(flock)
   .register(orrery)
-  .register(lavalamp);
+  .register(lavalamp)
+  .register(turmite)
+  .register(chaos)
+  .register(sunclock);
 
-const MODULE_COUNT = 20;
+const MODULE_COUNT = 23;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -239,10 +246,16 @@ ctx.state.set("notes.doc.test", "hello void");
 check("note text stored", ctx.state.get("notes.doc.test", "") === "hello void");
 
 // The astronomy apps are computed, not fetched — they must answer offline.
-const readouts = [...hud.ownerDocument.querySelectorAll(".stage-value")];
+const readouts = [...hud.ownerDocument.querySelectorAll(".stage-value")].map(
+  (el) => el.textContent ?? ""
+);
 check(
   "lunaria reported a phase",
-  readouts.some((el) => /crescent|gibbous|quarter|full|new/i.test(el.textContent ?? ""))
+  readouts.some((t) => /crescent|gibbous|quarter|full|new/i.test(t))
+);
+check(
+  "sunclock reported a day length",
+  readouts.some((t) => /^\d+h \d\dm$/.test(t) || /midnight sun|polar night/.test(t))
 );
 
 // Closing everything must not throw.
