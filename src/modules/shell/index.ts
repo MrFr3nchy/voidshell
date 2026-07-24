@@ -1,5 +1,13 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
 import {
+  AUTOSTART_KEY,
+  DEFAULT_HOSTNAME,
+  DEFAULT_USER,
+  HOSTNAME_KEY,
+  USER_KEY,
+} from "../../kernel/sysfs";
+import { emptyTrash, TRASH_DIR } from "../../kernel/trash";
+import {
   ALLAPPS_KEY,
   COUNT_KEY,
   HINT_KEY,
@@ -8,6 +16,7 @@ import {
   SLOTS_KEY,
   resolveSlots,
 } from "../../ui/spawner";
+import { SECONDS_KEY, STATUSBAR_KEY } from "../../ui/statusBar";
 
 export const SOUND_KEY = "system.sound";
 export const RESTORE_KEY = "system.restoreSession";
@@ -17,6 +26,7 @@ const KEYBINDS: [string, string][] = [
   ["\u2318 / ctrl + k", "command palette"],
   ["\u2318 / ctrl + shift + a", "all apps"],
   ["\u2318 / ctrl + ,", "settings"],
+  ["\u2318 / ctrl + shift + l", "lock the session"],
   ["home", "recentre the view"],
   ["escape", "close whatever is open"],
   ["\u2318 / ctrl + shift + u", "dissolve every constellation"],
@@ -102,7 +112,67 @@ export const shell: VoidModule = {
       default: true,
     });
 
+    /* ---------------- identity ---------------- */
+
+    // These two are the backing store for /etc/passwd and /etc/hostname. The
+    // settings screen and `hostname foo` in the console are two doors onto one
+    // value, which is the whole reason /etc is generated rather than stored.
+
+    ctx.defineSetting({
+      key: USER_KEY,
+      label: "who you are",
+      hint: "shows in the prompt, the status bar and /etc/passwd",
+      kind: "custom",
+      group: "System",
+      order: 1,
+      default: DEFAULT_USER,
+      render: (root, c) => renderTextSetting(root, c, USER_KEY, DEFAULT_USER),
+    });
+
+    ctx.defineSetting({
+      key: HOSTNAME_KEY,
+      label: "what this machine is called",
+      hint: "the other half of the prompt · also `hostname` in the console",
+      kind: "custom",
+      group: "System",
+      order: 2,
+      default: DEFAULT_HOSTNAME,
+      render: (root, c) => renderTextSetting(root, c, HOSTNAME_KEY, DEFAULT_HOSTNAME),
+    });
+
+    /* ---------------- status bar ---------------- */
+
+    ctx.defineSetting({
+      key: STATUSBAR_KEY,
+      label: "show the status bar",
+      hint: "clock, uptime, running processes and the notice bell",
+      kind: "toggle",
+      group: "System",
+      order: 5,
+      default: true,
+    });
+
+    ctx.defineSetting({
+      key: SECONDS_KEY,
+      label: "seconds on the clock",
+      kind: "toggle",
+      group: "System",
+      order: 6,
+      default: false,
+    });
+
     /* ---------------- system ---------------- */
+
+    ctx.defineSetting({
+      key: AUTOSTART_KEY,
+      label: "launch these at boot",
+      hint: "the same list as /etc/autostart — edit it either way",
+      kind: "custom",
+      group: "System",
+      order: 12,
+      default: [],
+      render: (root, c) => renderAutostart(root, c),
+    });
 
     ctx.defineSetting({
       key: RESTORE_KEY,
@@ -158,12 +228,28 @@ export const shell: VoidModule = {
     });
 
     ctx.defineSetting({
+      key: "system.emptyTrash",
+      label: "empty the trash",
+      hint: "deleted files live in ~/.Trash until this \u2014 `restore <name>` gets them back",
+      kind: "action",
+      group: "System",
+      order: 42,
+      run: (c) => {
+        const n = emptyTrash(c);
+        c.notify(
+          n ? `deleted ${n} item${n === 1 ? "" : "s"} for good` : "the trash was already empty",
+          n ? "good" : "info"
+        );
+      },
+    });
+
+    ctx.defineSetting({
       key: "system.reset",
       label: "wipe everything and start over",
       hint: "settings, launcher bindings, saved dashboards, notes \u2014 all of it",
       kind: "action",
       group: "System",
-      order: 41,
+      order: 43,
       run: (c) => c.emit("shell.factoryReset"),
     });
 
@@ -206,6 +292,44 @@ export const shell: VoidModule = {
       },
     });
 
+    /* ---------------- power ---------------- */
+
+    // The shell owns the screen, so these publish an intent and the HUD's power
+    // veil acts on it. Same split as factoryReset: modules don't touch chrome.
+    ctx.defineCommand({
+      id: "shell.lock",
+      label: "lock",
+      hint: "leave the void up without leaving it open",
+      glyph: "\u25cd",
+      run: (c) => c.emit("system.power", { action: "lock" }),
+    });
+    ctx.defineCommand({
+      id: "shell.reboot",
+      label: "restart",
+      hint: "save the session and boot again",
+      glyph: "\u21bb",
+      run: (c) => c.emit("system.power", { action: "reboot" }),
+    });
+    ctx.defineCommand({
+      id: "shell.shutdown",
+      label: "shut down",
+      hint: "save everything and stop",
+      glyph: "\u23fb",
+      run: (c) => c.emit("system.power", { action: "shutdown" }),
+    });
+    ctx.defineCommand({
+      id: "shell.trash",
+      label: "open the trash",
+      hint: "deleted files, still recoverable",
+      glyph: "\u232b",
+      run: (c) => {
+        // The directory is created lazily on first delete, so a user who has
+        // never deleted anything would otherwise get "no such path".
+        c.fs.mkdirp(TRASH_DIR);
+        c.openPath(TRASH_DIR);
+      },
+    });
+
     /* ---------------- audible feedback ---------------- */
 
     const blip = makeBlipper(() => ctx.state.get<boolean>(SOUND_KEY, false));
@@ -218,6 +342,86 @@ export const shell: VoidModule = {
     return () => offs.forEach((off) => off());
   },
 };
+
+/**
+ * A one-line text setting. The settings registry has no "text" kind — it was
+ * built for knobs, and a free-text field is the one shape a slider, a toggle
+ * and a select can't cover. Rather than widen SettingKind for two uses, this
+ * renders one through the `custom` escape hatch, which is what it's for.
+ */
+function renderTextSetting(
+  root: HTMLElement,
+  ctx: KernelContext,
+  key: string,
+  fallback: string
+): () => void {
+  const input = document.createElement("input");
+  input.className = "set-text";
+  input.type = "text";
+  input.spellcheck = false;
+  input.value = ctx.state.get<string>(key, fallback);
+
+  const commit = () => {
+    const next = input.value.trim() || fallback;
+    input.value = next;
+    ctx.state.set(key, next);
+  };
+  input.addEventListener("change", commit);
+  input.addEventListener("blur", commit);
+
+  root.appendChild(input);
+  // Someone else may have set it — `hostname foo` in the console writes the
+  // same key through /etc/hostname's sink.
+  return ctx.state.subscribe(key, (v) => {
+    if (document.activeElement !== input) input.value = String(v ?? fallback);
+  });
+}
+
+/**
+ * The autostart editor: a checkbox per app, writing the same store key that
+ * /etc/autostart reads and writes. Neither is the "real" one.
+ */
+function renderAutostart(root: HTMLElement, ctx: KernelContext): () => void {
+  const paint = () => {
+    root.replaceChildren();
+    const chosen = new Set(ctx.state.get<string[]>(AUTOSTART_KEY, []));
+    const list = document.createElement("div");
+    list.className = "auto-list";
+
+    for (const app of ctx.registry().filter((m) => m.kind === "app")) {
+      const row = document.createElement("label");
+      row.className = "auto-row";
+
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = chosen.has(app.id);
+      box.addEventListener("change", () => {
+        // Rebuilt from the registry order so the file stays stable rather than
+        // recording the order the boxes happened to be clicked in.
+        const next = ctx.registry()
+          .filter((m) => m.kind === "app")
+          .map((m) => m.id)
+          .filter((id) => (id === app.id ? box.checked : chosen.has(id)));
+        ctx.state.set(AUTOSTART_KEY, next);
+      });
+
+      const glyph = document.createElement("span");
+      glyph.className = "auto-glyph";
+      glyph.textContent = app.glyph ?? "·";
+
+      const name = document.createElement("span");
+      name.className = "auto-name";
+      name.textContent = app.name;
+
+      row.append(box, glyph, name);
+      list.appendChild(row);
+    }
+    root.appendChild(list);
+  };
+
+  paint();
+  return ctx.state.subscribe(AUTOSTART_KEY, paint);
+}
 
 /**
  * The slot editor. Each row is one node in the ring; the select rebinds it and

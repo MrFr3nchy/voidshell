@@ -28,6 +28,7 @@ two commands to run it.
 | **⌘/ctrl + K** | command palette — apps, verbs and open windows in one list |
 | **⌘/ctrl + shift + A** | all apps |
 | **⌘/ctrl + ,** | settings |
+| **⌘/ctrl + shift + L** | lock the session |
 | **home** | recentre the view |
 | drag a title bar | move a window through space |
 | scroll a window | push it away / pull it closer |
@@ -47,9 +48,10 @@ facing it again. Constellations report as one destination instead of four.
 Three things, and they barely know about each other:
 
 1. **The kernel** (`src/kernel/`) — the entire OS. It owns the module registry,
-   the surface (window) table, the settings and command registries, an event bus,
-   and shared state. It renders *nothing*. Like a microkernel, everything
-   interesting lives outside it.
+   the process table, the surface (window) table, the filesystem, the journal,
+   the settings and command registries, an event bus, and shared state. It
+   renders *nothing*. Like a microkernel, everything interesting lives outside
+   it.
 
 2. **The compositor** (`src/compositor/`) — the render backend. The kernel hands
    it abstract *surfaces* and says "give this a body." How it does that — WebGL,
@@ -147,21 +149,154 @@ Everything a module can do, deliberately small:
 - `notify` — say something in the corner of the void
 - `launch` / `launchAt` / `registry` — reach other modules
 - `openPath(path)` — route a file to whichever module `handles` its extension
+- `ps` / `kill` — the process table
+- `log` / `journal` / `uptime` — the system journal
 
 `kind: "app"` shows in the launcher. `kind: "world"` and `kind: "service"` stay
 invisible — daemons. **Aurora** is worth reading: it owns every colour in the
 build and exposes them purely as registered settings, which is how "theme"
 becomes a *program* instead of a hardcoded palette.
 
+## Processes
+
+An OS is, more than anything else, a thing that keeps track of what is running.
+voidshell used to have windows but no processes: launching an app *was* opening
+a surface, and closing the surface meant the app was simply gone. Nothing could
+be listed and nothing could be killed, and the service modules — aurora,
+horizon, shell — were invisible despite running for the whole session.
+
+Now every launch is a process, and every background module is a daemon:
+
+```
+void@void ~ › ps
+  PID  STAT    ELAPSED   MODULE        NAME
+    1  daemon    04:41   kernel        voidshell
+    2  daemon    04:41   aurora        Aurora
+    3  daemon    04:41   horizon       Horizon
+    4  daemon    04:41   shell         Shell
+   11  running   00:52   workspace     Workspace
+   14  running   00:07   monitor       Monitor
+```
+
+The key move is that **process lifetime is derived from surface ownership**
+rather than tracked alongside it. Surfaces opened during a `launch()` belong to
+that launch's process, and the process exits when its last window closes — so
+`ps` cannot drift out of sync with what's actually on screen.
+
+`kill <pid>` closes every window a process owns, routing through the ordinary
+close path so each module still runs its own cleanup. **Daemons refuse to die.**
+That isn't a limitation being papered over: aurora owns every colour in the
+build and horizon owns the sky, so "killed the theme daemon" would be an
+unrecoverable state reachable by typing four characters. A real OS refuses to
+kill init for the same reason, and reports `EPERM` rather than pretending it
+worked.
+
+## The system is a filesystem
+
+voidshell already decided that the desktop is a directory. This is that bet
+taken all the way. Processes, devices, configuration and the log are all
+reachable with `cat`:
+
+```
+ls /proc                    one directory per running process
+cat /proc/uptime            live — recomputed on every read
+cat /proc/12/status         what process 12 actually is
+cat /proc/meminfo           filesystem and heap
+tail -n 20 /var/log/system.log | grep warn
+noisy-command > /dev/null   a real sink, not a special case in the shell
+echo notes >> /etc/autostart  edits what launches at boot
+```
+
+Nothing here invents an API. Each is an ordinary VFS node with a `gen` (content
+computed on demand) or a `sink` (where a write goes), which means every tool
+that already worked on files — `cat`, `grep`, `tail`, redirection, tab
+completion, the file manager — works on them with **no special-casing
+anywhere**. `> /dev/null` needed zero shell support: redirection already writes
+to a path, and that path throws it away.
+
+The payoff for making sinks writable inside a read-only mount is `/etc`. It is
+generated from the settings store *and writes back to it*, so the Settings app,
+`hostname foo`, and `echo >> /etc/autostart` are three doors onto one value
+rather than three implementations of it. Configuring the system by editing a
+config file is the actual mechanism, not a simulation of it.
+
+## The journal
+
+Toasts vanish after 2.6 seconds and `console.log` goes somewhere the shell can't
+reach, so until now nothing the system did left a trace you could grep. The
+journal is a fixed-size ring the kernel writes boot, mount, spawn, exit and
+error events into, and it's served as `/var/log/system.log` — so `tail`, `grep`
+and `wc` are the log tooling and none had to be written.
+
+`ctx.log()` is tagged with the calling module's id automatically. `ctx.notify()`
+is mirrored in, which is where **notification history** comes from: the bell in
+the status bar is just a window onto entries that were always being recorded.
+
+`dmesg [level]` reads it in the console; the Monitor app renders it with the
+process table and the mount table.
+
+## Session lifecycle
+
+Ignition was a beautiful front door onto a building with no other doors. There's
+now a whole session: `lock`, `reboot` and `shutdown` (as commands, palette
+verbs, and **⌘/ctrl + shift + L**), plus `/etc/autostart` deciding what opens at
+boot.
+
+All three power states are one veil with different contents, because they're the
+same idea at different depths. The lock screen is **honest about what it is** —
+there is no password, because a passphrase checked in client-side JavaScript
+against a value in localStorage protects nothing and would imply otherwise. It's
+a screen you can leave up, which is the part that's actually useful in a tab.
+
+Autostart runs on every boot, restored session or not — that's what makes it
+autostart rather than a second session file. The singleton guard means anything
+the restore already re-opened gets refocused, not cloned.
+
+## The status bar
+
+voidshell deliberately has no taskbar. But "no taskbar" had quietly become "no
+persistent chrome at all", and that was most of why the place didn't read as an
+OS: no clock, nothing saying who you were, and no evidence anything was running
+once every window was closed.
+
+The status bar lists no windows and launches nothing off a strip, so it isn't a
+taskbar by the back door. It answers *who, when, how long, how much* — and hosts
+the notice bell. Turn it off in Settings › System.
+
 ## The filesystem
 
 `src/kernel/vfs.ts` is a single tree assembled from mounts, reached by modules
-through `ctx.fs`. Two mounts ship:
+through `ctx.fs`. Five mounts ship:
 
 | mount | mode | backing |
 | --- | --- | --- |
 | `/home/void` | read-write | localStorage, debounced on change |
 | `/projects` | read-only | build-time scan of the sibling project dirs |
+| `/proc` | synthetic | the process table and live system counters |
+| `/dev` | synthetic | `null`, `zero`, `random`, `console` |
+| `/etc` | synthetic, writable | the settings store |
+| `/var/log` | synthetic | the journal |
+
+`mount` lists them. Files carry an `mtime`, shown by `ls -l` and persisted across
+reloads — without that every file would claim to have been modified at boot,
+which makes dates worse than useless.
+
+### The trash
+
+`rm` is recoverable. Deleting moves to `~/.Trash` and records where the file came
+from, so `restore <name>` puts it back — including re-creating the directory it
+lived in if that's gone too. `rm -f` is the permanent path, and it's the only one
+that needs `-r` for a directory, because a guard is worth something only on the
+irreversible route.
+
+Trashing is a **move**, so it costs nothing and can't corrupt anything. The
+manifest that remembers original paths lives in the store rather than as a
+dotfile inside `~/.Trash`, which is what lets emptying the trash be a plain
+recursive delete with nothing to preserve.
+
+Delete on the desktop and in the file manager route through the same helper.
+Dotfiles are hidden in both — `~/.Trash` and `~/.desktop-layout.json` are the
+shell's bookkeeping, not your documents — and `ls -a` still shows them.
 
 Permissions live on the *node*, not on a path prefix, so a mount carries its own
 rules wherever it's grafted in. Writing to `/projects` fails with `EROFS` the way
@@ -191,9 +326,25 @@ Browsing and typing are the same activity, so they share a window and a working
 directory. Click into a folder and the prompt follows; `cd` and the list
 follows. The divider between the panes is draggable, and its position persists.
 
-The console is a real shell over that FS: `cd` / `ls -l` / `cat` / `tree` /
-`find`, plus `mkdir`, `rm -r`, `mv`, `touch`, `df` and `history`. It holds no
-privileges the syscall surface doesn't already grant every module.
+The console is a real shell over that FS: `cd` / `ls -la` / `cat` / `tree` /
+`find`, plus `mkdir`, `rm`, `mv`, `touch`, `df`, `mount` and `history`. It holds
+no privileges the syscall surface doesn't already grant every module.
+
+**The system commands.** `ps`, `kill <pid>`, `uptime`, `free` and `dmesg` read
+the process table and the journal; `whoami`, `hostname`, `env`, `export` and
+`unset` handle identity and environment; `trash` / `restore` manage deletions;
+`lock`, `reboot` and `shutdown` end the session. Several are deliberately thin —
+`free` prints `/proc/meminfo` rather than recomputing it, so if `/proc` is wrong
+the command is wrong in exactly the same way.
+
+**Variables.** `$VAR` and `${VAR}` expand, and `$?` is the last exit status.
+`HOME`, `PWD`, `USER` and `HOSTNAME` are *derived* on every lookup rather than
+stored, so `$USER` can never disagree with `/etc/passwd` and `cd` can never leave
+`$PWD` stale — a shell that caches those has two sources of truth for one fact.
+Expansion happens inside the tokenizer, not as a pre-pass, because `'$HOME'` and
+`"$HOME"` differ and a regex over the line can't tell them apart. An expanded
+value is treated as quoted, so a variable holding `|` can't silently become a
+pipe.
 
 **Pipelines and redirection.** `|` chains commands, `>` and `>>` write and
 append, and `&&` stops at the first failure. The filters (`grep -i`, `sort -r`,
@@ -350,7 +501,11 @@ backend is genuinely minimal.
 - Syntax highlighting in the file viewer (the language is already detected).
 - Multi-select on the desktop (marquee drag, shift-click) — everything today is
   single-selection.
-- Undo. There is no trash: `Delete` is immediate and permanent.
+- Undo for *edits*. Deletions are recoverable from the trash now, but a bad
+  `mv` or a clobbering `>` still isn't.
+- Per-module permissions. Every module currently gets the whole syscall surface;
+  a manifest that declares what it needs is the obvious next tightening, and the
+  process table is the thing that would enforce it.
 - Multi-line file writing from the shell (`write` joins its arguments with
   spaces, so use the editor for anything with real line breaks).
 - Running the web projects in-shell — iframe-based `render()` for `hero-nexus`

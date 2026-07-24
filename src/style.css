@@ -1966,13 +1966,522 @@ body.vs-dropping #void::after {
   }
 }
 
+/* ---------- Status bar ---------- */
+/* Not a taskbar: it lists no windows and launches nothing off a strip. It
+   answers who / when / how long / how much, which is the one thing the void
+   could never tell you when every panel was closed. */
+.statusbar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: rgba(9, 12, 24, 0.62);
+  backdrop-filter: blur(14px);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  z-index: 60;
+  user-select: none;
+}
+.statusbar[hidden] {
+  display: none;
+}
+.sb-item {
+  white-space: nowrap;
+}
+.sb-who {
+  color: var(--cyan);
+}
+.sb-clock {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.18em;
+}
+.sb-procs,
+.sb-bell {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+.sb-procs:hover,
+.sb-bell:hover,
+.sb-bell.open {
+  color: var(--cyan);
+}
+.sb-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+}
+.sb-badge {
+  min-width: 14px;
+  height: 14px;
+  margin-left: 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  color: transparent;
+}
+.sb-badge.live {
+  background: var(--magenta);
+  color: #fff;
+  padding: 0 4px;
+}
+.sb-bell.alarm {
+  animation: sb-alarm 0.7s ease;
+}
+@keyframes sb-alarm {
+  0%,
+  100% {
+    color: var(--text-dim);
+  }
+  30%,
+  60% {
+    color: var(--ember);
+  }
+}
+
+.sb-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 320px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 10, 20, 0.94);
+  backdrop-filter: blur(16px);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  cursor: default;
+}
+.sb-popover[hidden] {
+  display: none;
+}
+.sb-pop-title {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 2px 4px 8px;
+}
+.sb-pop-empty {
+  padding: 10px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.sb-pop-row {
+  display: flex;
+  gap: 9px;
+  padding: 6px 4px;
+  font-size: 11px;
+  border-top: 1px solid rgba(150, 185, 255, 0.08);
+  color: var(--text);
+}
+.sb-pop-when {
+  flex: 0 0 32px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sb-pop-text {
+  flex: 1;
+}
+.sb-pop-row.is-warn .sb-pop-text,
+.sb-pop-row.is-error .sb-pop-text {
+  color: var(--ember);
+}
+.sb-pop-more {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.sb-pop-more:hover {
+  color: var(--cyan);
+  background: var(--glass-hi);
+}
+
+/* ---------- Lock / power ---------- */
+.power-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 5, 11, 0.55);
+  backdrop-filter: blur(22px);
+  opacity: 0;
+  transition: opacity 0.42s ease;
+}
+.power-veil.up {
+  opacity: 1;
+}
+.power-veil.is-down {
+  background: var(--void-0);
+  backdrop-filter: none;
+}
+.lock-face,
+.down-face {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.lock-time {
+  font-family: var(--font-display);
+  font-size: 76px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.lock-date {
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.lock-who {
+  margin-top: 22px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--cyan);
+}
+.lock-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  animation: lock-breathe 3.2s ease-in-out infinite;
+}
+@keyframes lock-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+/* Ignition, played backwards: the void collapsing to the point it grew from. */
+.down-spark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 60px 18px rgba(192, 92, 255, 0.6);
+  animation: collapse 1.4s cubic-bezier(0.6, 0, 0.4, 1) forwards;
+}
+@keyframes collapse {
+  0% {
+    transform: scale(30);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+.down-word {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.down-word.final {
+  color: var(--text);
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+}
+
+/* ---------- Monitor ---------- */
+.mon-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: 11px;
+}
+.mon-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 4px 8px;
+  flex: 0 0 auto;
+}
+.mon-tab {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.mon-tab:hover {
+  color: var(--text);
+}
+.mon-tab.on {
+  border-color: var(--edge);
+  background: var(--glass);
+  color: var(--cyan);
+}
+.mon-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mon-table {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.mon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(150, 185, 255, 0.06);
+}
+.mon-row.is-head {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom-color: var(--edge);
+}
+.mon-row.is-daemon {
+  color: var(--text-dim);
+}
+.mon-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.c-pid {
+  flex: 0 0 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.c-name {
+  flex: 1 1 90px;
+  color: var(--text);
+}
+.mon-row.is-daemon .c-name {
+  color: var(--text-dim);
+}
+.c-mod {
+  flex: 1 1 80px;
+}
+.c-state {
+  flex: 0 0 58px;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.mon-row.is-running .c-state {
+  color: var(--cyan);
+}
+.c-time {
+  flex: 0 0 54px;
+  font-variant-numeric: tabular-nums;
+}
+.c-act {
+  flex: 0 0 40px;
+  text-align: right;
+}
+.mon-kill {
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: none;
+  padding: 2px 7px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.mon-kill:hover {
+  border-color: color-mix(in srgb, var(--ember) 60%, transparent);
+  color: var(--ember);
+}
+.mon-note {
+  flex: 0 0 auto;
+  padding: 7px 6px 2px;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.mon-filter {
+  display: flex;
+  gap: 4px;
+  padding: 0 4px 6px;
+  flex: 0 0 auto;
+}
+.mon-lvl {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  padding: 2px 8px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.mon-lvl.on {
+  border-color: var(--edge);
+  color: var(--cyan);
+}
+.mon-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.mon-logrow {
+  display: flex;
+  gap: 8px;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.mon-logt {
+  flex: 0 0 58px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.mon-logtag {
+  flex: 0 0 64px;
+  color: var(--magenta);
+}
+.mon-logmsg {
+  flex: 1;
+  color: var(--text);
+  word-break: break-word;
+}
+.mon-logrow.is-warn .mon-logmsg {
+  color: var(--ember);
+}
+.mon-logrow.is-error .mon-logmsg {
+  color: var(--ember);
+  font-weight: 600;
+}
+.mon-sys {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 4px;
+}
+.mon-syshead {
+  padding: 8px 2px 4px;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.mon-syspre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(150, 185, 255, 0.1);
+  background: rgba(150, 180, 255, 0.03);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* ---------- Settings: text fields and the autostart list ---------- */
+.set-text {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: rgba(150, 180, 255, 0.04);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.set-text:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--cyan) 60%, transparent);
+}
+.auto-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 2px 10px;
+}
+.auto-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.auto-row:hover {
+  color: var(--text);
+}
+.auto-glyph {
+  color: var(--magenta);
+}
+.auto-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vs-panel,
   .spawner-node,
   .spawner-core,
   .toast,
   .drawer,
-  .palette {
+  .palette,
+  .power-veil {
     transition: none;
+  }
+  .lock-hint,
+  .down-spark,
+  .sb-bell.alarm {
+    animation: none;
   }
 }

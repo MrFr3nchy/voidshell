@@ -1,5 +1,6 @@
 import type { FsEntry, KernelContext } from "../../kernel/types";
 import { basename, dirname } from "../../kernel/vfs";
+import { moveToTrash } from "../../kernel/trash";
 import { promptInline, showContextMenu } from "../../ui/contextMenu";
 import { clipboard } from "../../ui/clipboard";
 import { copyRecursive } from "../desktop";
@@ -116,11 +117,15 @@ export function createBrowser(
               ),
       },
       {
-        label: "Delete",
+        label: "Move to Trash",
         danger: true,
         action: entry.readonly
           ? undefined
-          : () => guard(() => ctx.fs.rm(entry.path, entry.kind === "dir")),
+          : () =>
+              guard(() => {
+                const name = moveToTrash(ctx, entry.path);
+                ctx.notify(`${entry.name} → trash · restore ${name}`);
+              }),
       },
     ]);
   };
@@ -130,7 +135,10 @@ export function createBrowser(
 
     let items: FsEntry[];
     try {
-      items = ctx.fs.ls(cwd);
+      // Dotfiles are hidden here for the same reason every file manager hides
+      // them: ~/.Trash and ~/.desktop-layout.json are the shell's bookkeeping,
+      // not the user's documents. `ls -a` in the console still shows them.
+      items = ctx.fs.ls(cwd).filter((e) => !e.name.startsWith("."));
     } catch (err) {
       const e = document.createElement("div");
       e.className = "fm-note warn";

@@ -1,15 +1,25 @@
 /**
  * voidshell's filesystem.
  *
- * A single tree of nodes, assembled from mounts. Two mounts ship today:
+ * A single tree of nodes, assembled from mounts. Four kinds ship today:
  *
- *   /home/void   writable, persisted to localStorage — your actual files
- *   /projects    read-only, materialised from the build-time disk scan
+ *   /home/void            writable, persisted to localStorage — your actual files
+ *   /projects             read-only, materialised from the build-time disk scan
+ *   /proc /dev /var/log   synthetic: content computed at the moment you read it
+ *   /etc                  synthetic, but writable — backed by the settings store
  *
  * Read-only-ness is enforced per-node rather than per-path prefix, so a mount
  * carries its own permissions wherever it is grafted in. Writes to /projects
  * fail the same way they would on a real read-only mount: with EROFS, not by
  * silently doing nothing.
+ *
+ * Synthetic nodes are what let the rest of the system be a filesystem. A file
+ * with a `gen` produces its bytes on demand, so /proc/uptime is *actually*
+ * current rather than a snapshot someone remembered to refresh; a file with a
+ * `sink` swallows or redirects writes, which is the whole of /dev/null and how
+ * /etc/autostart writes back into the store. Because they are ordinary nodes,
+ * every tool that already worked on files — cat, grep, tail, redirection —
+ * works on them with no special-casing anywhere.
  */
 
 export type NodeKind = "file" | "dir";
@@ -29,6 +39,27 @@ export interface VNode {
   mtime: number;
   /** Free-form badge shown by the file manager, e.g. a project's language. */
   meta?: Record<string, string>;
+
+  /* --- synthetic nodes --- */
+
+  /** Content computed at read time. Makes /proc and /dev live rather than stale. */
+  gen?: () => string;
+  /** Where a write goes when there's no stored string to overwrite. */
+  sink?: (data: string) => void;
+  /** Children computed at read time, for directories whose entries come and go. */
+  genDir?: () => Map<string, VNode>;
+  /** Marks a whole subtree as not-really-storage, so `df` doesn't count it. */
+  synthetic?: boolean;
+}
+
+/**
+ * A directory's children, whether they are stored or generated. Every traversal
+ * goes through here so a synthetic directory is indistinguishable from a real
+ * one to `ls`, tab-completion, the file manager and the desktop alike.
+ */
+function childrenOf(node: VNode): Map<string, VNode> | undefined {
+  if (node.genDir) return node.genDir();
+  return node.children;
 }
 
 export class FsError extends Error {
@@ -89,22 +120,47 @@ export interface DirEntry {
   kind: NodeKind;
   size: number;
   readonly: boolean;
+  /** Last modification, epoch ms. `ls -l` without a date isn't a filesystem. */
+  mtime: number;
   omitted?: "binary" | "toolarge";
   meta?: Record<string, string>;
 }
 
 const STORAGE_KEY = "voidshell.fs.home";
 
+/** One row of the mount table, as `mount` reports it. */
+export interface MountInfo {
+  at: string;
+  /** What's behind it: localStorage, the build scan, or a live generator. */
+  backing: string;
+  readonly: boolean;
+  synthetic: boolean;
+}
+
 export class VFS {
   private root = dir("/");
   /** Bumped on every mutation so UIs can cheaply tell they're stale. */
   private version = 0;
   private listeners = new Set<(version: number) => void>();
+  private mountTable: MountInfo[] = [];
 
   constructor() {
     this.mkdirp("/home/void");
     this.mkdirp("/home/void/notes");
     this.mkdirp("/tmp");
+    // The home tree isn't grafted in by mount(), so it has to announce itself
+    // or `mount` would omit the one filesystem the user actually writes to.
+    this.mountTable.push({
+      at: "/home/void",
+      backing: "localStorage",
+      readonly: false,
+      synthetic: false,
+    });
+  }
+
+  /** Everything currently grafted into the tree, ordered by path. */
+  mounts(): MountInfo[] {
+    return [...this.mountTable].sort((a, b) => a.at.localeCompare(b.at));
   }
 
   // ---------- lookup ----------
@@ -114,8 +170,9 @@ export class VFS {
     if (n === "/") return this.root;
     let cur = this.root;
     for (const seg of n.slice(1).split("/")) {
-      if (cur.kind !== "dir" || !cur.children) return null;
-      const next = cur.children.get(seg);
+      if (cur.kind !== "dir") return null;
+      const kids = childrenOf(cur);
+      const next = kids?.get(seg);
       if (!next) return null;
       cur = next;
     }
@@ -133,14 +190,27 @@ export class VFS {
     return this.lookup(p) !== null;
   }
 
+  /** A generated file reports the size of what it would produce right now. */
+  private sizeOf(n: VNode): number {
+    if (n.gen) {
+      try {
+        return n.gen().length;
+      } catch {
+        return 0;
+      }
+    }
+    return n.size;
+  }
+
   stat(p: string): DirEntry {
     const n = this.must(p);
     return {
       name: n.name,
       path: normalize(p),
       kind: n.kind,
-      size: n.size,
+      size: this.sizeOf(n),
       readonly: !!n.readonly,
+      mtime: n.mtime,
       omitted: n.omitted,
       meta: n.meta,
     };
@@ -152,15 +222,17 @@ export class VFS {
 
   ls(p: string): DirEntry[] {
     const n = this.must(p);
-    if (n.kind !== "dir" || !n.children) throw enotdir(p);
+    const kids = n.kind === "dir" ? childrenOf(n) : undefined;
+    if (!kids) throw enotdir(p);
     const base = normalize(p);
-    return [...n.children.values()]
+    return [...kids.values()]
       .map((c) => ({
         name: c.name,
         path: base === "/" ? `/${c.name}` : `${base}/${c.name}`,
         kind: c.kind,
-        size: c.size,
+        size: this.sizeOf(c),
         readonly: !!c.readonly,
+        mtime: c.mtime,
         omitted: c.omitted,
         meta: c.meta,
       }))
@@ -172,6 +244,8 @@ export class VFS {
   read(p: string): string {
     const n = this.must(p);
     if (n.kind === "dir") throw eisdir(p);
+    // Generated first: /proc/uptime has no stored content and never will.
+    if (n.gen) return n.gen();
     if (n.content === undefined) {
       throw new FsError(
         "ENODATA",
@@ -187,8 +261,11 @@ export class VFS {
 
   private parentFor(p: string): VNode {
     const parent = this.must(dirname(p));
-    if (parent.kind !== "dir" || !parent.children) throw enotdir(dirname(p));
-    if (parent.readonly) throw erofs(p);
+    if (parent.kind !== "dir") throw enotdir(dirname(p));
+    // Read-only is the more informative failure, so it's reported ahead of
+    // "this directory has no stored children" — which is the same condition
+    // seen from the inside for a generated directory like /proc.
+    if (parent.readonly || !parent.children) throw erofs(p);
     return parent;
   }
 
@@ -197,6 +274,15 @@ export class VFS {
     const existing = this.lookup(n);
     if (existing) {
       if (existing.kind === "dir") throw eisdir(p);
+      // A sink accepts writes even inside a read-only subtree — that *is* the
+      // node's purpose. /dev/null discards; /etc/autostart parses into the
+      // store. Checked before `readonly` so the mount's blanket flag doesn't
+      // reject the one thing the node exists to do.
+      if (existing.sink) {
+        existing.sink(content);
+        this.touched();
+        return;
+      }
       if (existing.readonly) throw erofs(p);
       existing.content = content;
       existing.size = content.length;
@@ -223,11 +309,13 @@ export class VFS {
     let path = "";
     for (const seg of segs) {
       path += `/${seg}`;
-      let next = cur.children!.get(seg);
+      let next = childrenOf(cur)?.get(seg);
       if (!next) {
-        if (cur.readonly) throw erofs(path);
+        // A generated directory has no stored map to add to, so mkdir there is
+        // EROFS rather than a crash on `children!`.
+        if (cur.readonly || !cur.children) throw erofs(path);
         next = dir(seg);
-        cur.children!.set(seg, next);
+        cur.children.set(seg, next);
       }
       if (next.kind !== "dir") throw enotdir(path);
       cur = next;
@@ -275,6 +363,13 @@ export class VFS {
     const parent = this.must(dirname(n));
     node.name = basename(n);
     parent.children!.set(node.name, node);
+    this.mountTable = this.mountTable.filter((m) => m.at !== n);
+    this.mountTable.push({
+      at: n,
+      backing: node.synthetic ? "generated" : node.readonly ? "build scan" : "memory",
+      readonly: !!node.readonly,
+      synthetic: !!node.synthetic,
+    });
     this.touched();
   }
 
@@ -282,17 +377,27 @@ export class VFS {
 
   /** Serialise just the writable home tree. /projects comes from the build. */
   private serialize(node: VNode): unknown {
-    if (node.kind === "file") return { n: node.name, k: "f", c: node.content ?? "" };
+    // `m` carries mtime across reloads. Without it every file would claim to
+    // have been modified at boot, which makes `ls -l` dates worse than useless.
+    if (node.kind === "file")
+      return { n: node.name, k: "f", c: node.content ?? "", m: node.mtime };
     return {
       n: node.name,
       k: "d",
-      ch: [...node.children!.values()].map((c) => this.serialize(c)),
+      m: node.mtime,
+      ch: [...(node.children?.values() ?? [])].map((c) => this.serialize(c)),
     };
   }
 
   private deserialize(raw: any): VNode {
-    if (raw.k === "f") return file(raw.n, raw.c ?? "");
+    const stamp = typeof raw.m === "number" ? raw.m : Date.now();
+    if (raw.k === "f") {
+      const f = file(raw.n, raw.c ?? "");
+      f.mtime = stamp;
+      return f;
+    }
     const d = dir(raw.n);
+    d.mtime = stamp;
     for (const c of raw.ch ?? []) d.children!.set(c.n, this.deserialize(c));
     return d;
   }
@@ -347,13 +452,17 @@ export class VFS {
     let bytes = 0;
     let indexed = 0;
     const walk = (n: VNode) => {
+      // /proc and /dev are not storage. Counting them would put "files" that
+      // occupy nothing into a disk report, and would run every generator on
+      // every `df`.
+      if (n.synthetic) return;
       if (n.kind === "file") {
         files++;
         indexed += n.size;
         if (n.content !== undefined) bytes += n.content.length;
       } else {
         dirs++;
-        for (const c of n.children!.values()) walk(c);
+        for (const c of n.children?.values() ?? []) walk(c);
       }
     };
     walk(this.root);

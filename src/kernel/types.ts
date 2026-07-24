@@ -7,6 +7,12 @@
  * the same modules render in a completely different world.
  */
 
+import type { LogEntry, LogLevel } from "./journal";
+import type { ProcInfo } from "./procs";
+import type { MountInfo } from "./vfs";
+
+export type { LogEntry, LogLevel, MountInfo, ProcInfo };
+
 /** A 3D-ish position in the void. Compositors decide what the units mean. */
 export interface Vec3 {
   x: number;
@@ -279,6 +285,8 @@ export interface FsApi {
   /** Fired on any mutation, so viewers can refresh. Returns an unsubscriber. */
   onChange(fn: () => void): () => void;
   usage(): { files: number; dirs: number; bytes: number; indexed: number };
+  /** Every filesystem grafted into the tree, for `mount`. */
+  mounts(): MountInfo[];
 }
 
 export interface FsEntry {
@@ -287,6 +295,8 @@ export interface FsEntry {
   kind: "file" | "dir";
   size: number;
   readonly: boolean;
+  /** Last modification, epoch ms. */
+  mtime: number;
   /** Set when a real file's contents were not embedded in the build. */
   omitted?: "binary" | "toolarge";
   meta?: Record<string, string>;
@@ -366,4 +376,24 @@ export interface KernelContext {
   notify(text: string, kind?: NotifyKind): void;
   /** Live render telemetry, for the Vitals app. */
   stats(): CompositorStats;
+
+  /* ---------------- processes and the journal ---------------- */
+
+  /** Everything currently running — daemons included. Also readable as /proc. */
+  ps(): ProcInfo[];
+  /**
+   * Terminate a process by pid. Returns false when refused: daemons and the
+   * kernel decline, the way init does.
+   */
+  kill(pid: number): boolean;
+  /**
+   * Write to the system journal, tagged with the calling module's id. Survives
+   * for the session and is readable as /var/log/system.log, which is where it
+   * differs from console.log.
+   */
+  log(msg: string, level?: LogLevel): void;
+  /** Read the journal back — for the Journal app and notification history. */
+  journal(): LogEntry[];
+  /** Milliseconds since the kernel booted. */
+  uptime(): number;
 }

@@ -1,6 +1,16 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
 import { VFS } from "./vfs";
+import { Journal } from "./journal";
+import { KERNEL_PID, ProcTable } from "./procs";
+import {
+  AUTOSTART_KEY,
+  buildDev,
+  buildEtc,
+  buildProc,
+  buildVarLog,
+  type SysfsHooks,
+} from "./sysfs";
 import type {
   ArrangeMode,
   BodyKind,
@@ -44,6 +54,9 @@ export class Kernel {
   private compositor: Compositor;
   /** Public so main.ts can mount /projects before boot. */
   readonly fs = new VFS();
+  /** Public so the shell can render the log and the uptime without a syscall. */
+  readonly journal = new Journal();
+  readonly procs = new ProcTable();
 
   private modules = new Map<string, VoidModule>();
   private deactivators = new Map<string, () => void>();
@@ -53,6 +66,8 @@ export class Kernel {
   private commandDefs = new Map<string, Command>();
   /** The module currently inside its launch() call, so new surfaces get tagged. */
   private activeModuleId: string | null = null;
+  /** The process that owns whatever surfaces the current launch() opens. */
+  private activePid: number | null = null;
   /** Placement waiting to be applied to the next surface a module opens. */
   private pendingPlacement: SurfacePlacement | null = null;
 
@@ -60,8 +75,14 @@ export class Kernel {
     this.compositor = compositor;
   }
 
-  /** The syscall surface handed to every module — and to the shell UI. */
-  context(): KernelContext {
+  /**
+   * The syscall surface handed to every module — and to the shell UI.
+   *
+   * `tag` is who is calling, used to attribute journal writes. Modules get
+   * their own id so the log can say which one spoke; the shell's own UI gets
+   * the default.
+   */
+  context(tag = "shell"): KernelContext {
     return {
       emit: (t, p) => this.bus.emit(t, p),
       on: (t, h) => this.bus.on(t, h),
@@ -83,6 +104,7 @@ export class Kernel {
         isDir: (p) => this.fs.isDir(p),
         onChange: (fn) => this.fs.onChange(fn),
         usage: () => this.fs.usage(),
+        mounts: () => this.fs.mounts(),
       },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
@@ -135,6 +157,11 @@ export class Kernel {
           bodies: 0,
           groups: 0,
         },
+      ps: () => this.procs.list(),
+      kill: (pid) => this.kill(pid),
+      log: (msg, level) => this.journal.write(tag, msg, level),
+      journal: () => this.journal.read(),
+      uptime: () => this.journal.uptime(),
     };
   }
 
@@ -148,14 +175,18 @@ export class Kernel {
     return this;
   }
 
-  /** Boot: init the compositor, then activate every module. */
+  /** Boot: init the compositor, mount the system tree, then activate modules. */
   async boot(mounts: {
     gl: HTMLElement;
     overlay: HTMLElement;
     hud: HTMLElement;
   }): Promise<void> {
+    this.procs.initKernel();
+    this.journal.write("kernel", `voidshell starting on ${this.compositor.name}`);
+
     await this.compositor.init(mounts);
     this.compositor.start?.();
+    this.journal.write("kernel", "compositor initialised");
 
     // Restore the user's files, then persist on every later mutation. Debounced
     // because a shell loop can touch the tree many times in one frame, and each
@@ -168,11 +199,86 @@ export class Kernel {
     });
     window.addEventListener("beforeunload", () => this.fs.save());
 
+    this.mountSysfs();
+
+    // Subscribed before any module activates, so a notice raised during startup
+    // is journalled too. Notifications are the system talking; the journal is
+    // the system remembering. Mirroring here means every module's notify() is
+    // recoverable from /var/log/system.log without any module knowing the
+    // journal exists.
+    this.bus.on("system.notify", (e) => {
+      const p = e.payload as { text?: string; kind?: NotifyKind } | undefined;
+      if (!p?.text) return;
+      this.journal.write("notify", p.text, p.kind === "warn" ? "warn" : "info");
+    });
+
     for (const mod of this.modules.values()) {
-      const off = mod.activate(this.context());
-      if (typeof off === "function") this.deactivators.set(mod.manifest.id, off);
+      const { id, name, kind } = mod.manifest;
+      // Background modules become visible processes the moment they activate.
+      // Apps stay absent from the table until something launches them, which
+      // is the distinction between "installed" and "running".
+      if (kind !== "app") this.procs.spawnDaemon(id, name, kind);
+      try {
+        const off = mod.activate(this.context(id));
+        if (typeof off === "function") this.deactivators.set(id, off);
+      } catch (err) {
+        this.journal.write("kernel", `${id} failed to activate: ${err}`, "error");
+        console.error(`[kernel] "${id}" threw while activating:`, err);
+      }
     }
+
+    this.journal.write(
+      "kernel",
+      `${this.modules.size} modules activated, ${this.procs.list().length} processes`
+    );
     this.bus.emit("kernel.booted", { modules: this.registry() });
+  }
+
+  /**
+   * Graft /proc, /dev, /etc and /var/log into the tree. These are mounts like
+   * any other, so nothing downstream — not the file manager, not tab
+   * completion, not the desktop — needed to learn they exist.
+   */
+  private mountSysfs(): void {
+    const hooks: SysfsHooks = {
+      journal: this.journal,
+      procs: this.procs,
+      registry: () => this.registry(),
+      usage: () => this.fs.usage(),
+      stats: () =>
+        this.compositor.stats?.() ?? { fps: 0, panels: this.surfaces.size, bodies: 0, groups: 0 },
+      store: {
+        get: (k, f) => this.store.get(k, f),
+        set: (k, v) => this.store.set(k, v),
+      },
+      notify: (text) => this.notify(text),
+      compositorName: this.compositor.name,
+    };
+
+    this.fs.mount("/proc", buildProc(hooks));
+    this.fs.mount("/dev", buildDev(hooks));
+    this.fs.mount("/etc", buildEtc(hooks));
+    this.fs.mount("/var/log", buildVarLog(hooks));
+    this.journal.write("vfs", "mounted /proc /dev /etc /var/log");
+  }
+
+  /**
+   * Launch whatever /etc/autostart names, in order. Called by the shell after
+   * session restore, so the two can't both open the same singleton twice.
+   */
+  runAutostart(): number {
+    const ids = this.store.get<string[]>(AUTOSTART_KEY, []);
+    let started = 0;
+    for (const id of ids) {
+      if (!this.modules.has(id)) {
+        this.journal.write("autostart", `no such module: ${id}`, "warn");
+        continue;
+      }
+      this.launch(id);
+      started++;
+    }
+    if (started) this.journal.write("autostart", `launched ${started} module(s)`);
+    return started;
   }
 
   launch(moduleId: string, args?: LaunchArgs): void {
@@ -208,16 +314,60 @@ export class Kernel {
       return;
     }
 
+    // A launch is a process. Surfaces opened while it runs belong to it, which
+    // is what lets the process exit when its last window closes.
+    const proc = this.procs.spawnApp(moduleId, mod.manifest.name, args);
     this.activeModuleId = moduleId;
+    this.activePid = proc.pid;
     try {
-      mod.launch?.(this.context(), args);
+      mod.launch?.(this.context(moduleId), args);
     } catch (err) {
       console.error(`[kernel] "${moduleId}" threw while launching:`, err);
+      this.journal.write("kernel", `${moduleId} failed to launch: ${err}`, "error");
       this.notify(`${moduleId} failed to launch`, "warn");
     } finally {
       this.activeModuleId = null;
+      this.activePid = null;
     }
-    this.bus.emit("module.launched", { id: moduleId, args });
+
+    // A module with no launch(), or one that threw before opening anything,
+    // leaves an ownerless process behind. Reap it rather than let `ps` fill up
+    // with entries that can never exit.
+    if (proc.surfaces.length === 0) {
+      this.procs.reap(proc.pid);
+    } else {
+      this.journal.write("kernel", `spawned ${moduleId} as pid ${proc.pid}`);
+      this.bus.emit("proc.spawned", { pid: proc.pid, moduleId });
+    }
+
+    this.bus.emit("module.launched", { id: moduleId, args, pid: proc.pid });
+  }
+
+  /**
+   * Terminate a process by closing every window it owns, which routes through
+   * the ordinary close path so each module still runs its own cleanup.
+   *
+   * Daemons and the kernel itself refuse to die. That is not a limitation being
+   * papered over: aurora owns every colour in the build and horizon owns the
+   * sky, so "killed the theme daemon" would be an unrecoverable state reachable
+   * by typing four characters. A real OS refuses to kill init for the same
+   * reason, and reports EPERM rather than pretending it worked.
+   */
+  kill(pid: number): boolean {
+    const proc = this.procs.get(pid);
+    if (!proc) {
+      this.notify(`no such process: ${pid}`, "warn");
+      return false;
+    }
+    if (pid === KERNEL_PID || proc.state === "daemon") {
+      this.notify(`operation not permitted: ${proc.name} (pid ${pid})`, "warn");
+      return false;
+    }
+    // Copy: closeSurface mutates the array this iterates through.
+    for (const sid of [...proc.surfaces]) this.closeSurface(sid);
+    this.procs.reap(pid);
+    this.journal.write("kernel", `killed ${proc.moduleId} (pid ${pid})`);
+    return true;
   }
 
   /**
@@ -304,8 +454,9 @@ export class Kernel {
       },
     };
 
-    const cleanup = req.render(element, this.context());
+    const cleanup = req.render(element, this.context(surface.moduleId));
     this.surfaces.set(id, surface);
+    if (this.activePid !== null) this.procs.attachSurface(this.activePid, id);
     const dispose = this.compositor.mountSurface(surface);
 
     // Session restore hands us the exact place this window used to occupy.
@@ -326,6 +477,17 @@ export class Kernel {
     this.surfaceDisposers.get(id)?.();
     this.surfaceDisposers.delete(id);
     this.surfaces.delete(id);
+
+    // Closing the last window a process owns is how that process exits. Deriving
+    // it from surface ownership rather than tracking it separately is what keeps
+    // `ps` from ever disagreeing with what's on screen.
+    const orphaned = this.procs.detachSurface(id);
+    if (orphaned) {
+      this.procs.reap(orphaned.pid);
+      this.journal.write("kernel", `${orphaned.moduleId} exited (pid ${orphaned.pid})`);
+      this.bus.emit("proc.exited", { pid: orphaned.pid, moduleId: orphaned.moduleId });
+    }
+
     this.bus.emit("surface.closed", { id });
   }
 

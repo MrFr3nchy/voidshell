@@ -53,11 +53,13 @@ export const vitals: VoidModule = {
           grid.appendChild(wrap);
           cells.set(label, v);
         };
-        for (const c of ["fps", "windows", "bodies", "linked", "modules", "uptime", "heap", "state"])
+        for (const c of [
+          "fps", "windows", "bodies", "linked",
+          "modules", "procs", "uptime", "heap", "state",
+        ])
           cell(c);
 
         const history: number[] = [];
-        const started = performance.now();
         const ctx2d = canvas.getContext("2d");
 
         const draw = () => {
@@ -102,7 +104,9 @@ export const vitals: VoidModule = {
           history.push(s.fps);
           while (history.length > HISTORY) history.shift();
 
-          const up = Math.round((performance.now() - started) / 1000);
+          // System uptime, not this window's age — reopening Vitals shouldn't
+          // reset a number labelled "uptime".
+          const up = Math.round(ctx.uptime() / 1000);
           const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } })
             .memory;
 
@@ -111,6 +115,7 @@ export const vitals: VoidModule = {
           set("bodies", String(s.bodies));
           set("linked", String(s.groups));
           set("modules", String(ctx.registry().length));
+          set("procs", String(ctx.ps().length));
           set("uptime", `${Math.floor(up / 60)}m ${up % 60}s`);
           set("heap", mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(1)} mb` : "n/a");
           set("state", `${storeBytes()} b`);

@@ -1,5 +1,15 @@
-import type { ArrangeMode, BodyKind, KernelContext } from "../../kernel/types";
+import type { ArrangeMode, BodyKind, KernelContext, LogLevel } from "../../kernel/types";
 import { normalize } from "../../kernel/vfs";
+import { ProcTable } from "../../kernel/procs";
+import {
+  DEFAULT_HOSTNAME,
+  DEFAULT_MOTD,
+  DEFAULT_USER,
+  HOSTNAME_KEY,
+  MOTD_KEY,
+  USER_KEY,
+} from "../../kernel/sysfs";
+import { emptyTrash, listTrash, moveToTrash, restoreFromTrash } from "../../kernel/trash";
 import { hostExec, hostJobs, hostKill } from "../../runtime/hostBridge";
 
 /**
@@ -29,11 +39,16 @@ interface Token {
 }
 
 /**
- * Split a command line into tokens, honouring single and double quotes and
- * backslash escapes. Needed because the desktop happily creates names with
- * spaces in them ("New Folder"), and without this they'd be unreachable.
+ * Split a command line into tokens, honouring single and double quotes,
+ * backslash escapes and `$VAR` expansion. Needed because the desktop happily
+ * creates names with spaces in them ("New Folder"), and without this they'd be
+ * unreachable.
+ *
+ * Expansion happens here rather than as a pre-pass over the raw line because
+ * quoting has to be respected: `'$HOME'` is a literal, `"$HOME"` is not, and a
+ * regex over the whole line cannot tell those apart.
  */
-function tokenize(line: string): Token[] {
+function tokenize(line: string, lookup?: (name: string) => string): Token[] {
   const out: Token[] = [];
   let cur = "";
   let quote: '"' | "'" | null = null;
@@ -53,6 +68,30 @@ function tokenize(line: string): Token[] {
       cur += line[++i];
       has = true;
       wasQuoted = true;
+    } else if (c === "$" && quote !== "'" && lookup) {
+      // `${NAME}` and `$NAME`; `$?` is the previous command's exit status.
+      let name = "";
+      if (line[i + 1] === "{") {
+        const close = line.indexOf("}", i + 2);
+        if (close > 0) {
+          name = line.slice(i + 2, close);
+          i = close;
+        }
+      } else {
+        const m = /^[A-Za-z_?][A-Za-z0-9_]*/.exec(line.slice(i + 1));
+        if (m) {
+          name = m[0];
+          i += m[0].length;
+        }
+      }
+      if (!name) cur += c;
+      else {
+        cur += lookup(name);
+        has = true;
+        // An expanded value is treated as quoted so that a variable holding
+        // `|` or `>` can't silently turn into a pipe or a redirect.
+        wasQuoted = true;
+      }
     } else if (quote) {
       if (c === quote) quote = null;
       else cur += c;
@@ -150,11 +189,14 @@ function splitChain(line: string): string[] {
 
 /* ------------------------------------------------------------------ */
 
-const HELP = `navigation   pwd  cd <dir>  ls [-l] [dir]  tree [dir]
+const HELP = `navigation   pwd  cd <dir>  ls [-l] [-a] [dir]  tree [dir]
 files        cat <f>  head [-n N]  tail [-n N]  write <f> <text>  touch <f>
-             mkdir <d>  rm [-r] <p>  mv <a> <b>  find <term>  df
+             mkdir <d>  rm [-r|-f] <p>  mv <a> <b>  find <term>  df  mount
+trash        rm sends to the trash · trash · restore <name> · rm -f is forever
 filters      grep [-i] <pat>  sort [-r]  uniq  wc        (use with |)
-pipes        ls -l | grep .md | wc      redirect with > and >>
+pipes        ls -l | grep .md | wc      redirect with > and >>  or > /dev/null
+processes    ps  kill <pid>  uptime  free  dmesg [level]
+environment  env  export K=V  unset K  whoami  hostname [name]   $VAR expands
 programs     run <file.py|.js>  edit <file>  launch <path>
 host         anything else runs on the machine (npm install, git…)
              jobs  kill <job-id>  app <port>        [dev server only]
@@ -163,7 +205,8 @@ links        link <id> <id> [...]  groups  unlink <group-id>
 world        spawn <sun|moon|planet|singularity>  bodies  merge <surf> <body>
              sky <0..1.5>  say <text>
 system       apps  open <id>  set <k> <v>  get <k>  settings [filter]
-             history  clear  help
+             lock  reboot  shutdown  history  clear  help
+the system   ls /proc · cat /proc/uptime · cat /etc/autostart · /var/log
 keys         Tab complete · ^R search history · ^A/^E/^U/^K/^W · ^L clear
              ~ is ${HOME} · !! repeats the last command`;
 
@@ -174,6 +217,8 @@ const BUILTINS = [
   "edit", "launch", "apps", "open", "wins", "go", "home", "arrange", "link",
   "groups", "unlink", "spawn", "bodies", "merge", "set", "get", "settings",
   "say", "sky", "echo", "clear", "history", "app", "jobs", "kill",
+  "ps", "uptime", "free", "dmesg", "mount", "env", "export", "unset",
+  "whoami", "hostname", "trash", "restore", "lock", "reboot", "shutdown",
 ];
 
 function expandTilde(p: string): string {
@@ -204,6 +249,34 @@ function fmtSize(n: number): string {
     : n < 1024 * 1024
       ? `${(n / 1024).toFixed(1)}K`
       : `${(n / 1048576).toFixed(1)}M`;
+}
+
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+
+/**
+ * `ls -l`'s date column, following coreutils: a time for anything in the last
+ * six months, a year for anything older. Both are twelve characters wide so the
+ * filename column stays aligned.
+ */
+function fmtDate(ms: number, now = Date.now()): string {
+  const d = new Date(ms);
+  const day = String(d.getDate()).padStart(2, " ");
+  const stamp =
+    now - ms < 182 * 86400_000
+      ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+      : ` ${d.getFullYear()}`;
+  return `${MONTHS[d.getMonth()]} ${day} ${stamp}`;
+}
+
+/** How long the system has been up, in the words `uptime` uses. */
+function fmtUptime(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d) return `${d} day${d === 1 ? "" : "s"}, ${h}:${String(m).padStart(2, "0")}`;
+  if (h) return `${h}:${String(m).padStart(2, "0")}`;
+  return `${m} min`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -245,10 +318,57 @@ export function createConsole(
   /** Reverse-i-search state. Null when not searching. */
   let search: { term: string; index: number } | null = null;
 
+  /* ---------------- environment ---------------- */
+
+  /**
+   * Variables the user sets with `export`. The interesting ones aren't in here:
+   * PWD, USER and HOSTNAME are *derived* on every lookup, so `$USER` can never
+   * disagree with /etc/passwd and `cd` can never leave `$PWD` stale. A shell
+   * that caches those has two sources of truth for one fact.
+   */
+  const exported = new Map<string, string>([
+    ["SHELL", "/bin/vsh"],
+    ["TERM", "void"],
+    ["LANG", "en_US.UTF-8"],
+  ]);
+
+  /** The previous command's exit status, readable as `$?`. */
+  let lastStatus = 0;
+
+  const user = () => ctx.state.get<string>(USER_KEY, DEFAULT_USER);
+  const hostname = () => ctx.state.get<string>(HOSTNAME_KEY, DEFAULT_HOSTNAME);
+
+  const envGet = (name: string): string => {
+    switch (name) {
+      case "HOME":
+        return HOME;
+      case "PWD":
+        return cwd;
+      case "USER":
+        return user();
+      case "HOSTNAME":
+        return hostname();
+      case "?":
+        return String(lastStatus);
+      case "RANDOM":
+        return String(Math.floor(Math.random() * 32768));
+      default:
+        return exported.get(name) ?? "";
+    }
+  };
+
+  /** Everything `env` prints: the derived names first, then whatever was set. */
+  const envAll = (): [string, string][] => [
+    ...(["HOME", "PWD", "USER", "HOSTNAME"] as const).map(
+      (k) => [k, envGet(k)] as [string, string]
+    ),
+    ...[...exported.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  ];
+
   const setPrompt = () => {
     prompt.textContent = search
       ? `(reverse-i-search)\`${search.term}':`
-      : `${tildify(cwd)} ›`;
+      : `${user()}@${hostname()} ${tildify(cwd)} ›`;
     prompt.classList.toggle("searching", !!search);
   };
 
@@ -362,8 +482,14 @@ export function createConsole(
         }
 
         case "ls": {
-          const long = flags.includes("-l");
-          const items = ctx.fs.ls(abs(operands[0] ?? "."));
+          // -a and -l compose, and `-la`/`-al` are the way people actually type
+          // it, so the flags are matched by letter rather than by whole token.
+          const letters = flags.join("");
+          const long = letters.includes("l");
+          const all = letters.includes("a");
+          const items = ctx.fs
+            .ls(abs(operands[0] ?? "."))
+            .filter((e) => all || !e.name.startsWith("."));
           if (!items.length) out("(empty)", "muted");
           for (const e of items) {
             const slash = e.kind === "dir" ? "/" : "";
@@ -376,7 +502,10 @@ export function createConsole(
                   : e.omitted === "toolarge"
                     ? " (too large)"
                     : "";
-              out(`${flag}  ${size.padStart(7)}  ${e.name}${slash}${note}`);
+              out(
+                `${flag}  ${size.padStart(7)}  ${fmtDate(e.mtime)}  ` +
+                  `${e.name}${slash}${note}`
+              );
             } else out(`${e.name}${slash}`);
           }
           break;
@@ -459,9 +588,47 @@ export function createConsole(
           break;
 
         case "rm": {
-          const recursive = flags.some((f) => f === "-r" || f === "-rf");
-          if (!operands.length) throw new Error("usage: rm [-r] <path>");
-          for (const p of operands) ctx.fs.rm(abs(p), recursive);
+          if (!operands.length) throw new Error("usage: rm [-r] [-f] <path>");
+          const letters = flags.join("");
+          const permanent = letters.includes("f");
+          const recursive = letters.includes("r");
+
+          for (const p of operands) {
+            const target = abs(p);
+            if (permanent) {
+              ctx.fs.rm(target, recursive);
+              out(`deleted ${p} permanently`, "muted");
+            } else {
+              // The default is recoverable. `-r` isn't required to trash a
+              // directory because a move is a move — the flag only guards the
+              // irreversible path, which is where a guard is worth anything.
+              const name = moveToTrash(ctx, target);
+              out(`${p} → trash (restore ${name})`, "muted");
+            }
+          }
+          break;
+        }
+
+        case "trash": {
+          const items = listTrash(ctx);
+          if (!items.length) {
+            out("the trash is empty", "muted");
+            break;
+          }
+          if (flags.includes("-e") || operands[0] === "empty") {
+            const n = emptyTrash(ctx);
+            out(`deleted ${n} item${n === 1 ? "" : "s"} for good`, "muted");
+            break;
+          }
+          for (const i of items)
+            out(`${pad(i.name, 24)} ${pad(fmtDate(i.at), 13)} was ${tildify(i.from)}`);
+          out(`restore <name> · trash -e empties it`, "muted");
+          break;
+        }
+
+        case "restore": {
+          if (!arg) throw new Error("usage: restore <name>   (see `trash`)");
+          out(`restored → ${tildify(restoreFromTrash(ctx, arg))}`, "muted");
           break;
         }
 
@@ -487,6 +654,123 @@ export function createConsole(
           out(`${fmtSize(u.bytes)} readable · ${fmtSize(u.indexed)} indexed on disk`);
           break;
         }
+
+        case "mount": {
+          for (const m of ctx.fs.mounts())
+            out(
+              `${pad(m.at, 14)} ${pad(m.backing, 14)} ${m.readonly ? "ro" : "rw"}` +
+                `${m.synthetic ? "  (synthetic)" : ""}`
+            );
+          break;
+        }
+
+        /* ---------------- processes ---------------- */
+
+        case "ps": {
+          out(`${"PID".padStart(5)}  ${pad("STAT", 8)}${pad("ELAPSED", 10)}${pad("MODULE", 14)}NAME`);
+          for (const p of ctx.ps())
+            out(
+              `${String(p.pid).padStart(5)}  ${pad(p.state, 8)}` +
+                `${pad(ProcTable.elapsed(p), 10)}${pad(p.moduleId, 14)}${p.name}`
+            );
+          break;
+        }
+
+        case "kill": {
+          if (!arg) throw new Error("usage: kill <pid>   (or kill <job-id> for a host job)");
+          // Host jobs are named `job-3`; processes are numeric. Dispatching on
+          // the shape means one verb covers both without a second command.
+          const pid = Number(arg);
+          if (!Number.isInteger(pid)) {
+            hostKill(arg, hostPrint);
+            break;
+          }
+          if (!ctx.kill(pid)) return false;
+          out(`killed ${pid}`, "muted");
+          break;
+        }
+
+        case "uptime": {
+          const procs = ctx.ps();
+          const wins = ctx.openSurfaces().length;
+          out(
+            `up ${fmtUptime(ctx.uptime())} · ${procs.length} processes · ` +
+              `${wins} window${wins === 1 ? "" : "s"} · ${ctx.stats().fps} fps`
+          );
+          break;
+        }
+
+        // These read the same generated files the shell exposes, rather than
+        // recomputing the numbers — one source of truth, two ways in.
+        case "free":
+          for (const l of ctx.fs.read("/proc/meminfo").split("\n")) out(l);
+          break;
+
+        case "dmesg": {
+          const levels: LogLevel[] = ["debug", "info", "warn", "error"];
+          const min = levels.find((l) => l === operands[0]);
+          if (operands[0] && !min) throw new Error(`usage: dmesg [${levels.join("|")}]`);
+          const entries = ctx.journal().filter((e) => {
+            if (!min) return true;
+            return levels.indexOf(e.level) >= levels.indexOf(min);
+          });
+          if (!entries.length) out("nothing logged at that level", "muted");
+          for (const e of entries)
+            out(
+              `[${(e.t / 1000).toFixed(3).padStart(9)}] ${pad(e.tag, 10)} ${e.msg}`,
+              e.level === "warn" || e.level === "error" ? "warn" : ""
+            );
+          break;
+        }
+
+        /* ---------------- environment ---------------- */
+
+        case "env":
+          for (const [k, v] of envAll()) out(`${k}=${v}`);
+          break;
+
+        case "export": {
+          if (!arg) throw new Error("usage: export NAME=value");
+          const eq = arg.indexOf("=");
+          if (eq < 1) throw new Error("usage: export NAME=value");
+          const name = arg.slice(0, eq).trim();
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+            throw new Error(`not a valid variable name: ${name}`);
+          exported.set(name, arg.slice(eq + 1));
+          break;
+        }
+
+        case "unset":
+          if (!arg) throw new Error("usage: unset NAME");
+          exported.delete(arg);
+          break;
+
+        case "whoami":
+          out(user());
+          break;
+
+        case "hostname": {
+          if (!arg) {
+            out(hostname());
+            break;
+          }
+          // Writing the file *is* setting the hostname — /etc/hostname's sink
+          // is the only path that state has.
+          ctx.fs.write("/etc/hostname", arg);
+          setPrompt();
+          out(`hostname → ${arg}`, "muted");
+          break;
+        }
+
+        /* ---------------- power ---------------- */
+
+        case "lock":
+        case "reboot":
+        case "shutdown":
+          // The shell owns the screen, so these are requests, not actions. Same
+          // reasoning as `shell.factoryReset`: a module can't reach the HUD.
+          ctx.emit("system.power", { action: cmd });
+          break;
 
         case "history":
           history.forEach((h, i) => out(`${pad(String(i + 1), 5)}${h}`));
@@ -649,11 +933,6 @@ export function createConsole(
           hostJobs(hostPrint);
           break;
 
-        case "kill":
-          if (!arg) throw new Error("usage: kill <job-id>");
-          hostKill(arg, hostPrint);
-          break;
-
         default:
           return null; // not a builtin — the caller hands it to the machine
       }
@@ -669,7 +948,7 @@ export function createConsole(
     const trimmed = raw.trim();
     if (!trimmed) return true;
 
-    const segments = splitPipes(tokenize(raw));
+    const segments = splitPipes(tokenize(raw, envGet));
     let stdin: string[] | null = null;
 
     for (let i = 0; i < segments.length; i++) {
@@ -716,7 +995,11 @@ export function createConsole(
   /** Run a chain of `a && b && c`, stopping at the first failure. */
   const run = (raw: string) => {
     for (const part of splitChain(raw)) {
-      if (!runPipeline(part)) break;
+      const ok = runPipeline(part);
+      // `$?` is the exit status of the last thing that ran, so it's recorded
+      // per segment rather than once for the whole line.
+      lastStatus = ok ? 0 : 1;
+      if (!ok) break;
     }
   };
 
@@ -777,7 +1060,7 @@ export function createConsole(
       input.setSelectionRange(caret, caret);
     } else if (candidates.length > 1) {
       // Ambiguous and nothing more to fill in — show the options, as bash does.
-      print(`${tildify(cwd)} › ${value}`, "echoed");
+      print(`${user()}@${hostname()} ${tildify(cwd)} › ${value}`, "echoed");
       print(candidates.join("   "), "muted");
     }
   };
@@ -819,7 +1102,7 @@ export function createConsole(
 
   const submit = () => {
     const value = input.value;
-    print(`${tildify(cwd)} › ${value}`, "echoed");
+    print(`${user()}@${hostname()} ${tildify(cwd)} › ${value}`, "echoed");
     remember(value);
     input.value = "";
     run(value);
@@ -962,8 +1245,14 @@ export function createConsole(
   });
 
   setPrompt();
-  print("voidshell console. type `help`.", "muted");
-  print("/home/void (rw) · /projects (ro) · Tab completes · ^R searches", "muted");
+  // The greeting is /etc/motd, so changing what the shell says on open is
+  // editing a file rather than editing this source.
+  print(ctx.state.get<string>(MOTD_KEY, DEFAULT_MOTD), "muted");
+  print(
+    `${ctx.fs.mounts().length} filesystems mounted · \`mount\` lists them · ` +
+      "Tab completes · ^R searches",
+    "muted"
+  );
 
   return {
     el,
