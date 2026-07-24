@@ -13,6 +13,7 @@
  * `mountStage` — no 2D context means no resize observer and no frame loop.
  */
 import { JSDOM } from "jsdom";
+import { readFileSync } from "node:fs";
 
 const dom = new JSDOM(
   `<!doctype html><html><head><meta name="theme-color" content="#000"></head>
@@ -52,6 +53,8 @@ const { settings } = await import("../src/modules/settings");
 const { dashboards } = await import("../src/modules/dashboards");
 const { notes } = await import("../src/modules/notes");
 const { vitals } = await import("../src/modules/vitals");
+const { monitor } = await import("../src/modules/monitor");
+const { portal, resolveQuery } = await import("../src/modules/portal");
 const { chronos } = await import("../src/modules/chronos");
 const { cosmos } = await import("../src/modules/cosmos");
 const { cradle } = await import("../src/modules/cradle");
@@ -75,6 +78,11 @@ const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
 const { createAppDrawer } = await import("../src/ui/appDrawer");
 const { createPalette } = await import("../src/ui/palette");
 const { createToasts } = await import("../src/ui/toasts");
+const { createStatusBar } = await import("../src/ui/statusBar");
+const { createPower } = await import("../src/ui/power");
+const { emptyTrash, listTrash, moveToTrash, restoreFromTrash } = await import(
+  "../src/kernel/trash"
+);
 
 type Any = Record<string, unknown>;
 
@@ -166,6 +174,8 @@ kernel
   .register(dashboards)
   .register(notes)
   .register(vitals)
+  .register(monitor)
+  .register(portal)
   .register(cradle)
   .register(driftfield)
   .register(sandbox)
@@ -180,7 +190,7 @@ kernel
   .register(chaos)
   .register(sunclock);
 
-const MODULE_COUNT = 26;
+const MODULE_COUNT = 28;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -294,6 +304,124 @@ ctx.fs.mv("/home/void/smoke/a.txt", "/home/void/smoke/b.txt");
 check("mv moves", !ctx.fs.exists("/home/void/smoke/a.txt") && ctx.fs.exists("/home/void/smoke/b.txt"));
 ctx.fs.rm("/home/void/smoke", true);
 check("recursive rm clears", !ctx.fs.exists("/home/void/smoke"));
+check("stat carries an mtime", ctx.fs.stat("/home/void").mtime > 0);
+
+/* ---------------- processes ---------------- */
+
+check("kernel holds pid 1", ctx.ps()[0]?.pid === 1 && ctx.ps()[0]?.moduleId === "kernel");
+check(
+  "every service and world module is a daemon",
+  ctx
+    .registry()
+    .filter((m) => m.kind !== "app")
+    .every((m) => ctx.ps().some((p) => p.moduleId === m.id && p.state === "daemon"))
+);
+check("daemons refuse to be killed", ctx.kill(1) === false);
+check("killing a pid that does not exist is refused", ctx.kill(99999) === false);
+
+// A launch is a process; closing its last window is how that process exits.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+const beforeProcs = ctx.ps().length;
+kernel.launch("notes");
+const notesProc = ctx.ps().find((p) => p.moduleId === "notes");
+check("launching an app spawns a process", Boolean(notesProc) && ctx.ps().length === beforeProcs + 1);
+check("the process owns its surface", (notesProc?.surfaces.length ?? 0) === 1);
+check("kill closes the window", ctx.kill(notesProc!.pid) === true && ctx.openSurfaces().length === 0);
+check("killed process left the table", !ctx.ps().some((p) => p.pid === notesProc!.pid));
+
+kernel.launch("notes");
+const notes2 = ctx.ps().find((p) => p.moduleId === "notes")!;
+kernel.closeSurface(notes2.surfaces[0]);
+check("closing the last window reaps the process", !ctx.ps().some((p) => p.pid === notes2.pid));
+
+/* ---------------- the system as a filesystem ---------------- */
+
+check("/proc is mounted", ctx.fs.isDir("/proc"));
+check("/dev, /etc and /var/log are mounted", ["/dev", "/etc", "/var/log"].every((p) => ctx.fs.isDir(p)));
+check(
+  "the mount table lists them",
+  ["/home/void", "/proc", "/dev", "/etc", "/var/log"].every((at) =>
+    ctx.fs.mounts().some((m) => m.at === at)
+  )
+);
+check(
+  "synthetic mounts are marked as such",
+  ctx.fs.mounts().find((m) => m.at === "/proc")?.synthetic === true
+);
+
+// Generated content must be computed per read, not frozen at mount time.
+const up1 = Number(ctx.fs.read("/proc/uptime").split(" ")[0]);
+await new Promise((r) => dom.window.setTimeout(r, 30));
+const up2 = Number(ctx.fs.read("/proc/uptime").split(" ")[0]);
+check("/proc/uptime is live, not a snapshot", up2 > up1);
+
+check("/proc/version names the compositor", ctx.fs.read("/proc/version").includes("stub"));
+check("/proc/meminfo reports the filesystem", ctx.fs.read("/proc/meminfo").includes("FsFiles"));
+check(
+  "/proc lists one directory per process",
+  ctx.ps().every((p) => ctx.fs.isDir(`/proc/${p.pid}`))
+);
+check(
+  "/proc/<pid>/status describes the process",
+  ctx.fs.read(`/proc/1/status`).includes("Pid:       1")
+);
+
+// A read-only mount must still reject mutation, generated or not.
+check(
+  "/proc rejects writes",
+  (() => {
+    try {
+      ctx.fs.write("/proc/nope", "x");
+      return false;
+    } catch {
+      return true;
+    }
+  })()
+);
+
+// /dev/null is a real sink: writing succeeds and reads back empty.
+ctx.fs.write("/dev/null", "this goes nowhere");
+check("/dev/null swallows writes", ctx.fs.read("/dev/null") === "");
+check("/dev/random differs between reads", ctx.fs.read("/dev/random") !== ctx.fs.read("/dev/random"));
+
+// /etc is generated *and* writable — the sink writes back into the store.
+ctx.fs.write("/etc/hostname", "testbox");
+check("writing /etc/hostname sets the store", ctx.state.get("system.hostname", "") === "testbox");
+check("reading it back agrees", ctx.fs.read("/etc/hostname").trim() === "testbox");
+
+ctx.fs.write("/etc/autostart", "notes\nvitals\n# a comment\nnot-a-module");
+check(
+  "/etc/autostart parses and drops unknown ids",
+  JSON.stringify(ctx.state.get("system.autostart", [])) === '["notes","vitals"]'
+);
+check("autostart launches what it names", kernel.runAutostart() === 2);
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+ctx.state.set("system.autostart", []);
+
+check("/var/log/system.log carries the boot", ctx.fs.read("/var/log/system.log").includes("compositor initialised"));
+check("notifications are journalled", (() => {
+  ctx.notify("smoke test notice");
+  return ctx.journal().some((e) => e.tag === "notify" && e.msg === "smoke test notice");
+})());
+check("df ignores the synthetic mounts", ctx.fs.usage().files < 100);
+
+/* ---------------- trash ---------------- */
+
+ctx.fs.write("/home/void/doomed.txt", "bye");
+const trashedName = moveToTrash(ctx, "/home/void/doomed.txt");
+check("trashing moves the file", !ctx.fs.exists("/home/void/doomed.txt"));
+check("the file is in ~/.Trash", ctx.fs.exists(`/home/void/.Trash/${trashedName}`));
+check("the trash remembers where it came from", listTrash(ctx)[0]?.from === "/home/void/doomed.txt");
+restoreFromTrash(ctx, trashedName);
+check("restore puts it back", ctx.fs.read("/home/void/doomed.txt") === "bye");
+
+// Two files with the same name from different places must both survive.
+ctx.fs.mkdirp("/home/void/sub");
+ctx.fs.write("/home/void/sub/doomed.txt", "second");
+moveToTrash(ctx, "/home/void/doomed.txt");
+const second = moveToTrash(ctx, "/home/void/sub/doomed.txt");
+check("colliding names are uniquified", second !== "doomed.txt" && listTrash(ctx).length === 2);
+check("emptying the trash clears both", emptyTrash(ctx) === 2 && listTrash(ctx).length === 0);
 
 // The launch sweep above left the surface table near MAX_SURFACES, so clear it
 // before the routing checks — otherwise they fail on the cap, not on routing.
@@ -399,6 +527,169 @@ check(
   "console history persisted",
   ctx.state.get<string[]>("console.history", []).includes("pwd")
 );
+
+/* ---------------- console: the system commands ---------------- */
+
+runCmd("whoami");
+check("whoami reports the user", lastOut()[0] === ctx.state.get("system.user", "void"));
+
+// $VAR expansion, including the derived names that must never go stale.
+runCmd("echo $USER at $HOSTNAME");
+check(
+  "variables expand",
+  lastOut()[0] === `${ctx.state.get("system.user", "void")} at ${ctx.state.get("system.hostname", "void")}`
+);
+runCmd("echo $PWD");
+check("$PWD tracks cd", lastOut()[0] === "/home/void/ws");
+runCmd("export GREETING=hello");
+runCmd("echo $GREETING");
+check("export then expand", lastOut()[0] === "hello");
+runCmd("echo '$GREETING'");
+check("single quotes suppress expansion", lastOut()[0] === "$GREETING");
+runCmd("cd /nope");
+runCmd("echo $?");
+check("$? carries the exit status", lastOut()[0] === "1");
+runCmd("cd /home/void/ws");
+runCmd("echo $?");
+check("$? resets after a success", lastOut()[0] === "0");
+
+// ps must list the same processes the syscall does.
+runCmd("ps");
+check(
+  "ps prints a row per process",
+  [...(ws?.querySelectorAll(".term-out") ?? [])]
+    .slice(-ctx.ps().length)
+    .some((r) => (r.textContent ?? "").includes("kernel"))
+);
+
+runCmd("uptime");
+check("uptime reports processes and windows", /up .* processes/.test(lastOut()[0] ?? ""));
+
+runCmd("mount");
+check(
+  "mount lists the synthetic filesystems",
+  [...(ws?.querySelectorAll(".term-out") ?? [])]
+    .slice(-ctx.fs.mounts().length)
+    .some((r) => (r.textContent ?? "").includes("/proc"))
+);
+
+runCmd("dmesg warn");
+check("dmesg filters by level", !lastOut()[0]?.includes("compositor initialised"));
+
+// Redirecting to /dev/null must work through the ordinary redirect path.
+runCmd("ls > /dev/null");
+check("redirect to /dev/null discards", ctx.fs.read("/dev/null") === "");
+
+// rm is recoverable by default and permanent only when asked.
+ctx.fs.write("/home/void/ws/temp.txt", "x");
+runCmd("rm temp.txt");
+check("rm sends to the trash", !ctx.fs.exists("/home/void/ws/temp.txt") && listTrash(ctx).length === 1);
+runCmd("restore temp.txt");
+check("restore brings it back", ctx.fs.read("/home/void/ws/temp.txt") === "x");
+runCmd("rm -f temp.txt");
+check("rm -f is permanent", !ctx.fs.exists("/home/void/ws/temp.txt") && listTrash(ctx).length === 0);
+
+// Dotfiles are hidden unless asked for.
+ctx.fs.write("/home/void/ws/.hidden", "x");
+runCmd("ls");
+const lsRows = [...(ws?.querySelectorAll(".term-out") ?? [])].slice(-6).map((r) => r.textContent ?? "");
+check("ls hides dotfiles", !lsRows.some((t) => t === ".hidden"));
+runCmd("ls -a");
+const lsAllRows = [...(ws?.querySelectorAll(".term-out") ?? [])].slice(-8).map((r) => r.textContent ?? "");
+check("ls -a shows them", lsAllRows.some((t) => t === ".hidden"));
+
+/* ---------------- status bar and power ---------------- */
+
+createStatusBar(hud, ctx);
+const power = createPower(hud, ctx, { save: () => {}, closeAll: () => {} });
+
+/**
+ * Overlays toggled with the `hidden` property must carry an explicit
+ * `[hidden] { display: none }` rule.
+ *
+ * Any author rule setting `display` outranks the UA stylesheet's
+ * `[hidden] { display: none }`, so `.power-veil { display: grid }` silently
+ * defeats `veil.hidden = true`. The veil then stays laid out at inset:0 with
+ * opacity:0, and `#hud > *` grants it pointer-events — an invisible
+ * full-screen sheet that eats every click in the viewport. That is the exact
+ * failure the comment above `#hud > .toasts` warns about, and it shipped.
+ *
+ * This is a source assertion rather than a getComputedStyle one on purpose:
+ * jsdom applies `hidden` as a hard override instead of a cascading UA rule, so
+ * a computed-style check passes whether or not the guard exists and would be
+ * worse than no test at all.
+ *
+ * Add a class here whenever something new is shown and hidden via `.hidden`.
+ */
+const css = readFileSync("src/style.css", "utf8");
+for (const cls of ["power-veil", "statusbar", "sb-popover", "pt-marks", "pt-frame"]) {
+  const declaresDisplay = new RegExp(`\\.${cls}\\s*\\{[^}]*display:`).test(css);
+  const hasGuard = new RegExp(
+    `\\.${cls}\\[hidden\\]\\s*\\{[^}]*display:\\s*none`
+  ).test(css);
+  check(`.${cls} guards its hidden state against its own display rule`, hasGuard || !declaresDisplay);
+}
+const bar = hud.ownerDocument.querySelector(".statusbar");
+check("status bar mounted", Boolean(bar));
+check("status bar shows user@host", (bar?.querySelector(".sb-who")?.textContent ?? "").includes("@"));
+check("status bar shows a clock", /^\d\d:\d\d/.test(bar?.querySelector(".sb-clock")?.textContent ?? ""));
+check("status bar counts processes", /\d/.test(bar?.querySelector(".sb-procs")?.textContent ?? ""));
+
+check("power starts unlocked", power.locked() === false);
+ctx.emit("system.power", { action: "lock" });
+check("lock raises the veil", power.locked() === true);
+check("lock screen shows the time", /^\d\d:\d\d$/.test(
+  hud.ownerDocument.querySelector(".lock-time")?.textContent ?? ""
+));
+dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a", bubbles: true }));
+dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a" }));
+check("any key unlocks", power.locked() === false);
+
+/* ---------------- portal ---------------- */
+
+// The address bar has to tell a URL, a bare domain and a search apart.
+check("full URLs pass through", resolveQuery("https://example.com/a?b=1") === "https://example.com/a?b=1");
+check("bare domains get https", resolveQuery("example.com") === "https://example.com");
+check("domains with a path get https", resolveQuery("en.wikipedia.org/wiki/Void") === "https://en.wikipedia.org/wiki/Void");
+check("prose becomes a search", resolveQuery("how do magnets work").startsWith("https://html.duckduckgo.com/html/?q="));
+check("a single word is a search, not a host", resolveQuery("wikipedia").includes("duckduckgo"));
+check("empty stays empty", resolveQuery("   ") === "");
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("portal");
+const pt = hud.ownerDocument.querySelector(".pt-root");
+check("portal mounted", Boolean(pt));
+check("portal has an address bar", Boolean(pt?.querySelector(".pt-url")));
+check("portal opened one tab", (pt?.querySelectorAll(".pt-tab").length ?? 0) === 1);
+check("the only tab has no close button", !pt?.querySelector(".pt-tab-x"));
+check("portal made an iframe", Boolean(pt?.querySelector(".pt-frame")));
+check(
+  "framed content is sandboxed",
+  (pt?.querySelector(".pt-frame") as HTMLIFrameElement | null)
+    ?.getAttribute("sandbox")
+    ?.includes("allow-scripts") === true
+);
+// No bridge in jsdom, so it must fall back rather than hang.
+await new Promise((r) => dom.window.setTimeout(r, 60));
+check(
+  "no bridge falls back to direct framing with an explanation",
+  (pt?.querySelector(".pt-note")?.textContent ?? "").includes("X-Frame-Options")
+);
+
+// Bookmarks are a file, so they survive and can be edited like anything else.
+check("portal is not a singleton", ctx.registry().find((m) => m.id === "portal")?.singleton === false);
+
+/* ---------------- monitor ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("monitor");
+const mon = hud.ownerDocument.querySelector(".mon-root");
+check("monitor mounted", Boolean(mon));
+check("monitor listed processes", (mon?.querySelectorAll(".mon-row").length ?? 0) > 1);
+check("daemons have no kill button", (() => {
+  const daemonRow = mon?.querySelector(".mon-row.is-daemon");
+  return Boolean(daemonRow) && !daemonRow!.querySelector(".mon-kill");
+})());
 
 /* ---------------- editor: buffer, gutter and run pane ---------------- */
 

@@ -7,6 +7,10 @@ import { createSpawner } from "./ui/spawner";
 import { createAppDrawer } from "./ui/appDrawer";
 import { createPalette } from "./ui/palette";
 import { createToasts } from "./ui/toasts";
+import { createStatusBar } from "./ui/statusBar";
+import { createPower } from "./ui/power";
+import { monitor } from "./modules/monitor";
+import { portal } from "./modules/portal";
 import { workspace } from "./modules/workspace";
 import { chronos } from "./modules/chronos";
 import { cosmos } from "./modules/cosmos";
@@ -71,6 +75,8 @@ async function main() {
     .register(dashboards)
     .register(notes)
     .register(vitals)
+    .register(monitor)
+    .register(portal)
     // ambient apps — things to leave open and look at
     .register(cradle)
     .register(driftfield)
@@ -150,6 +156,19 @@ async function main() {
   const ctx = kernel.context();
 
   createToasts(hud, ctx);
+  createStatusBar(hud, ctx);
+
+  // Power owns the veil, so it needs the two things a module can't do for
+  // itself: write the session down, and close windows it doesn't own.
+  const power = createPower(hud, ctx, {
+    save: () => {
+      if (!resetting) kernel.saveSession();
+    },
+    closeAll: () => {
+      for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+    },
+  });
+
   const spawner = createSpawner(hud, ctx, () => drawer.toggle(true));
   const drawer = createAppDrawer(hud, ctx, {
     openRing: (open) => spawner.toggle(open),
@@ -176,6 +195,15 @@ async function main() {
 
   window.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
+
+    // Locking has to beat every other bind, including the ones that fire while
+    // typing — walking away from a machine shouldn't require focusing the void.
+    if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
+      e.preventDefault();
+      power.lock();
+      return;
+    }
+    if (power.locked()) return;
 
     if (mod && e.key.toLowerCase() === "k" && !e.shiftKey) {
       e.preventDefault();
@@ -241,8 +269,13 @@ async function main() {
     }
   }
 
+  // /etc/autostart runs on every boot, restored session or not — that's what
+  // makes it autostart rather than a second session file. The singleton guard
+  // means anything the restore already re-opened is refocused, not cloned.
+  const autostarted = kernel.runAutostart();
+
   // Give the fresh void something to hold so it doesn't open empty.
-  if (!restored) kernel.launch("chronos");
+  if (!restored && !autostarted) kernel.launch("chronos");
 
   const save = () => {
     if (resetting) return;

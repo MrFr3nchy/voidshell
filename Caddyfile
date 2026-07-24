@@ -25,11 +25,13 @@ example.com {
 		# loads and scripts still run, but any program that reads stdin
 		# reports that interactive input is unavailable.
 		#
-		# Trade-off: require-corp means every cross-origin asset must send
-		# Cross-Origin-Resource-Policy. Pyodide's CDN does. Anything new you
-		# embed (fonts, images, iframes) must too, or it will be blocked.
+		# `credentialless` rather than `require-corp`, matching vite.config.ts.
+		# Both grant SharedArrayBuffer. require-corp additionally hard-blocks
+		# every cross-origin asset that omits Cross-Origin-Resource-Policy,
+		# which is essentially the whole web — including any site Portal tries
+		# to frame. credentialless loads those without credentials instead.
 		Cross-Origin-Opener-Policy same-origin
-		Cross-Origin-Embedder-Policy require-corp
+		Cross-Origin-Embedder-Policy credentialless
 	}
 
 	# LATER: when you add a key-holding backend on localhost:3000, uncomment:

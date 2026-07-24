@@ -1,5 +1,6 @@
 import type { AnchorHandle, FsEntry, KernelContext, VoidModule, Vec3 } from "../../kernel/types";
 import { basename, dirname, normalize } from "../../kernel/vfs";
+import { moveToTrash } from "../../kernel/trash";
 import { closeContextMenu, promptInline, showContextMenu } from "../../ui/contextMenu";
 import { clipboard } from "../../ui/clipboard";
 
@@ -156,11 +157,15 @@ export const desktop: VoidModule = {
         })
       );
 
+    // Delete on the desktop is recoverable, like delete everywhere else. The
+    // icon's saved position is dropped either way: if it comes back it should
+    // land wherever the tidy pass puts it, not on top of whatever took its spot.
     const remove = (entry: FsEntry) =>
       guard(() => {
-        ctx.fs.rm(entry.path, entry.kind === "dir");
+        const name = moveToTrash(ctx, entry.path);
         delete layout[entry.path];
         saveLayout();
+        ctx.notify(`${entry.name} → trash · restore ${name}`);
       });
 
     const paste = (x: number, y: number) =>
@@ -296,7 +301,7 @@ export const desktop: VoidModule = {
       try {
         let entries: FsEntry[] = [];
         try {
-          entries = ctx.fs.ls(DESKTOP_DIR);
+          entries = ctx.fs.ls(DESKTOP_DIR).filter((e) => !e.name.startsWith("."));
         } catch {
           entries = [];
         }
