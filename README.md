@@ -185,12 +185,30 @@ a NUL-byte check catches anything mislabeled.
 Point it somewhere else with `voidshellProjects({ root: "/some/path" })` in
 `vite.config.ts`. It defaults to the parent of the Vite root.
 
-### The shell
+### The Workspace: files and shell over one directory
+
+Browsing and typing are the same activity, so they share a window and a working
+directory. Click into a folder and the prompt follows; `cd` and the list
+follows. The divider between the panes is draggable, and its position persists.
 
 The console is a real shell over that FS: `cd` / `ls -l` / `cat` / `tree` /
-`find`, plus `mkdir`, `rm -r`, `mv`, `touch`, output redirection with `>`, `&&`
-chaining, and arrow-key history. It holds no privileges the syscall surface
-doesn't already grant every module.
+`find`, plus `mkdir`, `rm -r`, `mv`, `touch`, `df` and `history`. It holds no
+privileges the syscall surface doesn't already grant every module.
+
+**Pipelines and redirection.** `|` chains commands, `>` and `>>` write and
+append, and `&&` stops at the first failure. The filters (`grep -i`, `sort -r`,
+`uniq`, `wc`, `head -n`, `tail -n`, `cat`) read piped input or a named file
+interchangeably, so `ls -l | grep .md | wc` does what it looks like. `grep`
+reports no-match as a failure, so it short-circuits a chain the way it should.
+
+**Line editing.** Tab completes commands on the first word and paths after it,
+filling in the longest common prefix and listing the options when ambiguous.
+`~` expands to `/home/void`. `Ctrl+R` is reverse-i-search through history,
+`!!` repeats the last command, and `Ctrl+A/E/U/K/W/L` behave as readline. History
+is persisted through the store, so it survives a reload.
+
+Anything that isn't a builtin is still handed to the machine over
+[the host bridge](#the-host-bridge).
 
 ## The desktop
 
@@ -206,21 +224,21 @@ directory it describes.
 
 | gesture | result |
 | --- | --- |
-| right-click void | New Folder · New File · Paste · Open Console Here · Tidy Icons |
-| right-click icon | Open · Rename · Copy · Cut · Delete |
+| right-click void | New Folder · New File · Paste · Open Workspace Here · Tidy Icons |
+| right-click icon | Open · Run · Edit · Rename · Copy · Cut · Delete |
 | drag icon | reposition in space, persisted |
 | double-click | open in the associated app |
-| drag a row out of Files | drop onto the void to put it on the desktop |
-| drag onto the Files list | move it into that directory |
+| drag a row out of the Workspace | drop onto the void to put it on the desktop |
+| drag onto the Workspace list | move it into that directory |
 | click a window | raises it above its neighbours |
-| drag a window's right/bottom edge or corner | resize it |
+| drag a window's right edge, bottom edge or corner | resize width, height or both |
 | `Delete` / `Enter` | delete or open the selected icon |
 
-Resizing accounts for the 3D projection twice over: a drag of N screen pixels is
-N/scale *logical* pixels, since panels are drawn smaller with distance; and
-because a panel is centred on its anchor, the anchor shifts by half the growth
-so the top-left corner stays pinned where you see it instead of the window
-expanding in both directions.
+Resizing accounts for the 3D projection: a drag of N screen pixels is N/scale
+*logical* pixels, since panels are drawn smaller with distance. There is a grip
+per axis — the east edge takes width, the south edge height, the corner both —
+because a panel that is the right width but the wrong height is the common case,
+and a corner-only grip makes you fight whichever dimension was already correct.
 
 Dragging *out of* `/projects` copies rather than moves — the source is a
 read-only mount, and a move would fail with `EROFS` the user can do nothing
@@ -231,15 +249,24 @@ about.
 `launch(id, args)` is the OS's exec: modules receive `args.path` the way a
 program receives argv. A module declares what it opens via `handles`, and
 `ctx.openPath(p)` routes to whichever one claims the extension — `"dir"` goes to
-Files, `"*"` is the fallback. That's the entire association table; adding a
-viewer for a new filetype is one array entry, not a change to the desktop.
+the Workspace, `"*"` is the fallback. That's the entire association table; adding
+a viewer for a new filetype is one array entry, not a change to the desktop.
+
+Launching *with* args deliberately bypasses the singleton guard: "open this
+file" is about a specific document, so refocusing whatever the app already had
+open would drop the path on the floor.
 
 ## Running programs
 
-`.py` and `.js` files are executable, not just readable. Double-click one, pick
-**Run** from its context menu, or type `run <file>` in the console. Each program
-gets its own panel: output streams in, `stop` kills it, and the input line at
-the bottom is its stdin.
+`.py` and `.js` files are executable, not just readable. The editor is where
+that happens: open one and it grows a second pane, so you write and run in the
+same window. Hit **Run**, press `Ctrl+Enter`, pick **Run** from a context menu,
+or type `run <file>` in the console. Output streams in, `stop` kills it, and the
+input line at the bottom is the program's stdin.
+
+The run executes the *buffer*, not the last saved copy — editing and running
+are one loop, not a save-then-run dance. Where the file is writable it's saved
+first, so the two never disagree afterwards.
 
 | language | runtime | notes |
 | --- | --- | --- |

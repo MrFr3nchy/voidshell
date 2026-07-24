@@ -214,15 +214,20 @@ export const desktop: VoidModule = {
         showContextMenu(e.clientX, e.clientY, [
           { label: "Open", action: () => ctx.openPath(entry.path) },
           ...(runnable
-            ? [{ label: "Run", action: () => ctx.launch("runner", { path: entry.path }) }]
+            ? [
+                {
+                  label: "Run",
+                  action: () => ctx.launch("editor", { path: entry.path, run: true }),
+                },
+              ]
             : []),
           ...(entry.kind === "file"
             ? [{ label: "Edit", action: () => ctx.launch("editor", { path: entry.path }) }]
             : []),
           {
-            label: "Open in Console",
+            label: "Open in Workspace",
             action: () =>
-              ctx.launch("terminal", {
+              ctx.launch("workspace", {
                 path: entry.kind === "dir" ? entry.path : dirname(entry.path),
               }),
           },
@@ -352,11 +357,10 @@ export const desktop: VoidModule = {
           action: item ? () => paste(e.clientX, e.clientY) : undefined,
         },
         {
-          label: "Open Console Here",
+          label: "Open Workspace Here",
           separated: true,
-          action: () => ctx.launch("terminal", { path: DESKTOP_DIR }),
+          action: () => ctx.launch("workspace", { path: DESKTOP_DIR }),
         },
-        { label: "Open Files", action: () => ctx.launch("files", { path: DESKTOP_DIR }) },
         {
           label: "Tidy Icons",
           separated: true,

@@ -86,6 +86,15 @@ const FADE_RANGE = 1400;
 /** How close (in screen px) a link-drag must get to count as a hit. */
 const BODY_HIT_RADIUS = 110;
 
+/** Which edges a panel can be dragged by. */
+type ResizeAxis = "e" | "s" | "se";
+const RESIZE_AXES: ResizeAxis[] = ["e", "s", "se"];
+const RESIZE_TITLES: Record<ResizeAxis, string> = {
+  e: "drag to resize width",
+  s: "drag to resize height",
+  se: "drag to resize",
+};
+
 /**
  * The spectacle compositor.
  *
@@ -281,11 +290,17 @@ export class ThreeCompositor implements Compositor {
     body.className = "vs-panel-content";
     body.appendChild(surface.element);
 
-    const grip = document.createElement("div");
-    grip.className = "vs-panel-grip";
-    grip.title = "drag to resize";
+    // One grip per resize axis. Appended after the content so they stack above
+    // it and stay grabbable no matter what the module rendered.
+    const grips = {} as Record<ResizeAxis, HTMLElement>;
+    for (const axis of RESIZE_AXES) {
+      const g = document.createElement("div");
+      g.className = `vs-panel-grip vs-grip-${axis}`;
+      g.title = RESIZE_TITLES[axis];
+      grips[axis] = g;
+    }
 
-    panel.append(bar, body, grip);
+    panel.append(bar, body, grips.e, grips.s, grips.se);
     this.overlay.appendChild(panel);
 
     // Anchor the new panel where the user asked (drag-from-drawer) or in front
@@ -331,7 +346,7 @@ export class ThreeCompositor implements Compositor {
     this.bindPanelDrag(surface.id, bar, tools, link);
     this.bindPanelDepth(surface.id, panel);
     this.bindLinkDrag(surface.id, link);
-    this.bindResize(surface.id, grip);
+    for (const axis of RESIZE_AXES) this.bindResize(surface.id, grips[axis], axis);
 
     panel.addEventListener("pointerdown", () => this.setActive(surface.id));
 
@@ -1408,8 +1423,15 @@ export class ThreeCompositor implements Compositor {
     setTimeout(() => closeSurfaceById(id), 420);
   }
 
-  /** Corner grip: resize in screen pixels, corrected for the panel's scale. */
-  private bindResize(id: string, grip: HTMLElement): void {
+  /**
+   * Drag-to-resize, in screen pixels corrected for the panel's distance scale.
+   *
+   * `axis` picks which dimensions move: the east edge takes width only, the
+   * south edge height only, and the corner both. Splitting them matters because
+   * a panel that is the right width but the wrong height is the common case,
+   * and the corner forces you to fight whichever dimension was already correct.
+   */
+  private bindResize(id: string, grip: HTMLElement, axis: ResizeAxis): void {
     let active = false;
     let startX = 0;
     let startY = 0;
@@ -1436,10 +1458,14 @@ export class ThreeCompositor implements Compositor {
       if (!active) return;
       const p = this.panels.get(id);
       if (!p) return;
-      p.width = Math.max(240, Math.round(startW + (e.clientX - startX) / scale));
-      p.height = Math.max(140, Math.round(startH + (e.clientY - startY) / scale));
-      p.el.style.width = `${p.width}px`;
-      if (!p.minimized) p.el.style.height = `${p.height}px`;
+      if (axis !== "s") {
+        p.width = Math.max(240, Math.round(startW + (e.clientX - startX) / scale));
+        p.el.style.width = `${p.width}px`;
+      }
+      if (axis !== "e") {
+        p.height = Math.max(140, Math.round(startH + (e.clientY - startY) / scale));
+        if (!p.minimized) p.el.style.height = `${p.height}px`;
+      }
     });
 
     const end = (e: PointerEvent) => {

@@ -7,12 +7,10 @@ import { createSpawner } from "./ui/spawner";
 import { createAppDrawer } from "./ui/appDrawer";
 import { createPalette } from "./ui/palette";
 import { createToasts } from "./ui/toasts";
-import { terminal } from "./modules/terminal";
+import { workspace } from "./modules/workspace";
 import { chronos } from "./modules/chronos";
 import { cosmos } from "./modules/cosmos";
-import { files } from "./modules/files";
 import { editor } from "./modules/editor";
-import { runner } from "./modules/runner";
 import { webapp } from "./modules/webapp";
 import { desktop } from "./modules/desktop";
 import { buildProjectsTree } from "./kernel/vfs";
@@ -61,11 +59,9 @@ async function main() {
     .register(horizon)
     .register(shell)
     // apps
-    .register(terminal)
-    .register(files)
-    // Before the editor: both claim .py/.js, and first match wins, so
-    // double-clicking a script runs it rather than opening it for editing.
-    .register(runner)
+    // Before the editor: it claims "dir", so directories open here rather than
+    // falling through to the editor's "*" catch-all.
+    .register(workspace)
     .register(webapp)
     .register(editor)
     .register(desktop)

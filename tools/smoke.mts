@@ -52,7 +52,6 @@ const { settings } = await import("../src/modules/settings");
 const { dashboards } = await import("../src/modules/dashboards");
 const { notes } = await import("../src/modules/notes");
 const { vitals } = await import("../src/modules/vitals");
-const { terminal } = await import("../src/modules/terminal");
 const { chronos } = await import("../src/modules/chronos");
 const { cosmos } = await import("../src/modules/cosmos");
 const { cradle } = await import("../src/modules/cradle");
@@ -68,9 +67,8 @@ const { lavalamp } = await import("../src/modules/lavalamp");
 const { turmite } = await import("../src/modules/turmite");
 const { chaos } = await import("../src/modules/chaos");
 const { sunclock } = await import("../src/modules/sunclock");
-const { files } = await import("../src/modules/files");
+const { workspace } = await import("../src/modules/workspace");
 const { editor } = await import("../src/modules/editor");
-const { runner } = await import("../src/modules/runner");
 const { webapp } = await import("../src/modules/webapp");
 const { desktop } = await import("../src/modules/desktop");
 const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
@@ -159,9 +157,7 @@ kernel
   .register(horizon)
   .register(shell)
   .register(desktop)
-  .register(terminal)
-  .register(files)
-  .register(runner)
+  .register(workspace)
   .register(webapp)
   .register(editor)
   .register(chronos)
@@ -184,7 +180,7 @@ kernel
   .register(chaos)
   .register(sunclock);
 
-const MODULE_COUNT = 28;
+const MODULE_COUNT = 26;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -317,8 +313,8 @@ check(
 ctx.fs.mkdirp("/home/void/adir");
 ctx.openPath("/home/void/adir");
 check(
-  "openPath routed a directory to files",
-  ctx.openSurfaces().some((s) => s.moduleId === "files")
+  "openPath routed a directory to the workspace",
+  ctx.openSurfaces().some((s) => s.moduleId === "workspace")
 );
 
 // Launching with args must bypass the singleton short-circuit, or a second
@@ -327,6 +323,106 @@ ctx.fs.write("/home/void/second.md", "# second");
 const beforeSecond = ctx.openSurfaces().length;
 ctx.openPath("/home/void/second.md");
 check("a second file opens its own window", ctx.openSurfaces().length === beforeSecond + 1);
+
+/* ---------------- workspace: files + console over one cwd ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+ctx.fs.mkdirp("/home/void/ws/inner");
+ctx.fs.write("/home/void/ws/alpha.txt", "gamma\nalpha\nbeta\nbeta");
+kernel.launch("workspace", { path: "/home/void/ws" });
+
+const ws = hud.ownerDocument.querySelector(".ws-root");
+check("workspace mounted", Boolean(ws));
+check("workspace has both panes", Boolean(ws?.querySelector(".fm-list") && ws?.querySelector(".term-root")));
+check("workspace has a divider", Boolean(ws?.querySelector(".ws-divider")));
+check(
+  "browser listed the directory",
+  [...(ws?.querySelectorAll(".fm-name") ?? [])].some((el) => el.textContent === "alpha.txt")
+);
+
+const termInput = ws?.querySelector(".term-input") as HTMLInputElement | null;
+const termPrompt = ws?.querySelector(".term-prompt");
+// The prompt abbreviates $HOME to `~`, so /home/void/ws shows as ~/ws.
+check("console opened at the launch path", termPrompt?.textContent?.includes("~/ws") === true);
+
+/** Type a line into the console and press Enter. */
+const runCmd = (line: string) => {
+  if (!termInput) return;
+  termInput.value = line;
+  termInput.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+  );
+};
+const lastOut = (n = 1) => {
+  const rows = [...(ws?.querySelectorAll(".term-out") ?? [])];
+  return rows.slice(-n).map((r) => r.textContent ?? "");
+};
+
+runCmd("pwd");
+check("pwd reports the shared cwd", lastOut()[0] === "/home/void/ws");
+
+// cd in the console must drag the browser pane with it — the whole point of
+// merging the two apps.
+runCmd("cd inner");
+check(
+  "cd moved the browser pane too",
+  ws?.querySelector(".fm-note")?.textContent === "empty directory"
+);
+runCmd("cd ..");
+
+// `~` must expand, or every absolute path has to be typed out.
+runCmd("cd ~");
+check("~ expanded to home", lastOut()[0] !== "no such directory: ~");
+runCmd("pwd");
+check("~ resolved to /home/void", lastOut()[0] === "/home/void");
+runCmd("cd /home/void/ws");
+
+// Pipelines: the filters have to read piped stdin, not just a file argument.
+// gamma/alpha/beta/beta -> sorted -> deduped to alpha, beta, gamma.
+runCmd("cat alpha.txt | sort | uniq | wc");
+check("pipeline through sort|uniq|wc", lastOut()[0] === "3 lines  3 words  16 chars");
+
+runCmd("cat alpha.txt | grep beta | wc");
+check("grep filters piped input", lastOut()[0]?.startsWith("2 lines") === true);
+
+// Redirection, including append.
+runCmd("echo one > out.txt");
+runCmd("echo two >> out.txt");
+check("redirect then append wrote both lines", ctx.fs.read("/home/void/ws/out.txt") === "one\ntwo");
+
+// A failing command must break an && chain.
+runCmd("cd /nope && echo reached");
+check("&& chain stops on failure", lastOut()[0] !== "reached");
+
+// History is persisted through the store, so it survives a reload.
+check(
+  "console history persisted",
+  ctx.state.get<string[]>("console.history", []).includes("pwd")
+);
+
+/* ---------------- editor: buffer, gutter and run pane ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+ctx.fs.write("/home/void/hello.js", "console.log('hi')\nconsole.log('there')");
+kernel.launch("editor", { path: "/home/void/hello.js" });
+const ed = hud.ownerDocument.querySelector(".ed-root");
+check("editor mounted", Boolean(ed));
+check("editor gutter numbered every line", ed?.querySelectorAll(".ed-gutter div").length === 2);
+check("runnable file grew a run pane", Boolean(ed?.querySelector(".ed-out")));
+check("run pane has a stdin row", Boolean(ed?.querySelector(".run-input")));
+
+// A non-runnable file must not get the run pane.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("editor", { path: "/home/void/routed.md" });
+const edMd = hud.ownerDocument.querySelector(".ed-root");
+check("non-runnable file has no run pane", !edMd?.querySelector(".ed-out"));
+
+// Read-only files open as a viewer with no textarea to type into.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+ctx.fs.write("/home/void/ro.md", "# ro");
+kernel.launch("editor", { path: "/home/void/ro.md" });
+const edRw = hud.ownerDocument.querySelector(".ed-root");
+check("writable file opens editable", Boolean(edRw?.querySelector(".ed-area")));
 
 // Closing everything must not throw.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
