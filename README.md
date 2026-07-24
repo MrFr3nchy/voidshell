@@ -432,9 +432,63 @@ actual game — `import example_cards` resolves, emoji render, and `input()` wor
 exists on the main thread, so the worker parks on `Atomics.wait` against a
 SharedArrayBuffer until the host writes the line back. That needs the page to be
 cross-origin isolated — `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp`, set in `vite.config.ts` for dev and
-in the `Caddyfile` for production. Without those headers everything else still
-works; only stdin degrades, with an explanation rather than a hang.
+`Cross-Origin-Embedder-Policy: credentialless`, set in `vite.config.ts` for dev
+and in the `Caddyfile` for production. Without those headers everything else
+still works; only stdin degrades, with an explanation rather than a hang.
+
+`credentialless` rather than `require-corp` in **both** places. Both grant
+SharedArrayBuffer, but `require-corp` additionally hard-blocks every
+cross-origin asset that omits `Cross-Origin-Resource-Policy` — which is
+essentially the whole web, including anything Portal tries to frame.
+`credentialless` loads those without credentials instead. Dev and production
+disagreed on this for a while, which meant framing worked locally and failed
+once deployed.
+
+## The browser
+
+Portal is a web browser: tabs that keep their pages alive, an address bar that
+searches when you don't give it a URL, real back/forward, and bookmarks. `browse
+<url|query>` opens it from the console.
+
+The honest part is what stands between an iframe and the open web. **A browser
+refuses to frame any document whose server sends `X-Frame-Options` or a CSP
+`frame-ancestors`,** and Google, YouTube, GitHub and every major search engine
+send one. No client-side code defeats that — the enforcement is in the browser,
+not the page. The only way to embed those is to be the one serving the response.
+
+So there are two modes, and the pane says which one it's in:
+
+| mode | when | what happens |
+| --- | --- | --- |
+| **proxied** | dev | the host bridge serves the site from a local port with those headers stripped — effectively everything loads |
+| **direct** | production, or no bridge | the iframe points at the site; framable sites work, the rest render blank and say so |
+
+**One proxy port per origin**, for the same reason the app proxy uses one per
+port: a page's absolute URLs (`/w/load.php`, `/static/app.js`) resolve against
+the origin root, so serving Wikipedia at the root of its own port is what makes
+them resolve back through the proxy. Cross-origin redirects — `http`→`https`,
+bare→`www` — are rewritten to a proxy port for the new origin, so a redirect
+can't quietly bounce you out to the blocked original.
+
+**The framed page reports its own navigation.** A cross-origin frame's location
+is unreadable, so clicking a link would leave the address bar stale forever.
+Since the proxy serves the bytes, it injects a few lines into `<head>` that
+`postMessage` the real URL on load, `popstate`, `hashchange` and both history
+methods — which is what makes back/forward and the address bar behave like a
+browser's rather than like a bookmark list. That injection is also why the proxy
+requests `identity` encoding: rewriting a gzipped body would mean gunzipping it.
+
+Frames are sandboxed (`allow-scripts allow-forms allow-same-origin`), so a page
+can script and navigate itself but can't reach the shell.
+
+Bookmarks live at `~/.bookmarks` as `url<tab>title`, because a file can be
+grepped, piped and edited and a store key can't.
+
+**Dev-only, by construction.** `plugins/host.ts` is `apply: "serve"`, so the
+proxy does not exist in a production build. While the dev server runs it is a
+general-purpose web proxy bound to `127.0.0.1`, capped at 24 origins, and framed
+sites lose their clickjacking protection *inside the shell* — that is the trade
+being made for being able to embed them at all.
 
 ## The host bridge
 
@@ -510,3 +564,5 @@ backend is genuinely minimal.
   spaces, so use the editor for anything with real line breaks).
 - Running the web projects in-shell — iframe-based `render()` for `hero-nexus`
   and `stonks-surplus`, which currently browse as source only.
+- Portal's history is per-tab and in-memory; it isn't written down, so a reload
+  loses it. Bookmarks persist, history doesn't.

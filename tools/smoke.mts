@@ -54,6 +54,7 @@ const { dashboards } = await import("../src/modules/dashboards");
 const { notes } = await import("../src/modules/notes");
 const { vitals } = await import("../src/modules/vitals");
 const { monitor } = await import("../src/modules/monitor");
+const { portal, resolveQuery } = await import("../src/modules/portal");
 const { chronos } = await import("../src/modules/chronos");
 const { cosmos } = await import("../src/modules/cosmos");
 const { cradle } = await import("../src/modules/cradle");
@@ -174,6 +175,7 @@ kernel
   .register(notes)
   .register(vitals)
   .register(monitor)
+  .register(portal)
   .register(cradle)
   .register(driftfield)
   .register(sandbox)
@@ -188,7 +190,7 @@ kernel
   .register(chaos)
   .register(sunclock);
 
-const MODULE_COUNT = 27;
+const MODULE_COUNT = 28;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -620,7 +622,7 @@ const power = createPower(hud, ctx, { save: () => {}, closeAll: () => {} });
  * Add a class here whenever something new is shown and hidden via `.hidden`.
  */
 const css = readFileSync("src/style.css", "utf8");
-for (const cls of ["power-veil", "statusbar", "sb-popover"]) {
+for (const cls of ["power-veil", "statusbar", "sb-popover", "pt-marks", "pt-frame"]) {
   const declaresDisplay = new RegExp(`\\.${cls}\\s*\\{[^}]*display:`).test(css);
   const hasGuard = new RegExp(
     `\\.${cls}\\[hidden\\]\\s*\\{[^}]*display:\\s*none`
@@ -642,6 +644,40 @@ check("lock screen shows the time", /^\d\d:\d\d$/.test(
 dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a", bubbles: true }));
 dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a" }));
 check("any key unlocks", power.locked() === false);
+
+/* ---------------- portal ---------------- */
+
+// The address bar has to tell a URL, a bare domain and a search apart.
+check("full URLs pass through", resolveQuery("https://example.com/a?b=1") === "https://example.com/a?b=1");
+check("bare domains get https", resolveQuery("example.com") === "https://example.com");
+check("domains with a path get https", resolveQuery("en.wikipedia.org/wiki/Void") === "https://en.wikipedia.org/wiki/Void");
+check("prose becomes a search", resolveQuery("how do magnets work").startsWith("https://html.duckduckgo.com/html/?q="));
+check("a single word is a search, not a host", resolveQuery("wikipedia").includes("duckduckgo"));
+check("empty stays empty", resolveQuery("   ") === "");
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("portal");
+const pt = hud.ownerDocument.querySelector(".pt-root");
+check("portal mounted", Boolean(pt));
+check("portal has an address bar", Boolean(pt?.querySelector(".pt-url")));
+check("portal opened one tab", (pt?.querySelectorAll(".pt-tab").length ?? 0) === 1);
+check("the only tab has no close button", !pt?.querySelector(".pt-tab-x"));
+check("portal made an iframe", Boolean(pt?.querySelector(".pt-frame")));
+check(
+  "framed content is sandboxed",
+  (pt?.querySelector(".pt-frame") as HTMLIFrameElement | null)
+    ?.getAttribute("sandbox")
+    ?.includes("allow-scripts") === true
+);
+// No bridge in jsdom, so it must fall back rather than hang.
+await new Promise((r) => dom.window.setTimeout(r, 60));
+check(
+  "no bridge falls back to direct framing with an explanation",
+  (pt?.querySelector(".pt-note")?.textContent ?? "").includes("X-Frame-Options")
+);
+
+// Bookmarks are a file, so they survive and can be edited like anything else.
+check("portal is not a singleton", ctx.registry().find((m) => m.id === "portal")?.singleton === false);
 
 /* ---------------- monitor ---------------- */
 

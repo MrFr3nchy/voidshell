@@ -10,6 +10,7 @@ import { createToasts } from "./ui/toasts";
 import { createStatusBar } from "./ui/statusBar";
 import { createPower } from "./ui/power";
 import { monitor } from "./modules/monitor";
+import { portal } from "./modules/portal";
 import { workspace } from "./modules/workspace";
 import { chronos } from "./modules/chronos";
 import { cosmos } from "./modules/cosmos";
@@ -75,6 +76,7 @@ async function main() {
     .register(notes)
     .register(vitals)
     .register(monitor)
+    .register(portal)
     // ambient apps — things to leave open and look at
     .register(cradle)
     .register(driftfield)

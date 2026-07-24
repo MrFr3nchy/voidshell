@@ -197,7 +197,7 @@ filters      grep [-i] <pat>  sort [-r]  uniq  wc        (use with |)
 pipes        ls -l | grep .md | wc      redirect with > and >>  or > /dev/null
 processes    ps  kill <pid>  uptime  free  dmesg [level]
 environment  env  export K=V  unset K  whoami  hostname [name]   $VAR expands
-programs     run <file.py|.js>  edit <file>  launch <path>
+programs     run <file.py|.js>  edit <file>  launch <path>  browse [url|query]
 host         anything else runs on the machine (npm install, git…)
              jobs  kill <job-id>  app <port>        [dev server only]
 windows      wins  go <surface-id>  home  arrange <arc|wall|ring|scatter>
@@ -219,6 +219,7 @@ const BUILTINS = [
   "say", "sky", "echo", "clear", "history", "app", "jobs", "kill",
   "ps", "uptime", "free", "dmesg", "mount", "env", "export", "unset",
   "whoami", "hostname", "trash", "restore", "lock", "reboot", "shutdown",
+  "browse",
 ];
 
 function expandTilde(p: string): string {
@@ -795,6 +796,12 @@ export function createConsole(
         case "launch":
           if (!arg) throw new Error("usage: launch <path>");
           ctx.openPath(abs(arg));
+          break;
+
+        case "browse":
+          // No argument opens the home page; anything else is handed over
+          // verbatim so `browse how do magnets work` searches.
+          ctx.launch("portal", arg ? { url: arg } : {});
           break;
 
         case "apps":
