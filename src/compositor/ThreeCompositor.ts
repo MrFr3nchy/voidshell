@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type {
+  AnchorHandle,
   ArrangeMode,
   BodyKind,
   Compositor,
@@ -7,6 +8,7 @@ import type {
   GroupInfo,
   Surface,
   SurfacePlacement,
+  Vec3,
 } from "../kernel/types";
 import { nebulaFragment, nebulaVertex } from "../world/nebulaShader";
 import { Compass, type CompassItem } from "../ui/compass";
@@ -34,6 +36,12 @@ interface PanelEntry {
   sx: number;
   sy: number;
   onScreen: boolean;
+}
+
+/** A piece of DOM pinned to a world position — desktop icons and the like. */
+interface AnchorEntry {
+  el: HTMLElement;
+  anchor: THREE.Vector3;
 }
 
 interface BodyEntry {
@@ -78,6 +86,15 @@ const FADE_RANGE = 1400;
 /** How close (in screen px) a link-drag must get to count as a hit. */
 const BODY_HIT_RADIUS = 110;
 
+/** Which edges a panel can be dragged by. */
+type ResizeAxis = "e" | "s" | "se";
+const RESIZE_AXES: ResizeAxis[] = ["e", "s", "se"];
+const RESIZE_TITLES: Record<ResizeAxis, string> = {
+  e: "drag to resize width",
+  s: "drag to resize height",
+  se: "drag to resize",
+};
+
 /**
  * The spectacle compositor.
  *
@@ -114,6 +131,7 @@ export class ThreeCompositor implements Compositor {
   };
 
   private panels = new Map<string, PanelEntry>();
+  private anchors = new Set<AnchorEntry>();
   private bodies = new Map<string, BodyEntry>();
   private groups = new Map<string, GroupEntry>();
   private bodyCounter = 0;
@@ -272,11 +290,17 @@ export class ThreeCompositor implements Compositor {
     body.className = "vs-panel-content";
     body.appendChild(surface.element);
 
-    const grip = document.createElement("div");
-    grip.className = "vs-panel-grip";
-    grip.title = "drag to resize";
+    // One grip per resize axis. Appended after the content so they stack above
+    // it and stay grabbable no matter what the module rendered.
+    const grips = {} as Record<ResizeAxis, HTMLElement>;
+    for (const axis of RESIZE_AXES) {
+      const g = document.createElement("div");
+      g.className = `vs-panel-grip vs-grip-${axis}`;
+      g.title = RESIZE_TITLES[axis];
+      grips[axis] = g;
+    }
 
-    panel.append(bar, body, grip);
+    panel.append(bar, body, grips.e, grips.s, grips.se);
     this.overlay.appendChild(panel);
 
     // Anchor the new panel where the user asked (drag-from-drawer) or in front
@@ -322,7 +346,7 @@ export class ThreeCompositor implements Compositor {
     this.bindPanelDrag(surface.id, bar, tools, link);
     this.bindPanelDepth(surface.id, panel);
     this.bindLinkDrag(surface.id, link);
-    this.bindResize(surface.id, grip);
+    for (const axis of RESIZE_AXES) this.bindResize(surface.id, grips[axis], axis);
 
     panel.addEventListener("pointerdown", () => this.setActive(surface.id));
 
@@ -343,6 +367,45 @@ export class ThreeCompositor implements Compositor {
       panel.classList.add("dissolving");
       setTimeout(() => panel.remove(), 320);
     };
+  }
+
+  /**
+   * Pin arbitrary DOM to a world position. Shares the projection pass with
+   * panels but skips all the window chrome — this is what desktop icons ride
+   * on, so they live in the void exactly like windows do rather than being
+   * stuck to the screen in a separate 2D plane.
+   */
+  mountAnchored(el: HTMLElement, anchor: Vec3): AnchorHandle {
+    const entry: AnchorEntry = {
+      el,
+      anchor: new THREE.Vector3(anchor.x, anchor.y, anchor.z),
+    };
+    this.overlay.appendChild(el);
+    this.anchors.add(entry);
+    return {
+      setAnchor: (p) => entry.anchor.set(p.x, p.y, p.z),
+      getAnchor: () => ({
+        x: entry.anchor.x,
+        y: entry.anchor.y,
+        z: entry.anchor.z,
+      }),
+      dispose: () => {
+        this.anchors.delete(entry);
+        el.remove();
+      },
+    };
+  }
+
+  /** A point `dist` units straight ahead of the camera. */
+  focalPoint(dist = REST_DEPTH): Vec3 {
+    const v = this.forward().multiplyScalar(dist).add(this.camera.position);
+    return { x: v.x, y: v.y, z: v.z };
+  }
+
+  screenToWorld(x: number, y: number, dist: number): Vec3 {
+    const v = new THREE.Vector3();
+    this.anchorFromScreen(v, x, y, dist);
+    return { x: v.x, y: v.y, z: v.z };
   }
 
   private setActive(id: string): void {
@@ -889,10 +952,37 @@ export class ThreeCompositor implements Compositor {
       this.renderer.render(this.scene, this.camera);
       this.projectBodies();
       this.projectPanels();
+      this.projectAnchors();
       this.drawTethers();
       this.updateCompass();
     };
     loop();
+  }
+
+  /**
+   * Desktop icons and other bare anchors. Simpler than panels: no depth
+   * control, no fade, and they sit below every window so a dragged file never
+   * hides behind an icon.
+   */
+  private projectAnchors(): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    for (const a of this.anchors) {
+      this.tmpCam.copy(a.anchor).applyMatrix4(this.camera.matrixWorldInverse);
+      if (this.tmpCam.z > -1) {
+        a.el.style.display = "none";
+        continue;
+      }
+      a.el.style.display = "";
+
+      this.tmpNdc.copy(a.anchor).project(this.camera);
+      const dist = a.anchor.distanceTo(this.camera.position);
+      const scale = Math.max(0.45, Math.min(1.35, 700 / dist));
+      a.el.style.left = `${((this.tmpNdc.x * 0.5 + 0.5) * w).toFixed(1)}px`;
+      a.el.style.top = `${((-this.tmpNdc.y * 0.5 + 0.5) * h).toFixed(1)}px`;
+      a.el.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+      a.el.style.zIndex = `${Math.max(0, Math.round(50000 - dist))}`;
+    }
   }
 
   /** Where a panel actually sits right now, body-ride and drift included. */
@@ -1333,8 +1423,15 @@ export class ThreeCompositor implements Compositor {
     setTimeout(() => closeSurfaceById(id), 420);
   }
 
-  /** Corner grip: resize in screen pixels, corrected for the panel's scale. */
-  private bindResize(id: string, grip: HTMLElement): void {
+  /**
+   * Drag-to-resize, in screen pixels corrected for the panel's distance scale.
+   *
+   * `axis` picks which dimensions move: the east edge takes width only, the
+   * south edge height only, and the corner both. Splitting them matters because
+   * a panel that is the right width but the wrong height is the common case,
+   * and the corner forces you to fight whichever dimension was already correct.
+   */
+  private bindResize(id: string, grip: HTMLElement, axis: ResizeAxis): void {
     let active = false;
     let startX = 0;
     let startY = 0;
@@ -1361,10 +1458,14 @@ export class ThreeCompositor implements Compositor {
       if (!active) return;
       const p = this.panels.get(id);
       if (!p) return;
-      p.width = Math.max(240, Math.round(startW + (e.clientX - startX) / scale));
-      p.height = Math.max(140, Math.round(startH + (e.clientY - startY) / scale));
-      p.el.style.width = `${p.width}px`;
-      if (!p.minimized) p.el.style.height = `${p.height}px`;
+      if (axis !== "s") {
+        p.width = Math.max(240, Math.round(startW + (e.clientX - startX) / scale));
+        p.el.style.width = `${p.width}px`;
+      }
+      if (axis !== "e") {
+        p.height = Math.max(140, Math.round(startH + (e.clientY - startY) / scale));
+        if (!p.minimized) p.el.style.height = `${p.height}px`;
+      }
     });
 
     const end = (e: PointerEvent) => {
@@ -1481,6 +1582,8 @@ export class ThreeCompositor implements Compositor {
   dispose(): void {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.onResize);
+    for (const a of this.anchors) a.el.remove();
+    this.anchors.clear();
     this.compass?.dispose();
     this.renderer.dispose();
   }

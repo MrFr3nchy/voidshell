@@ -19,6 +19,17 @@ example.com {
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
+
+		# REQUIRED. These two enable SharedArrayBuffer, which the Python
+		# runtime uses to block on input(). Without them the shell still
+		# loads and scripts still run, but any program that reads stdin
+		# reports that interactive input is unavailable.
+		#
+		# Trade-off: require-corp means every cross-origin asset must send
+		# Cross-Origin-Resource-Policy. Pyodide's CDN does. Anything new you
+		# embed (fonts, images, iframes) must too, or it will be blocked.
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy require-corp
 	}
 
 	# LATER: when you add a key-holding backend on localhost:3000, uncomment:

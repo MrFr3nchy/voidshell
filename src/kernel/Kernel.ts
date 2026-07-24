@@ -1,5 +1,6 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
+import { VFS } from "./vfs";
 import type {
   ArrangeMode,
   BodyKind,
@@ -8,6 +9,7 @@ import type {
   CompositorStats,
   GroupInfo,
   KernelContext,
+  LaunchArgs,
   ModuleManifest,
   NotifyKind,
   SettingDef,
@@ -40,6 +42,8 @@ export class Kernel {
   private bus = new EventBus();
   private store = new Store();
   private compositor: Compositor;
+  /** Public so main.ts can mount /projects before boot. */
+  readonly fs = new VFS();
 
   private modules = new Map<string, VoidModule>();
   private deactivators = new Map<string, () => void>();
@@ -66,6 +70,20 @@ export class Kernel {
         set: (k, v) => this.store.set(k, v),
         subscribe: (k, h) => this.store.subscribe(k, h),
       },
+      fs: {
+        ls: (p) => this.fs.ls(p),
+        read: (p) => this.fs.read(p),
+        write: (p, c) => this.fs.write(p, c),
+        mkdir: (p) => this.fs.mkdir(p),
+        mkdirp: (p) => this.fs.mkdirp(p),
+        rm: (p, r) => this.fs.rm(p, r),
+        mv: (a, b) => this.fs.mv(a, b),
+        stat: (p) => this.fs.stat(p),
+        exists: (p) => this.fs.exists(p),
+        isDir: (p) => this.fs.isDir(p),
+        onChange: (fn) => this.fs.onChange(fn),
+        usage: () => this.fs.usage(),
+      },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
       openSurfaces: () =>
@@ -88,11 +106,22 @@ export class Kernel {
       unlinkGroup: (id) => this.compositor.unlinkGroup?.(id),
       listGroups: (): GroupInfo[] => this.compositor.listGroups?.() ?? [],
       arrange: (mode: ArrangeMode) => this.compositor.arrange?.(mode),
-      launch: (id) => this.launch(id),
+      launch: (id, args) => this.launch(id, args),
       launchAt: (id, x, y) => {
         this.compositor.setSpawnHint?.(x, y);
         this.launch(id);
       },
+      openPath: (p) => this.openPath(p),
+      focalPoint: (dist) =>
+        this.compositor.focalPoint?.(dist) ?? { x: 0, y: 0, z: -600 },
+      mountAnchored: (el, anchor) =>
+        this.compositor.mountAnchored?.(el, anchor) ?? {
+          setAnchor: () => {},
+          getAnchor: () => anchor,
+          dispose: () => el.remove(),
+        },
+      screenToWorld: (x, y, d) =>
+        this.compositor.screenToWorld?.(x, y, d) ?? { x: 0, y: 0, z: -d },
       registry: () => this.registry(),
       defineSetting: (def) => this.defineSetting(def),
       settings: () => this.settings(),
@@ -127,6 +156,18 @@ export class Kernel {
   }): Promise<void> {
     await this.compositor.init(mounts);
     this.compositor.start?.();
+
+    // Restore the user's files, then persist on every later mutation. Debounced
+    // because a shell loop can touch the tree many times in one frame, and each
+    // save re-serialises the whole home tree.
+    this.fs.load();
+    let saveTimer = 0;
+    this.fs.onChange(() => {
+      clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => this.fs.save(), 250);
+    });
+    window.addEventListener("beforeunload", () => this.fs.save());
+
     for (const mod of this.modules.values()) {
       const off = mod.activate(this.context());
       if (typeof off === "function") this.deactivators.set(mod.manifest.id, off);
@@ -134,7 +175,7 @@ export class Kernel {
     this.bus.emit("kernel.booted", { modules: this.registry() });
   }
 
-  launch(moduleId: string): void {
+  launch(moduleId: string, args?: LaunchArgs): void {
     const mod = this.modules.get(moduleId);
     if (!mod) {
       console.warn(`[kernel] no module "${moduleId}"`);
@@ -144,7 +185,11 @@ export class Kernel {
 
     // Singleton by default: re-launching a running app brings its existing
     // window back instead of cloning it. Opt out with manifest.singleton = false.
-    if (mod.manifest.singleton !== false) {
+    //
+    // Launching *with arguments* is exempt: "open this file" is a request about
+    // a specific document, and silently refocusing whatever the app already had
+    // open would drop the path on the floor. That is why openPath works at all.
+    if (mod.manifest.singleton !== false && !args) {
       const existing = [...this.surfaces.values()].find(
         (s) => s.moduleId === moduleId
       );
@@ -165,14 +210,43 @@ export class Kernel {
 
     this.activeModuleId = moduleId;
     try {
-      mod.launch?.(this.context());
+      mod.launch?.(this.context(), args);
     } catch (err) {
       console.error(`[kernel] "${moduleId}" threw while launching:`, err);
       this.notify(`${moduleId} failed to launch`, "warn");
     } finally {
       this.activeModuleId = null;
     }
-    this.bus.emit("module.launched", { id: moduleId });
+    this.bus.emit("module.launched", { id: moduleId, args });
+  }
+
+  /**
+   * Route a path to the module registered for its extension. Directories
+   * always go to the file manager; unknown types fall back to whichever module
+   * declared `handles: ["*"]`.
+   */
+  openPath(path: string): void {
+    if (!this.fs.exists(path)) {
+      console.warn(`[kernel] no such path: ${path}`);
+      this.notify(`no such path: ${path}`, "warn");
+      return;
+    }
+
+    if (this.fs.isDir(path)) {
+      const browser = [...this.modules.values()].find((m) =>
+        m.handles?.includes("dir")
+      );
+      if (browser) this.launch(browser.manifest.id, { path });
+      return;
+    }
+
+    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+    const mods = [...this.modules.values()];
+    const owner =
+      mods.find((m) => m.handles?.includes(ext)) ??
+      mods.find((m) => m.handles?.includes("*"));
+    if (owner) this.launch(owner.manifest.id, { path });
+    else this.notify(`nothing handles .${ext}`, "warn");
   }
 
   registry(): ModuleManifest[] {

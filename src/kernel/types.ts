@@ -103,6 +103,15 @@ export interface Compositor {
   attachSurface?(surfaceId: string, bodyId: string | null): void;
   /** Everything currently orbiting out there. */
   listBodies?(): { id: string; kind: BodyKind }[];
+  /**
+   * Mount arbitrary DOM at a world position — desktop icons, labels, markers.
+   * Lighter than a Surface: no chrome, no depth control, just projection.
+   */
+  mountAnchored?(el: HTMLElement, anchor: Vec3): AnchorHandle;
+  /** Where the camera is looking, `dist` units out. For placing new things. */
+  focalPoint?(dist?: number): Vec3;
+  /** Convert a screen point to a world position at a given distance. */
+  screenToWorld?(x: number, y: number, dist: number): Vec3;
   /** Tie windows together so they drag, focus and travel as one. */
   linkSurfaces?(ids: string[], name?: string): string;
   /** Cut a constellation loose; its windows go back to being individuals. */
@@ -122,6 +131,13 @@ export interface Compositor {
   stats?(): CompositorStats;
   /** Per-frame hook if the compositor animates. */
   start?(): void;
+  dispose(): void;
+}
+
+/** Control handle for a piece of DOM anchored in the world. */
+export interface AnchorHandle {
+  setAnchor(p: Vec3): void;
+  getAnchor(): Vec3;
   dispose(): void;
 }
 
@@ -203,6 +219,12 @@ export interface ModuleManifest {
   version?: string;
 }
 
+/** Arguments passed to a module at launch. `path` is the conventional one. */
+export interface LaunchArgs {
+  path?: string;
+  [key: string]: unknown;
+}
+
 export interface VoidModule {
   manifest: ModuleManifest;
   /** Called when the kernel loads the module. Register listeners, services, etc. */
@@ -211,7 +233,13 @@ export interface VoidModule {
    * For "app" modules: called when the user launches it. Usually opens a surface.
    * Optional so world/service modules can omit it.
    */
-  launch?(ctx: KernelContext): void;
+  launch?(ctx: KernelContext, args?: LaunchArgs): void;
+  /**
+   * File extensions this module can open, lowercase and without the dot.
+   * The kernel builds its association table from these. `"*"` means "will
+   * take anything", used as the fallback opener.
+   */
+  handles?: string[];
 }
 
 /** A tiny typed event. Modules talk through this, never to each other directly. */
@@ -232,6 +260,39 @@ export interface Command {
 }
 
 /**
+ * The filesystem as modules see it. Deliberately the shape of POSIX-ish calls
+ * rather than the VFS class itself, so the backing store can change (IndexedDB,
+ * a real server) without touching a single module.
+ */
+export interface FsApi {
+  ls(path: string): FsEntry[];
+  read(path: string): string;
+  write(path: string, content: string): void;
+  mkdir(path: string): void;
+  /** mkdir -p: creates missing parents, succeeds if the path already exists. */
+  mkdirp(path: string): void;
+  rm(path: string, recursive?: boolean): void;
+  mv(from: string, to: string): void;
+  stat(path: string): FsEntry;
+  exists(path: string): boolean;
+  isDir(path: string): boolean;
+  /** Fired on any mutation, so viewers can refresh. Returns an unsubscriber. */
+  onChange(fn: () => void): () => void;
+  usage(): { files: number; dirs: number; bytes: number; indexed: number };
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  kind: "file" | "dir";
+  size: number;
+  readonly: boolean;
+  /** Set when a real file's contents were not embedded in the build. */
+  omitted?: "binary" | "toolarge";
+  meta?: Record<string, string>;
+}
+
+/**
  * The context handed to every module. This is the entire syscall surface of
  * voidshell — deliberately small. Grow it on purpose, never by accident.
  */
@@ -245,6 +306,8 @@ export interface KernelContext {
     set(key: string, value: unknown): void;
     subscribe(key: string, handler: (value: unknown) => void): () => void;
   };
+  /** The filesystem (the OS's storage syscalls). */
+  fs: FsApi;
   /** Open a window into the world. */
   openSurface(req: SurfaceRequest): Surface;
   closeSurface(id: string): void;
@@ -271,10 +334,26 @@ export interface KernelContext {
   listGroups(): GroupInfo[];
   /** Re-lay-out every open window into a formation. */
   arrange(mode: ArrangeMode): void;
-  /** Launch another module by id (e.g. terminal launching a viewer). */
-  launch(moduleId: string): void;
+  /**
+   * Launch another module by id, optionally with arguments — the OS's exec.
+   * Args reach the module's `launch(ctx, args)`, which is how "open this file
+   * in the editor" works without the editor being a special case.
+   */
+  launch(moduleId: string, args?: LaunchArgs): void;
   /** Launch a module so its window materialises at a screen point (drag-drop). */
   launchAt(moduleId: string, x: number, y: number): void;
+  /**
+   * Open a path with whatever module is registered for its type. Directories
+   * go to the file manager, text to the editor. The desktop and file manager
+   * both route double-clicks through here rather than deciding themselves.
+   */
+  openPath(path: string): void;
+  /** 3D world position the camera is currently looking at, `dist` units out. */
+  focalPoint(dist?: number): Vec3;
+  /** Pin bare DOM into the world (desktop icons). */
+  mountAnchored(el: HTMLElement, anchor: Vec3): AnchorHandle;
+  /** Screen point -> world position at `dist` from the camera. */
+  screenToWorld(x: number, y: number, dist: number): Vec3;
   /** Everything currently registered — for launchers, task lists, etc. */
   registry(): ModuleManifest[];
   /** Publish a control into the Settings app. */

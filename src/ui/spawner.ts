@@ -66,7 +66,7 @@ export function createSpawner(
   const hint = document.createElement("div");
   hint.className = "spawner-hint";
   hint.textContent =
-    "space \u00b7 summon  \u2022  \u2318K \u00b7 command  \u2022  drag void \u00b7 look  \u2022  \u2059 \u00b7 link windows";
+    "space \u00b7 summon  \u2022  \u2318K \u00b7 command  \u2022  right-click \u00b7 new file  \u2022  \u2059 \u00b7 link windows";
 
   root.append(ring, summon, hint);
   hud.appendChild(root);
