@@ -14,18 +14,41 @@ npm install
 npm run dev      # opens http://localhost:5173
 ```
 
-Then: **drag the void** to look around, press **Space** (or click ◎) to summon
-apps. Open the Console and type `help`. Open Aurora Forge and repaint the sky.
+Other scripts: `npm run build`, `npm run preview`, `npm run typecheck`. There's
+also a headless smoke harness in `tools/smoke.mts` that boots the whole kernel
+and every module against a stub compositor — see the header of that file for the
+two commands to run it.
 
-Other scripts: `npm run build`, `npm run preview`, `npm run typecheck`.
+## Driving it
+
+| gesture | what happens |
+| --- | --- |
+| drag the void | look around |
+| **space** | summon / dismiss the launcher ring |
+| **⌘/ctrl + K** | command palette — apps, verbs and open windows in one list |
+| **⌘/ctrl + shift + A** | all apps |
+| **⌘/ctrl + ,** | settings |
+| **home** | recentre the view |
+| drag a title bar | move a window through space |
+| scroll a window | push it away / pull it closer |
+| drag the corner grip | resize |
+| drag **⁙** onto another window | bind them into a constellation |
+| drag **⁙** onto a celestial body | merge — the window rides that orbit |
+| drag **⁙** onto a singularity | the window is eaten |
+| drag a launcher node into the void | open that app exactly where you drop it |
+| drag an app from All Apps onto a node | rebind that node |
+
+Nothing is ever lost. Any window that drifts out of view puts a chevron on the
+edge of the screen pointing at it — click it and the void rotates until you're
+facing it again. Constellations report as one destination instead of four.
 
 ## The mental model
 
 Three things, and they barely know about each other:
 
 1. **The kernel** (`src/kernel/`) — the entire OS. It owns the module registry,
-   the surface (window) table, an event bus, and shared state. It renders
-   *nothing*. It's ~150 lines on purpose. Like a microkernel, everything
+   the surface (window) table, the settings and command registries, an event bus,
+   and shared state. It renders *nothing*. Like a microkernel, everything
    interesting lives outside it.
 
 2. **The compositor** (`src/compositor/`) — the render backend. The kernel hands
@@ -38,14 +61,49 @@ Three things, and they barely know about each other:
    each other. They talk through the event bus and shared state, so any one can
    be yanked out without the rest noticing.
 
-### Why two render layers
+### Why the panels aren't in WebGL
 
 Live web content **cannot live inside WebGL** — you can't texture-map an
-interactive `<iframe>` into a 3D scene and keep it interactive. So the
-compositor runs a WebGL layer for the *world* (the nebula, particles, depth)
-and a `CSS3DRenderer` layer for the *panels* (real DOM, positioned in the same
-3D space, sharing the same camera). That hybrid is what lets your actual
-projects drop in later as normal web apps while still hanging in space.
+interactive `<iframe>` into a 3D scene and keep it interactive. So the world
+(nebula, dust, celestial bodies) is drawn in WebGL, while every panel is
+ordinary DOM in an overlay whose screen position is recomputed each frame by
+projecting its 3D anchor through the camera. Clicks stay exact, text stays
+selectable, and "merging a window onto a planet" is just anchoring it to that
+planet's position.
+
+## Settings are a registry, not a screen
+
+Nothing hardcodes the settings UI. A module publishes a control and it appears:
+
+```ts
+ctx.defineSetting({
+  key: "world.dust",        // a plain store key
+  label: "dust motes",
+  kind: "slider",           // toggle | slider | select | color | action | custom
+  group: "World",           // becomes a tab
+  default: 1400, min: 0, max: 5000, step: 100,
+});
+
+ctx.state.subscribe("world.dust", (v) => ctx.patchWorld({ dust: Number(v) }));
+```
+
+The Settings app walks that registry and builds a control for whatever it finds,
+so adding a knob never means editing the settings screen. `kind: "custom"` hands
+you a DOM node when a slider won't do — that's how the drag-to-reorder launcher
+slot editor lives inside the same list as the checkboxes.
+
+Everything written through `ctx.state` (except the `tmp.` namespace) is mirrored
+to `localStorage` on a debounce. That single mechanism is the whole persistence
+story: settings, launcher bindings, saved dashboards, notes and window layout
+all ride on it for free.
+
+## Constellations
+
+A dashboard is several windows that agree to be one thing. Drag any member and
+the whole group travels; light threads draw between them; the compass reports
+them once, by name. Bind them with the **⁙** handle or from the Dashboards app,
+and save the arrangement — a saved dashboard is just a name and a list of apps,
+so it survives a reload and re-assembles itself on demand.
 
 ## Writing a module
 
@@ -70,23 +128,30 @@ export const hello: VoidModule = {
 ```
 
 Register it in `src/main.ts` with `kernel.register(hello)` and it appears in the
-launcher — no other file changes.
+launcher, the app drawer and the command palette — no other file changes.
 
 ### The syscall surface (`KernelContext`)
 
 Everything a module can do, deliberately small:
 
-- `emit(type, payload)` / `on(type, handler)` — the OS's IPC
-- `state.get/set/subscribe` — shared memory
+- `emit` / `on` — the OS's IPC
+- `state.get/set/subscribe` — shared memory, persisted
 - `fs.*` — the filesystem (see below)
-- `openSurface(req)` / `closeSurface(id)` — windows into the world
-- `patchWorld(patch)` — ask the compositor to mutate the environment
-- `launch(id)` / `registry()` — reach other modules
+- `openSurface` / `closeSurface` / `openSurfaces` / `focusSurface`
+- `lookAt` / `lookAtGroup` / `resetView` / `arrange` — move the viewer, not the windows
+- `linkSurfaces` / `unlinkGroup` / `listGroups` — constellations
+- `spawnBody` / `destroyBody` / `attachSurface` / `listBodies` — the sky
+- `mountAnchored` / `focalPoint` / `screenToWorld` — pin bare DOM into the void
+- `patchWorld` — ask the compositor to mutate the environment
+- `defineSetting` / `defineCommand` — publish into the shell's registries
+- `notify` — say something in the corner of the void
+- `launch` / `launchAt` / `registry` — reach other modules
+- `openPath(path)` — route a file to whichever module `handles` its extension
 
 `kind: "app"` shows in the launcher. `kind: "world"` and `kind: "service"` stay
-invisible — daemons. **Aurora Forge** is worth reading: it's an app that repaints
-the entire sky through `patchWorld`, which is how "theme" becomes a *program*
-instead of a setting.
+invisible — daemons. **Aurora** is worth reading: it owns every colour in the
+build and exposes them purely as registered settings, which is how "theme"
+becomes a *program* instead of a hardcoded palette.
 
 ## The filesystem
 
@@ -246,21 +311,19 @@ variables are set, and the error shows up in the console like any other.
 
 Write a `DomCompositor implements Compositor` that mounts surfaces as flat
 draggable divs, swap it in for `new ThreeCompositor()` in `src/main.ts`, and
-every module above renders unchanged in a 2D world. The kernel never learns the
-difference.
+every module above renders unchanged in a 2D world. The optional methods
+(`linkSurfaces`, `lookAtSurface`, `arrange`…) degrade to no-ops, so a minimal
+backend is genuinely minimal.
 
-## What's stubbed / next
+## What's next
 
-- Surface persistence — windows don't survive reload yet, though the files and
-  desktop layout do.
 - A `DomCompositor` as the pragmatic fallback backend.
-- Panel spawn placement — new panels cluster at view centre and occlude each
-  other; they need a "find empty screen space" pass.
+- Constellation *layouts* — remembering relative positions, not just membership.
+- Multi-user: the store is already the only source of truth worth syncing.
 - Syntax highlighting in the file viewer (the language is already detected).
 - Multi-select on the desktop (marquee drag, shift-click) — everything today is
   single-selection.
 - Undo. There is no trash: `Delete` is immediate and permanent.
-- An iframe panel so a running Next.js dev server can be hosted as an app.
 - Multi-line file writing from the shell (`write` joins its arguments with
   spaces, so use the editor for anything with real line breaks).
 - Running the web projects in-shell — iframe-based `render()` for `hero-nexus`

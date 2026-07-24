@@ -93,20 +93,14 @@ export const desktop: VoidModule = {
     };
 
     /**
-     * Transient toast. Filesystem errors here are user-facing (EROFS, EEXIST,
-     * ENOTEMPTY) and must not disappear into a console nobody is reading.
+     * Filesystem errors here are user-facing (EROFS, EEXIST, ENOTEMPTY) and
+     * must not disappear into a console nobody is reading. The shell owns the
+     * toast layer, so this goes through the kernel rather than hand-rolling a
+     * second, differently-styled notification.
      */
     const notify = (msg: string): void => {
       ctx.emit("desktop.notice", { message: msg });
-      const el = document.createElement("div");
-      el.className = "vs-toast";
-      el.textContent = msg;
-      document.body.appendChild(el);
-      requestAnimationFrame(() => el.classList.add("in"));
-      setTimeout(() => {
-        el.classList.remove("in");
-        setTimeout(() => el.remove(), 400);
-      }, 3200);
+      ctx.notify(msg, "warn");
     };
 
     const guard = (fn: () => void) => {

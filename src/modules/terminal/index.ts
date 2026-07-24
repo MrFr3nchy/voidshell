@@ -1,4 +1,10 @@
-import type { KernelContext, LaunchArgs, VoidModule } from "../../kernel/types";
+import type {
+  ArrangeMode,
+  BodyKind,
+  KernelContext,
+  LaunchArgs,
+  VoidModule,
+} from "../../kernel/types";
 import { dirname, normalize } from "../../kernel/vfs";
 import { hostExec, hostJobs, hostKill } from "../../runtime/hostBridge";
 
@@ -120,7 +126,12 @@ files        cat <f>  head <f>  write <f> <text>  echo <t> [> f]
 programs     run <file.py|.js>  edit <file>  launch <path>
 host         anything else runs on the machine (npm install, npm run dev, git…)
              jobs  kill <job-id>  app <port>        [dev server only]
-system       apps  open <id>  sky <0..1>  df  clear  help
+windows      wins  go <surface-id>  home  arrange <arc|wall|ring|scatter>
+links        link <id> <id> [...]  groups  unlink <group-id>
+world        spawn <sun|moon|planet|singularity>  bodies  merge <surf> <body>
+             sky <0..1.5>  say <text>
+system       apps  open <id>  set <k> <v>  get <k>  settings [filter]
+             df  clear  help
 projects     live under /projects — try: cd /projects && ls`;
 
 export const terminal: VoidModule = {
@@ -129,6 +140,7 @@ export const terminal: VoidModule = {
     name: "Console",
     kind: "app",
     glyph: "▚",
+    blurb: "drive the kernel by hand",
     version: "0.2.0",
   },
 
@@ -371,7 +383,8 @@ export const terminal: VoidModule = {
               }
 
               case "apps":
-                for (const m of ctx.registry()) out(`${m.glyph ?? "·"}  ${m.id}  —  ${m.name}`);
+                for (const m of ctx.registry())
+                  out(`${m.glyph ?? "·"}  ${pad(m.id, 12)} ${pad(m.kind, 8)} ${m.name}`);
                 break;
 
               case "open":
@@ -379,10 +392,110 @@ export const terminal: VoidModule = {
                 ctx.launch(arg);
                 break;
 
+              case "wins":
+                for (const s of ctx.openSurfaces())
+                  out(`${pad(s.id, 12)} ${pad(s.moduleId, 12)} ${s.title}`);
+                break;
+
+              case "go":
+                if (!arg) throw new Error("usage: go <surface-id>");
+                ctx.focusSurface(arg);
+                ctx.lookAt(arg);
+                break;
+
+              case "home":
+                ctx.resetView();
+                break;
+
+              case "arrange": {
+                const modes: ArrangeMode[] = ["arc", "wall", "ring", "scatter"];
+                const mode = modes.find((m) => m === arg);
+                if (!mode) throw new Error(`usage: arrange <${modes.join("|")}>`);
+                ctx.arrange(mode);
+                break;
+              }
+
+              case "link": {
+                if (rest.length < 2) throw new Error("usage: link <id> <id> [...]");
+                const id = ctx.linkSurfaces(rest);
+                if (!id) throw new Error("need two live windows");
+                out(`bound → ${id}`, "muted");
+                break;
+              }
+
+              case "groups": {
+                const groups = ctx.listGroups();
+                if (!groups.length) out("nothing bound", "muted");
+                for (const g of groups)
+                  out(`${pad(g.id, 10)} ${pad(g.name, 22)} ${g.members.join(" ")}`);
+                break;
+              }
+
+              case "unlink":
+                if (!arg) throw new Error("usage: unlink <group-id>");
+                ctx.unlinkGroup(arg);
+                break;
+
+              case "spawn": {
+                const kinds: BodyKind[] = ["sun", "moon", "planet", "singularity"];
+                const kind = kinds.find((k) => k === arg);
+                if (!kind) throw new Error(`usage: spawn <${kinds.join("|")}>`);
+                out(`→ ${ctx.spawnBody(kind)}`, "muted");
+                break;
+              }
+
+              case "bodies": {
+                const bodies = ctx.listBodies();
+                if (!bodies.length) out("the sky is empty", "muted");
+                for (const b of bodies) out(`${pad(b.id, 10)} ${b.kind}`);
+                break;
+              }
+
+              case "merge":
+                if (rest.length < 2) throw new Error("usage: merge <surface-id> <body-id>");
+                ctx.attachSurface(rest[0], rest[1]);
+                break;
+
+              case "set": {
+                const [key, ...v] = rest;
+                if (!key || !v.length) throw new Error("usage: set <key> <value>");
+                ctx.state.set(key, coerce(v.join(" ")));
+                out(`${key} ← ${v.join(" ")}`, "muted");
+                break;
+              }
+
+              case "get":
+                if (!arg) throw new Error("usage: get <key>");
+                out(`${arg} = ${JSON.stringify(ctx.state.get(arg, null))}`, "muted");
+                break;
+
+              case "settings": {
+                const q = arg.toLowerCase();
+                const defs = ctx
+                  .settings()
+                  .filter(
+                    (d) => !q || `${d.key} ${d.label} ${d.group}`.toLowerCase().includes(q)
+                  );
+                if (!defs.length) out("no matching settings", "muted");
+                for (const d of defs)
+                  out(
+                    `${pad(d.group, 12)} ${pad(d.key, 26)} ${JSON.stringify(
+                      ctx.state.get(d.key, d.default ?? null)
+                    )}`
+                  );
+                break;
+              }
+
+              case "say":
+                ctx.notify(arg || "…");
+                break;
+
               case "sky": {
                 const v = Number(arg);
                 if (!Number.isFinite(v)) throw new Error("usage: sky <number>");
-                ctx.patchWorld({ intensity: Math.max(0, Math.min(1.5, v)) });
+                // Upstream routes the sky through the settings registry, so the
+                // Settings app and this command stay in agreement.
+                ctx.state.set("appearance.intensity", Math.max(0, Math.min(1.5, v)));
                 out(`sky intensity → ${v}`, "muted");
                 break;
               }
@@ -466,3 +579,15 @@ export const terminal: VoidModule = {
     });
   },
 };
+
+function pad(s: string, n: number): string {
+  return s.length >= n ? s : s + " ".repeat(n - s.length);
+}
+
+/** `set world.drift true` should store a boolean, not the string "true". */
+function coerce(raw: string): unknown {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && raw.trim() !== "" ? n : raw;
+}
