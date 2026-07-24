@@ -2138,6 +2138,13 @@ body.vs-dropping #void::after {
   opacity: 0;
   transition: opacity 0.42s ease;
 }
+/* Required, not tidiness: `display: grid` above is an author rule and so beats
+   the UA stylesheet's `[hidden] { display: none }`. Without this the veil stays
+   laid out at inset:0 with opacity:0, and `#hud > *` grants it pointer-events —
+   an invisible full-screen sheet that eats every click in the viewport. */
+.power-veil[hidden] {
+  display: none;
+}
 .power-veil.up {
   opacity: 1;
 }

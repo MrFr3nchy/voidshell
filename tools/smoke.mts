@@ -13,6 +13,7 @@
  * `mountStage` — no 2D context means no resize observer and no frame loop.
  */
 import { JSDOM } from "jsdom";
+import { readFileSync } from "node:fs";
 
 const dom = new JSDOM(
   `<!doctype html><html><head><meta name="theme-color" content="#000"></head>
@@ -599,6 +600,33 @@ check("ls -a shows them", lsAllRows.some((t) => t === ".hidden"));
 
 createStatusBar(hud, ctx);
 const power = createPower(hud, ctx, { save: () => {}, closeAll: () => {} });
+
+/**
+ * Overlays toggled with the `hidden` property must carry an explicit
+ * `[hidden] { display: none }` rule.
+ *
+ * Any author rule setting `display` outranks the UA stylesheet's
+ * `[hidden] { display: none }`, so `.power-veil { display: grid }` silently
+ * defeats `veil.hidden = true`. The veil then stays laid out at inset:0 with
+ * opacity:0, and `#hud > *` grants it pointer-events — an invisible
+ * full-screen sheet that eats every click in the viewport. That is the exact
+ * failure the comment above `#hud > .toasts` warns about, and it shipped.
+ *
+ * This is a source assertion rather than a getComputedStyle one on purpose:
+ * jsdom applies `hidden` as a hard override instead of a cascading UA rule, so
+ * a computed-style check passes whether or not the guard exists and would be
+ * worse than no test at all.
+ *
+ * Add a class here whenever something new is shown and hidden via `.hidden`.
+ */
+const css = readFileSync("src/style.css", "utf8");
+for (const cls of ["power-veil", "statusbar", "sb-popover"]) {
+  const declaresDisplay = new RegExp(`\\.${cls}\\s*\\{[^}]*display:`).test(css);
+  const hasGuard = new RegExp(
+    `\\.${cls}\\[hidden\\]\\s*\\{[^}]*display:\\s*none`
+  ).test(css);
+  check(`.${cls} guards its hidden state against its own display rule`, hasGuard || !declaresDisplay);
+}
 const bar = hud.ownerDocument.querySelector(".statusbar");
 check("status bar mounted", Boolean(bar));
 check("status bar shows user@host", (bar?.querySelector(".sb-who")?.textContent ?? "").includes("@"));
