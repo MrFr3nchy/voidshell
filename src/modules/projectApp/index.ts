@@ -29,6 +29,21 @@ export function appUrl(id: string): string {
   return `${baseUrl()}apps/${id}/`;
 }
 
+/**
+ * Probe for a built artifact.
+ *
+ * Deferred through a resolved promise on purpose: outside a browser there is no
+ * document base, and Node's fetch rejects — in some versions *throws* — on a
+ * relative URL. Letting that escape synchronously would take down whatever is
+ * rendering the panel, which in the smoke harness is the whole test run.
+ */
+function artifactExists(url: string): Promise<boolean> {
+  return Promise.resolve()
+    .then(() => fetch(url, { method: "HEAD" }))
+    .then((res) => res.ok)
+    .catch(() => false);
+}
+
 export function createProjectApp(def: ProjectAppDef): VoidModule {
   return {
     manifest: {
@@ -83,9 +98,9 @@ export function createProjectApp(def: ProjectAppDef): VoidModule {
           root.append(bar, frame, note);
 
           // A Godot web export blocks on SharedArrayBuffer, which the browser
-          // only hands out to a cross-origin-isolated document. When the
-          // deploy forgets the COOP/COEP headers the engine dies with a stack
-          // trace nobody can read, so say it plainly up front.
+          // only hands out to a cross-origin-isolated document. When a deploy
+          // forgets the COOP/COEP headers the engine dies with a stack trace
+          // nobody can read, so say it plainly up front.
           if (
             def.builder === "godot" &&
             typeof crossOriginIsolated !== "undefined" &&
@@ -100,25 +115,23 @@ export function createProjectApp(def: ProjectAppDef): VoidModule {
           let alive = true;
 
           // Probe before framing. An artifact that was never built would
-          // otherwise render as the shell's own index inside the panel, which
-          // looks like a recursion bug rather than a missing build.
-          fetch(url, { method: "HEAD" })
-            .then((res) => {
-              if (!alive) return;
-              if (!res.ok) throw new Error(String(res.status));
+          // otherwise resolve to the shell's own index inside the panel, which
+          // reads as a recursion bug rather than a missing build.
+          void artifactExists(url).then((ok) => {
+            if (!alive) return;
+            if (ok) {
               frame.src = url;
-            })
-            .catch(() => {
-              if (!alive) return;
-              frame.remove();
-              const empty = document.createElement("div");
-              empty.className = "pa-empty";
-              empty.textContent =
-                `${def.name} has not been built into this deploy. Run the ` +
-                `"build project apps" workflow in the voidshell repo, or build ` +
-                `it locally into public/apps/${def.id}/.`;
-              root.insertBefore(empty, note);
-            });
+              return;
+            }
+            frame.remove();
+            const empty = document.createElement("div");
+            empty.className = "pa-empty";
+            empty.textContent =
+              `${def.name} has not been built into this deploy. Run the ` +
+              `"build project apps" workflow in the voidshell repo, or build ` +
+              `it locally into public/apps/${def.id}/.`;
+            root.insertBefore(empty, note);
+          });
 
           reload.addEventListener("click", () => {
             if (frame.isConnected) frame.src = `${url}?t=${Date.now()}`;
