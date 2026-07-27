@@ -1,0 +1,25 @@
+{
+  "apps": [
+    {
+      "id": "pawnageddon",
+      "name": "Pawnageddon",
+      "glyph": "\u265f",
+      "blurb": "Ridiculous 2D chess with minigames",
+      "repo": "MrFr3nchy/pawnageddon",
+      "builder": "vite",
+      "width": 1024,
+      "height": 700
+    },
+    {
+      "id": "ninja-run",
+      "name": "Ninja Run",
+      "glyph": "\u26e9",
+      "blurb": "Downhill ninja runner",
+      "repo": "MrFr3nchy/ninja-run",
+      "builder": "godot",
+      "godotVersion": "4.6",
+      "width": 960,
+      "height": 640
+    }
+  ]
+}
