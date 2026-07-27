@@ -74,6 +74,8 @@ const { workspace } = await import("../src/modules/workspace");
 const { editor } = await import("../src/modules/editor");
 const { webapp } = await import("../src/modules/webapp");
 const { desktop } = await import("../src/modules/desktop");
+const { createProjectApp } = await import("../src/modules/projectApp");
+const { PROJECT_APPS } = await import("../src/apps/catalog");
 const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
 const { createAppDrawer } = await import("../src/ui/appDrawer");
 const { createPalette } = await import("../src/ui/palette");
@@ -190,7 +192,12 @@ kernel
   .register(chaos)
   .register(sunclock);
 
-const MODULE_COUNT = 28;
+// External projects from the catalogue, exactly as main.ts registers them.
+for (const def of PROJECT_APPS) kernel.register(createProjectApp(def));
+
+/** 28 modules written for the shell, plus one per catalogued project. */
+const BUILTIN_MODULE_COUNT = 28;
+const MODULE_COUNT = BUILTIN_MODULE_COUNT + PROJECT_APPS.length;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -209,12 +216,33 @@ check(
 check("commands registered", ctx.commands().length >= 8);
 check("defaults seeded into the store", ctx.state.get("world.fov", 0) === 68);
 
+// The catalogue must survive validation and reach the registry as real apps,
+// or a typo in catalog.json would silently ship a shell with no projects in it.
+check("catalogue parsed at least one project", PROJECT_APPS.length > 0);
+check(
+  "every catalogued project registered as an app",
+  PROJECT_APPS.every((def) =>
+    ctx.registry().some((m) => m.id === def.id && m.kind === "app")
+  )
+);
+
 // Every app must launch, render and close without throwing.
+//
+// Surfaces are closed as we go. The installed app count now grows with the
+// catalogue and MAX_SURFACES is 24, so an accumulating sweep would eventually
+// fail on the window cap rather than on the thing each check is testing.
 for (const m of ctx.registry().filter((x) => x.kind === "app")) {
-  const before = ctx.openSurfaces().length;
   kernel.launch(m.id);
-  check(`launch ${m.id}`, ctx.openSurfaces().length === before + 1);
+  check(`launch ${m.id}`, ctx.openSurfaces().some((s) => s.moduleId === m.id));
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }
+
+// The assertions below read the live DOM of particular apps, so re-open exactly
+// the ones they need instead of depending on whatever the sweep left behind.
+kernel.launch("settings");
+kernel.launch("lunaria");
+kernel.launch("sunclock");
+kernel.launch("chronos");
 
 check("singleton re-launch does not clone", (() => {
   const before = ctx.openSurfaces().length;
@@ -423,8 +451,8 @@ const second = moveToTrash(ctx, "/home/void/sub/doomed.txt");
 check("colliding names are uniquified", second !== "doomed.txt" && listTrash(ctx).length === 2);
 check("emptying the trash clears both", emptyTrash(ctx) === 2 && listTrash(ctx).length === 0);
 
-// The launch sweep above left the surface table near MAX_SURFACES, so clear it
-// before the routing checks — otherwise they fail on the cap, not on routing.
+// Clear the surface table before the routing checks, so they fail on routing
+// rather than on the window cap.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 
 // openPath must route by extension through the `handles` table.
@@ -678,6 +706,26 @@ check(
 
 // Bookmarks are a file, so they survive and can be edited like anything else.
 check("portal is not a singleton", ctx.registry().find((m) => m.id === "portal")?.singleton === false);
+
+/* ---------------- project apps ---------------- */
+
+// There is no artifact on disk in the harness, so the probe must fail and the
+// panel must say so. This is the path a fresh clone hits before CI has ever
+// run, and it must not render a blank or recursive frame.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+if (PROJECT_APPS.length) {
+  const first = PROJECT_APPS[0]!;
+  kernel.launch(first.id);
+  const pa = hud.ownerDocument.querySelector(".pa-root");
+  check("project app mounted", Boolean(pa));
+  check("project app shows its artifact path", (pa?.querySelector(".pa-url")?.textContent ?? "").includes(first.id));
+  await new Promise((r) => dom.window.setTimeout(r, 60));
+  check(
+    "a missing artifact explains itself instead of framing nothing",
+    (pa?.querySelector(".pa-empty")?.textContent ?? "").includes("has not been built")
+  );
+  check("no iframe survives a failed probe", !pa?.querySelector(".pa-frame"));
+}
 
 /* ---------------- monitor ---------------- */
 
