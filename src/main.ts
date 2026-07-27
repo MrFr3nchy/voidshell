@@ -1,5 +1,6 @@
 import "./style.css";
 import "./ui/canvasStage.css";
+import "./modules/projectApp/projectApp.css";
 import { Kernel } from "./kernel/Kernel";
 import { ThreeCompositor } from "./compositor/ThreeCompositor";
 import { runBootSequence } from "./boot/bootSequence";
@@ -39,6 +40,8 @@ import { lavalamp } from "./modules/lavalamp";
 import { turmite } from "./modules/turmite";
 import { chaos } from "./modules/chaos";
 import { sunclock } from "./modules/sunclock";
+import { createProjectApp } from "./modules/projectApp";
+import { PROJECT_APPS } from "./apps/catalog";
 
 async function main() {
   const gl = document.getElementById("void")!;
@@ -91,6 +94,12 @@ async function main() {
     .register(turmite)
     .register(chaos)
     .register(sunclock);
+
+  // External projects, one module per catalogue entry. These are built
+  // artifacts under /apps/<id>/ rather than modules written for the shell, but
+  // nothing downstream needs to know that — they launch, focus, link into
+  // constellations and restore with the session like anything else.
+  for (const def of PROJECT_APPS) kernel.register(createProjectApp(def));
 
   // Mount the real project directory. This is deliberately not fatal: if the
   // scan is unavailable the shell still boots, just without /projects.
