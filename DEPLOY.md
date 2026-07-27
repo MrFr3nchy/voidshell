@@ -9,7 +9,40 @@ is simple. Two roads:
 - **Droplet:** more control, and the right foundation for later when you add a
   key-holding backend or always-on services. That's what this doc covers.
 
-## What you need
+## App Platform (the free road)
+
+Create the app as a **Static Site**, not a Web Service — a Web Service runs a
+container around the clock and bills for it, which buys nothing here since
+there is no server-side code to run.
+
+| Setting | Value |
+|---|---|
+| Build command | `npm run build` |
+| Output directory | `dist` |
+
+Then add the two isolation headers under **Settings → App-Level HTTP Headers**:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: credentialless
+```
+
+Without them the browser withholds `SharedArrayBuffer`, and both the Python
+worker's blocking `input()` and any Godot project app fail to start. The shell
+says so in the panel footer rather than letting the engine die silently, but
+the fix is here.
+
+Project apps under `/apps/` are committed artifacts, served as ordinary static
+files — nothing extra to configure. See `APPS.md` for how they get there.
+
+Note that the host bridge (`plugins/host.ts`) is `apply: "serve"`, so a
+deployed voidshell has no command bridge and cannot spawn anything. That is
+deliberate and permanent: the bridge POSTs a string into a shell, which is fine
+on your own machine and is remote code execution anywhere else.
+
+## Droplet
+
+### What you need
 
 - A droplet — Ubuntu LTS, Basic plan. 512 MB works if you build locally; pick
   1 GB+ if you'd rather build on the server or run other services next to it.
@@ -19,22 +52,22 @@ is simple. Two roads:
 - Caddy on the droplet — reverse proxy with automatic HTTPS.
 - Node on your local machine — to build.
 
-## One-time setup
+### One-time setup
 
-### 1. Create the droplet
+#### 1. Create the droplet
 Ubuntu 24.04 LTS, Basic plan, a region near you, attach your SSH key. Note the
 public IP.
 
-### 2. Point your domain
+#### 2. Point your domain
 Add a DNS `A` record: `@` → droplet IP (and `www` too).
 
-### 3. Firewall
+#### 3. Firewall
 ```bash
 ssh root@YOUR_DROPLET_IP
 sudo ufw allow OpenSSH && sudo ufw allow 80,443/tcp && sudo ufw enable
 ```
 
-### 4. Install Caddy
+#### 4. Install Caddy
 ```bash
 sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -42,22 +75,30 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo 
 sudo apt update && sudo apt install -y caddy
 ```
 
-### 5. Configure Caddy
+#### 5. Configure Caddy
 Edit `Caddyfile` — replace `example.com` — then copy it up and reload:
 ```bash
 scp Caddyfile root@YOUR_DROPLET_IP:/etc/caddy/Caddyfile
 ssh root@YOUR_DROPLET_IP 'sudo systemctl reload caddy'
 ```
 
-## Deploy (and every deploy after)
+### Deploy (and every deploy after)
 
 ```bash
 ./deploy.sh root@YOUR_DROPLET_IP
 ```
 That builds, syncs `dist/` to `/var/www/voidshell`, and reloads Caddy.
 
+Building locally means the `/projects` scan freezes whatever is on *your* disk
+into the bundle. Building on App Platform instead freezes whatever the CI
+checkout contains, which is voidshell alone.
+
 ## Later: adding a backend (for your API keys)
 
 Run a small service on the droplet (Node or Docker) on `localhost:3000` holding
 the key in an env var, uncomment the `reverse_proxy /api/*` line in `Caddyfile`,
 and have the frontend call `/api/...`. The key stays server-side.
+
+This is also the road for the projects that cannot be static-hosted — PHP,
+anything with a database, anything holding a server-side API key. `APPS.md` has
+the per-project breakdown.
