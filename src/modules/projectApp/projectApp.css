@@ -1,0 +1,72 @@
+/*
+ * Chrome for framed project apps. Kept beside the module rather than in
+ * style.css so a catalogue entry brings its own styling with it.
+ */
+
+.pa-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pa-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  flex: 0 0 auto;
+}
+
+.pa-url {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/*
+ * The frame must actually claim the leftover space. `flex: 1` alone is not
+ * enough inside a column flex container: the default `min-height: auto` lets
+ * the iframe's intrinsic height win and the panel scrolls instead of the game
+ * filling it.
+ */
+.pa-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  display: block;
+  background: #000;
+}
+
+.pa-empty {
+  flex: 1 1 auto;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  max-width: 46ch;
+  margin: 0 auto;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+
+.pa-note {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.55;
+  min-height: 1em;
+}
+
+.pa-note.warn {
+  opacity: 1;
+  color: var(--warn, #ffb454);
+}
