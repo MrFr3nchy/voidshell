@@ -1,0 +1,226 @@
+# Builds every project in src/apps/catalog.json into public/apps/<id>/ and
+# commits the result.
+#
+# Why here and not on the host: DigitalOcean App Platform's build container has
+# Node and little else. Installing a Godot headless binary and its export
+# templates inside it is a fight with no end. Actions lets us control the whole
+# image per project, so the deploy target only ever has to serve static files —
+# which is what keeps it on the free static tier.
+#
+# Artifacts are committed rather than uploaded because App Platform builds from
+# the repository. Whatever isn't in the tree at the commit it builds does not
+# exist as far as the deploy is concerned.
+
+name: build project apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Build a single app id (blank builds all)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "src/apps/catalog.json"
+      - ".github/workflows/build-apps.yml"
+  # Lets a project repo rebuild itself here after its own push:
+  #   gh api repos/MrFr3nchy/voidshell/dispatches -f event_type=rebuild-apps
+  repository_dispatch:
+    types: [rebuild-apps]
+
+concurrency:
+  group: build-apps
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      count: ${{ steps.set.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set
+        env:
+          ONLY: ${{ github.event.inputs.only }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ONLY" ]; then
+            apps=$(jq -c --arg only "$ONLY" '[.apps[] | select(.id == $only)]' src/apps/catalog.json)
+          else
+            apps=$(jq -c '.apps' src/apps/catalog.json)
+          fi
+          count=$(echo "$apps" | jq 'length')
+          if [ "$count" -eq 0 ]; then
+            echo "no matching apps in the catalogue" >&2
+            exit 1
+          fi
+          echo "matrix={\"include\":$apps}" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "building $count app(s)"
+
+  build:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Check out ${{ matrix.repo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          path: source
+          # Private project repos need a token with read access to them. A
+          # fine-grained PAT scoped to Contents: read is enough; the default
+          # GITHUB_TOKEN is scoped to this repo alone and cannot see them.
+          token: ${{ secrets.APPS_TOKEN || github.token }}
+
+      # ---------------- vite ----------------
+
+      - name: Set up Node
+        if: matrix.builder == 'vite'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build (vite)
+        if: matrix.builder == 'vite'
+        working-directory: source
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          # --base is not optional. A bundle built for the origin root emits
+          # absolute asset URLs (/assets/index-abc.js) which resolve against
+          # voidshell instead of the app once it is served from a subdirectory.
+          npm run build -- --base="/apps/${{ matrix.id }}/"
+          test -d dist || { echo "vite build produced no dist/" >&2; exit 1; }
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp -R dist/. "$GITHUB_WORKSPACE/out/"
+
+      # ---------------- godot ----------------
+
+      - name: Build (godot)
+        if: matrix.builder == 'godot'
+        working-directory: source
+        env:
+          GODOT_VERSION: ${{ matrix.godotVersion }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+
+          curl -fsSL -o godot.zip "${base}/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o templates.tpz "${base}/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+
+          unzip -q godot.zip
+          mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+
+          unzip -q templates.tpz
+          tpl="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$tpl"
+          mv templates/* "$tpl/"
+
+          # Web export cannot use Forward+ / Mobile: both target Vulkan, which
+          # browsers do not expose. The Compatibility renderer is OpenGL and is
+          # the only one that runs in a browser. Set as a platform override so
+          # the desktop renderer in project.godot is left untouched.
+          if ! grep -q 'rendering_method.web' project.godot; then
+            printf '\n[rendering]\n\nrenderer/rendering_method.web="gl_compatibility"\n' >> project.godot
+          fi
+
+          # The repo has no export_presets.cfg (it is normally gitignored), so
+          # synthesise the one preset we need rather than requiring the game
+          # repo to carry CI-specific config.
+          if [ ! -f export_presets.cfg ]; then
+            cat > export_presets.cfg <<'PRESET'
+[preset.0]
+
+name="Web"
+platform="Web"
+runtime=false
+custom_features=""
+export_filter="all_resources"
+export_path="build/index.html"
+
+[preset.0.options]
+
+variant/extensions_support=false
+variant/thread_support=true
+html/export_icon=true
+PRESET
+          fi
+
+          # Import first: without a populated .godot/ the exporter has no
+          # resource cache and writes an empty pack. It is expected to exit
+          # non-zero on a headless first run, so do not let that fail the job.
+          godot --headless --import || true
+
+          mkdir -p build
+          godot --headless --export-release "Web" build/index.html
+          test -s build/index.html || { echo "godot export produced nothing" >&2; exit 1; }
+
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp -R build/. "$GITHUB_WORKSPACE/out/"
+
+      # ---------------- collect ----------------
+
+      - name: Report size
+        run: du -sh out && ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.id }}
+          path: out
+          retention-days: 1
+          if-no-files-found: error
+
+  commit:
+    needs: [discover, build]
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staged
+          pattern: app-*
+
+      - name: Stage artifacts into public/apps
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          staged=(staged/app-*)
+          if [ ${#staged[@]} -eq 0 ]; then
+            echo "no artifacts were produced — every build failed" >&2
+            exit 1
+          fi
+          for dir in "${staged[@]}"; do
+            id="${dir#staged/app-}"
+            # Replace rather than merge: a stale file from a previous build
+            # that the new one no longer emits would otherwise linger forever.
+            rm -rf "public/apps/$id"
+            mkdir -p "public/apps/$id"
+            cp -R "$dir/." "public/apps/$id/"
+            echo "staged $id ($(du -sh "public/apps/$id" | cut -f1))"
+          done
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/apps
+          if git diff --cached --quiet; then
+            echo "artifacts unchanged — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(apps): rebuild project artifacts [skip ci]"
+          git push
