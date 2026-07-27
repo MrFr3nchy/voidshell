@@ -37,6 +37,7 @@ g.HTMLInputElement = dom.window.HTMLInputElement;
 g.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
 g.HTMLSelectElement = dom.window.HTMLSelectElement;
 g.CustomEvent = dom.window.CustomEvent;
+g.MessageChannel = dom.window.MessageChannel;
 g.requestAnimationFrame = (cb: FrameRequestCallback) => dom.window.setTimeout(() => cb(0), 0);
 g.cancelAnimationFrame = (id: number) => dom.window.clearTimeout(id);
 g.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
@@ -49,6 +50,7 @@ void types;
 const { aurora } = await import("../src/modules/aurora");
 const { horizon } = await import("../src/modules/horizon");
 const { shell } = await import("../src/modules/shell");
+const { secrets, parseEnv, keyFileFor } = await import("../src/modules/secrets");
 const { settings } = await import("../src/modules/settings");
 const { dashboards } = await import("../src/modules/dashboards");
 const { notes } = await import("../src/modules/notes");
@@ -166,6 +168,7 @@ kernel
   .register(aurora)
   .register(horizon)
   .register(shell)
+  .register(secrets)
   .register(desktop)
   .register(workspace)
   .register(webapp)
@@ -195,8 +198,8 @@ kernel
 // External projects from the catalogue, exactly as main.ts registers them.
 for (const def of PROJECT_APPS) kernel.register(createProjectApp(def));
 
-/** 28 modules written for the shell, plus one per catalogued project. */
-const BUILTIN_MODULE_COUNT = 28;
+/** 29 modules written for the shell, plus one per catalogued project. */
+const BUILTIN_MODULE_COUNT = 29;
 const MODULE_COUNT = BUILTIN_MODULE_COUNT + PROJECT_APPS.length;
 
 const hud = dom.window.document.getElementById("hud")!;
@@ -726,6 +729,104 @@ if (PROJECT_APPS.length) {
   );
   check("no iframe survives a failed probe", !pa?.querySelector(".pa-frame"));
 }
+
+/* ---------------- secrets ---------------- */
+
+// Parsing first, since every access path runs through it.
+const parsed = parseEnv(
+  [
+    "# a comment",
+    "",
+    "API_KEY=abc123",
+    '  QUOTED = "hunter2" ',
+    "WITH_EQUALS=a=b==",
+    "SINGLE='sq'",
+    "=novalue",
+    "no_equals_at_all",
+  ].join("\n")
+);
+check("parseEnv reads a plain pair", parsed.get("API_KEY") === "abc123");
+check("parseEnv trims and unquotes", parsed.get("QUOTED") === "hunter2");
+check("parseEnv keeps '=' inside values", parsed.get("WITH_EQUALS") === "a=b==");
+check("parseEnv handles single quotes", parsed.get("SINGLE") === "sq");
+check("parseEnv drops comments and junk", parsed.size === 4);
+check("keyFileFor scopes per app", keyFileFor("demo") === "/home/void/.keys/demo.env");
+
+/** Ask the secrets service as if we were a framed app. */
+const askSecret = (source: unknown, op: string, key?: string) =>
+  new Promise<Any>((resolve) => {
+    const channel = new dom.window.MessageChannel();
+    const timer = dom.window.setTimeout(
+      () => resolve({ ok: false, error: "timeout" }),
+      500
+    );
+    channel.port1.onmessage = (e: MessageEvent) => {
+      dom.window.clearTimeout(timer);
+      resolve(e.data as Any);
+    };
+    dom.window.dispatchEvent(
+      new dom.window.MessageEvent("message", {
+        data: { __voidshell: "secrets", op, key },
+        origin: "https://example.test",
+        source: source as Window,
+        ports: [channel.port2],
+      })
+    );
+  });
+
+ctx.fs.mkdirp("/home/void/.keys");
+ctx.fs.write(keyFileFor("demo"), "API_KEY=abc123\nOTHER=xyz\n");
+
+// Claim this window as the frame belonging to "demo", the way projectApp does.
+ctx.emit("secrets.claimFrame", { win: dom.window, appId: "demo" });
+
+check(
+  "a claimed frame reads its own key",
+  ((await askSecret(dom.window, "get", "API_KEY")).value as string) === "abc123"
+);
+check(
+  "an unset key resolves null rather than erroring",
+  (await askSecret(dom.window, "get", "NOPE")).value === null
+);
+check(
+  "list returns names only",
+  JSON.stringify((await askSecret(dom.window, "list")).value) === '["API_KEY","OTHER"]'
+);
+
+// The security property worth having a test for: naming an app id in the
+// message must not be enough. Attribution comes from the shell's claim, so an
+// unclaimed frame gets nothing no matter what it asks for.
+const stranger = dom.window.document.createElement("iframe");
+dom.window.document.body.appendChild(stranger);
+const strangerReply = await askSecret(stranger.contentWindow, "get", "API_KEY");
+check("an unclaimed frame is refused", strangerReply.ok === false);
+check("the refusal leaks no value", strangerReply.value === undefined);
+
+// Releasing must actually revoke, or a closed panel keeps its access.
+ctx.emit("secrets.releaseFrame", { win: dom.window });
+check(
+  "a released frame loses access",
+  (await askSecret(dom.window, "get", "API_KEY")).ok === false
+);
+ctx.emit("secrets.claimFrame", { win: dom.window, appId: "demo" });
+
+// One app must never read another's file.
+ctx.fs.write(keyFileFor("other-app"), "SECRET=notyours\n");
+check(
+  "keys are scoped to the claiming app",
+  (await askSecret(dom.window, "get", "SECRET")).value === null
+);
+
+// The seed action must create a file per installed app and never clobber one.
+ctx.fs.write(keyFileFor("demo"), "API_KEY=abc123\nOTHER=xyz\n");
+const seed = ctx.settings().find((d) => d.key === "secrets.seed");
+check("the seed action is published", Boolean(seed));
+seed?.run?.(ctx);
+check(
+  "seeding created a file for every app",
+  ctx.registry().filter((m) => m.kind === "app").every((m) => ctx.fs.exists(keyFileFor(m.id)))
+);
+check("seeding did not clobber an existing file", ctx.fs.read(keyFileFor("demo")).includes("abc123"));
 
 /* ---------------- monitor ---------------- */
 
