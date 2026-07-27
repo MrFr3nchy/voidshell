@@ -97,6 +97,19 @@ export function createProjectApp(def: ProjectAppDef): VoidModule {
 
           root.append(bar, frame, note);
 
+          // Tell the secrets service which app owns this window.
+          //
+          // Attribution has to come from the shell: if a frame could name its
+          // own app id it could name someone else's and read their keys. The
+          // WindowProxy is stable across same-origin navigations, so claiming
+          // it once here holds for every reload of the artifact.
+          //
+          // Sent over the bus rather than by importing the service, so this
+          // module still works in a shell where secrets isn't registered —
+          // nothing listens, nothing breaks.
+          const framed = frame.contentWindow;
+          if (framed) ctx.emit("secrets.claimFrame", { win: framed, appId: def.id });
+
           // A Godot web export blocks on SharedArrayBuffer, which the browser
           // only hands out to a cross-origin-isolated document. When a deploy
           // forgets the COOP/COEP headers the engine dies with a stack trace
@@ -139,6 +152,9 @@ export function createProjectApp(def: ProjectAppDef): VoidModule {
 
           return () => {
             alive = false;
+            // Drop the claim before the window goes away, or the map keeps a
+            // detached WindowProxy alive for the life of the session.
+            if (framed) ctx.emit("secrets.releaseFrame", { win: framed });
             root.replaceChildren();
           };
         },

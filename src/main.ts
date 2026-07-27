@@ -23,6 +23,7 @@ import { loadProjects } from "virtual:voidshell-projects";
 import { aurora } from "./modules/aurora";
 import { horizon } from "./modules/horizon";
 import { shell, RESTORE_KEY } from "./modules/shell";
+import { secrets } from "./modules/secrets";
 import { settings } from "./modules/settings";
 import { dashboards } from "./modules/dashboards";
 import { notes } from "./modules/notes";
@@ -61,10 +62,12 @@ async function main() {
   const kernel = new Kernel(compositor);
 
   kernel
-    // services and world modules first — they publish settings the apps read
+    // services and world modules first — they publish settings the apps read,
+    // and secrets must be listening before any project app can claim a frame
     .register(aurora)
     .register(horizon)
     .register(shell)
+    .register(secrets)
     // apps
     // Before the editor: it claims "dir", so directories open here rather than
     // falling through to the editor's "*" catch-all.
