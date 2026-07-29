@@ -39,6 +39,7 @@ import { lavalamp } from "./modules/lavalamp";
 import { turmite } from "./modules/turmite";
 import { chaos } from "./modules/chaos";
 import { sunclock } from "./modules/sunclock";
+import { bell } from "./modules/bell";
 
 async function main() {
   const gl = document.getElementById("void")!;
@@ -90,7 +91,8 @@ async function main() {
     .register(lavalamp)
     .register(turmite)
     .register(chaos)
-    .register(sunclock);
+    .register(sunclock)
+    .register(bell);
 
   // Mount the real project directory. This is deliberately not fatal: if the
   // scan is unavailable the shell still boots, just without /projects.
