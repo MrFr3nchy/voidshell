@@ -32,13 +32,19 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
+    // Only declared when there is something to declare. `content-type:
+    // application/json` on a bodyless POST — signup and signout — is a promise
+    // of JSON that isn't there, and a strict server is right to refuse it.
+    const headers: Record<string, string> =
+      init?.body === undefined ? {} : { "content-type": "application/json" };
+
     res = await fetch(path, {
       // The session cookie is httpOnly, so it is only attached if we ask for
       // credentials. Without this every request is anonymous and every route
       // answers 401 for reasons that look nothing like the cause.
       credentials: "same-origin",
-      headers: { "content-type": "application/json" },
       ...init,
+      headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) },
     });
   } catch (err) {
     throw new ApiError(err instanceof Error ? err.message : "network error", null);

@@ -32,8 +32,16 @@ type Reply = { status: number; body?: unknown } | "offline";
 let queue: Reply[] = [];
 const calls: string[] = [];
 
-g.fetch = async (input: string, init?: { method?: string }) => {
+const sent: Array<{ url: string; method: string; headers: Record<string, string>; body?: string }> = [];
+
+g.fetch = async (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
   calls.push(`${init?.method ?? "GET"} ${input}`);
+  sent.push({
+    url: input,
+    method: init?.method ?? "GET",
+    headers: init?.headers ?? {},
+    ...(init?.body === undefined ? {} : { body: init.body }),
+  });
   const next = queue.shift();
   if (!next || next === "offline") throw new TypeError("Failed to fetch");
   return {
@@ -199,6 +207,20 @@ function reset() {
   enter.click();
   const ws = await settled;
   check("a new dashboard starts empty", JSON.stringify(ws) === '{"state":{},"fs":null}');
+}
+
+/* ---------------- what goes on the wire ---------------- */
+
+{
+  // The stub above means this harness never talks to a real server, so it has
+  // to assert the request shape itself. Declaring a JSON content-type on a
+  // bodyless POST is what broke signup in the browser while three harnesses
+  // reported green.
+  const signup = sent.find((r) => r.url === "/api/auth/signup");
+  check("signup posts no content-type, because it posts no body", !!signup && signup.body === undefined && !("content-type" in signup.headers));
+
+  const signin = sent.find((r) => r.url === "/api/auth/signin");
+  check("signin does declare json, because it sends some", !!signin && typeof signin.body === "string" && signin.headers["content-type"] === "application/json");
 }
 
 console.log("");

@@ -101,6 +101,39 @@ function attrsFrom(res: { headers: Record<string, unknown> }): string {
   check("a three-word key is rejected on shape", !looksLikeKey("shiny-gold-tooth"));
 }
 
+/* ---------------- the shape a browser actually sends ---------------- */
+
+{
+  // Every bodyless POST here was previously only ever exercised without a
+  // content-type, because inject() omits it when there is no payload. A real
+  // fetch wrapper sets the header on every request, so signup and signout
+  // arrive declaring JSON with an empty body — and the default Fastify parser
+  // 400s on exactly that. Three harnesses covered signup and none reproduced
+  // it; the bug surfaced on the first click in a browser.
+  const json = { "content-type": "application/json" };
+
+  const signup = await app.inject({ method: "POST", url: "/api/auth/signup", headers: json });
+  check(`signup accepts an empty body with a json content-type (${signup.statusCode})`, signup.statusCode === 201);
+
+  const token = cookieFrom(signup) ?? "";
+  const signout = await app.inject({
+    method: "POST",
+    url: "/api/auth/signout",
+    headers: json,
+    cookies: { [COOKIE]: token },
+  });
+  check(`signout accepts an empty body with a json content-type (${signout.statusCode})`, signout.statusCode === 200);
+
+  // Malformed JSON must still be refused — the parser was replaced, not removed.
+  const broken = await app.inject({
+    method: "POST",
+    url: "/api/auth/signin",
+    payload: "{not json",
+    headers: json,
+  });
+  check(`malformed json is still rejected (${broken.statusCode})`, broken.statusCode === 400);
+}
+
 /* ---------------- signup ---------------- */
 
 let key = "";
