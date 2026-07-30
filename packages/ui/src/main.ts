@@ -11,6 +11,7 @@ import { createPalette } from "./ui/palette";
 import { createToasts } from "./ui/toasts";
 import { createStatusBar } from "./ui/statusBar";
 import { createPower } from "./ui/power";
+import { runLockScreen } from "./ui/lockScreen";
 import { monitor } from "./modules/monitor";
 import { portal } from "./modules/portal";
 import { workspace } from "./modules/workspace";
@@ -43,30 +44,37 @@ import { chaos } from "./modules/chaos";
 import { sunclock } from "./modules/sunclock";
 import { bell } from "./modules/bell";
 
-async function main() {
-  const gl = document.getElementById("void")!;
-  const hud = document.getElementById("hud")!;
+/**
+ * Get a dashboard, one way or another.
+ *
+ * Returns only once there is a session. Nothing that follows — no compositor,
+ * no WebGL context, no module — is constructed before this resolves, which is
+ * the difference between a lock screen and a login form drawn over a running
+ * OS that has already leaked what it contains.
+ */
+async function openSession(): Promise<WorkspaceSnapshot> {
+  try {
+    return (await api.session()).workspace;
+  } catch (err) {
+    // A 401 is "sign in". Anything else is the server being unreachable, and
+    // answering that with a lock screen teaches people their key stopped
+    // working — so the two get visibly different screens.
+    const unreachable = err instanceof ApiError && err.offline;
+    return runLockScreen({ unreachable });
+  }
+}
 
-  /**
-   * Load the dashboard before anything else exists.
-   *
-   * A 401 here means no session. The lock screen that answers it properly
-   * lands in the next change; until then the shell boots onto an empty
-   * workspace and saves fail harmlessly against the same 401.
-   */
+/**
+ * One signed-in session, start to finish.
+ *
+ * Resolves when the user signs out, having torn down everything it built. The
+ * caller loops, so signing out lands back on the lock screen without a page
+ * reload — and, more importantly, without a second WebGL context.
+ */
+async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnapshot): Promise<void> {
   const host = new ApiWorkspaceHost((err) => {
     console.warn("[voidshell] could not save workspace:", err);
   });
-  let saved: WorkspaceSnapshot = { state: {}, fs: null };
-  try {
-    saved = (await api.session()).workspace;
-  } catch (err) {
-    if (err instanceof ApiError && err.offline) {
-      console.warn("[voidshell] the server is unreachable — running unsaved");
-    } else {
-      console.info("[voidshell] no session; starting an empty workspace");
-    }
-  }
 
   // The panel overlay sits above the WebGL canvas, below the HUD. It ignores
   // pointer events itself so drags on empty space reach the canvas; the panels
@@ -84,6 +92,11 @@ async function main() {
   // Before register(), and so before any defineSetting() seeds a default over
   // a value the user actually chose.
   kernel.hydrate(saved);
+
+  /** Everything registered on the way up, undone on the way out. */
+  const teardown = new AbortController();
+  let signedOut: () => void = () => {};
+  const untilSignout = new Promise<void>((r) => (signedOut = r));
 
   kernel
     // services and world modules first — they publish settings the apps read
@@ -142,7 +155,6 @@ async function main() {
     if (id) kernel.closeSurface(id);
   });
 
-  await runBootSequence();
   await kernel.boot({ gl, overlay, hud });
 
   // First-run only: leave something in the home directory so it isn't a void
@@ -209,6 +221,8 @@ async function main() {
   ctx.on("shell.openDrawer", () => drawer.toggle(true));
   ctx.on("shell.openPalette", () => palette.toggle(true));
   ctx.on("shell.saveSession", () => kernel.saveSession());
+  ctx.on("shell.signOut", () => void signOut());
+
   ctx.on("shell.factoryReset", () => {
     resetting = true;
     // Awaited: the reload would otherwise outrun the write and leave the old
@@ -311,11 +325,75 @@ async function main() {
     if (resetting) return;
     if (ctx.state.get<boolean>(RESTORE_KEY, true)) kernel.saveSession();
   };
-  window.addEventListener("beforeunload", save);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") save();
-  });
-  window.setInterval(save, 15000);
+
+  /**
+   * The layout is in memory and the server's copy may be a second behind, so
+   * every exit has to flush rather than schedule. beforeunload is the one that
+   * cannot await, which is why visibilitychange carries the real weight — on
+   * mobile it is often the only one that fires at all.
+   */
+  const flush = async () => {
+    save();
+    await kernel.flush();
+  };
+
+  window.addEventListener("beforeunload", () => save(), { signal: teardown.signal });
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (document.visibilityState === "hidden") void flush();
+    },
+    { signal: teardown.signal }
+  );
+  const heartbeat = window.setInterval(save, 15000);
+
+  async function signOut(): Promise<void> {
+    // Order matters. Flush first, because after signout the session is gone
+    // and the write would 401 into a warning about losing work that was in
+    // fact already lost.
+    try {
+      await flush();
+    } catch (err) {
+      console.warn("[voidshell] could not save before signing out:", err);
+    }
+    try {
+      await api.signout();
+    } catch (err) {
+      // The local teardown happens regardless: a user who asked to sign out
+      // should not be left staring at their dashboard because a request failed.
+      console.warn("[voidshell] signout request failed:", err);
+    }
+    signedOut();
+  }
+
+  await untilSignout;
+
+  /* ---------------- teardown ---------------- */
+
+  window.clearInterval(heartbeat);
+  teardown.abort();
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  // Releases the WebGL context along with everything else. Without this, each
+  // signout leaks one, and browsers cap them at around sixteen before they
+  // start killing the oldest — the void goes black several signouts later,
+  // somewhere that looks nothing like the cause.
+  kernel.dispose();
+  overlay.remove();
+  hud.replaceChildren();
+}
+
+async function main() {
+  const gl = document.getElementById("void")!;
+  const hud = document.getElementById("hud")!;
+
+  await runBootSequence();
+
+  // Sign in, run, sign out, repeat. A loop rather than a reload so signing out
+  // stays instant and the next session starts from a clean kernel.
+  for (;;) {
+    const saved = await openSession();
+    await runShell(gl, hud, saved);
+  }
 }
 
 main().catch((err) => console.error("[voidshell] failed to boot:", err));
