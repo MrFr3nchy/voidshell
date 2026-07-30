@@ -245,6 +245,16 @@ export const shell: VoidModule = {
     });
 
     ctx.defineSetting({
+      key: "system.signOut",
+      label: "sign out",
+      hint: "your dashboard is saved first \u2014 you'll need your key to get back in",
+      kind: "action",
+      group: "System",
+      order: 44,
+      run: (c) => c.emit("shell.signOut"),
+    });
+
+    ctx.defineSetting({
       key: "system.reset",
       label: "wipe everything and start over",
       hint: "settings, launcher bindings, saved dashboards, notes \u2014 all of it",
@@ -297,6 +307,13 @@ export const shell: VoidModule = {
 
     // The shell owns the screen, so these publish an intent and the HUD's power
     // veil acts on it. Same split as factoryReset: modules don't touch chrome.
+    ctx.defineCommand({
+      id: "shell.signOut",
+      label: "sign out",
+      hint: "save, close the session, and go back to the key screen",
+      glyph: "\u2192",
+      run: (c) => c.emit("shell.signOut"),
+    });
     ctx.defineCommand({
       id: "shell.lock",
       label: "lock",

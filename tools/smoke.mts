@@ -212,6 +212,35 @@ check("modules registered", ctx.registry().length === MODULE_COUNT);
  * main.ts and make the drift itself a failure.
  */
 const mainSrc = readFileSync("packages/ui/src/main.ts", "utf8");
+
+/**
+ * The compositor must not exist before there is a session.
+ *
+ * An ordering property, so it is checked where the ordering is written rather
+ * than by booting WebGL in jsdom. Getting this wrong doesn't throw — it draws
+ * the nebula and flashes the user's panels in behind a login form, which is
+ * both a leak and the exact thing a lock screen is supposed to prevent.
+ */
+{
+  const compositorAt = mainSrc.indexOf("new ThreeCompositor()");
+  const runShellAt = mainSrc.indexOf("async function runShell");
+  const openSessionAt = mainSrc.indexOf("await openSession()");
+  const runShellCallAt = mainSrc.indexOf("await runShell(");
+
+  check("the compositor is built inside runShell", compositorAt > runShellAt && runShellAt !== -1);
+  check(
+    "the session is opened before the shell runs",
+    openSessionAt !== -1 && runShellCallAt !== -1 && openSessionAt < runShellCallAt
+  );
+  check(
+    "runShell is only reached with a workspace in hand",
+    /const saved = await openSession\(\);\s*await runShell\(/.test(mainSrc)
+  );
+  // Signing out must release the WebGL context. Browsers cap them at around
+  // sixteen and then start killing the oldest, so a leak here goes black
+  // several signouts later, somewhere that looks nothing like the cause.
+  check("signing out disposes the kernel", /teardown\.abort\(\);[\s\S]{0,400}kernel\.dispose\(\)/.test(mainSrc));
+}
 const registeredInMain = [...mainSrc.matchAll(/\.register\((\w+)\)/g)].map((m) => m[1]);
 check(
   `main.ts registers ${MODULE_COUNT} modules (found ${registeredInMain.length})`,
