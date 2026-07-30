@@ -42,7 +42,16 @@ export default defineConfig({
   // voidshellHost is `apply: "serve"` — it exists only while the dev server is
   // running, so the deployed static build has no command bridge at all.
   plugins: [voidshellProjects({ root: siblingRepos }), voidshellHost({ root: siblingRepos })],
-  server: { port: 5173, open: true, headers: isolationHeaders },
+  server: {
+    port: 5173,
+    open: true,
+    headers: isolationHeaders,
+    // Same-origin /api in dev as in production, so the session cookie — which
+    // is SameSite=Strict — behaves identically in both. Pointing the client at
+    // http://localhost:3000 directly would work right up until the cookie
+    // didn't.
+    proxy: { "/api": { target: "http://127.0.0.1:3000", changeOrigin: false } },
+  },
   preview: { headers: isolationHeaders },
   build: { target: "es2021" },
   worker: { format: "es" },
