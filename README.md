@@ -47,18 +47,18 @@ facing it again. Constellations report as one destination instead of four.
 
 Three things, and they barely know about each other:
 
-1. **The kernel** (`src/kernel/`) — the entire OS. It owns the module registry,
+1. **The kernel** (`packages/ui/src/kernel/`) — the entire OS. It owns the module registry,
    the process table, the surface (window) table, the filesystem, the journal,
    the settings and command registries, an event bus, and shared state. It
    renders *nothing*. Like a microkernel, everything interesting lives outside
    it.
 
-2. **The compositor** (`src/compositor/`) — the render backend. The kernel hands
+2. **The compositor** (`packages/ui/src/compositor/`) — the render backend. The kernel hands
    it abstract *surfaces* and says "give this a body." How it does that — WebGL,
    DOM, WebGPU — is entirely the compositor's business. `ThreeCompositor` is the
-   spectacle one. Swapping it is **one line** in `src/main.ts`.
+   spectacle one. Swapping it is **one line** in `packages/ui/src/main.ts`.
 
-3. **Modules** (`src/modules/`) — the unit of everything. An app, a theme, a
+3. **Modules** (`packages/ui/src/modules/`) — the unit of everything. An app, a theme, a
    world effect, a background service: all the same contract. They never import
    each other. They talk through the event bus and shared state, so any one can
    be yanked out without the rest noticing.
@@ -129,7 +129,7 @@ export const hello: VoidModule = {
 };
 ```
 
-Register it in `src/main.ts` with `kernel.register(hello)` and it appears in the
+Register it in `packages/ui/src/main.ts` with `kernel.register(hello)` and it appears in the
 launcher, the app drawer and the command palette — no other file changes.
 
 ### The syscall surface (`KernelContext`)
@@ -265,7 +265,7 @@ the notice bell. Turn it off in Settings › System.
 
 ## The filesystem
 
-`src/kernel/vfs.ts` is a single tree assembled from mounts, reached by modules
+`packages/ui/src/kernel/vfs.ts` is a single tree assembled from mounts, reached by modules
 through `ctx.fs`. Five mounts ship:
 
 | mount | mode | backing |
@@ -304,7 +304,7 @@ a real read-only mount does, rather than silently no-op'ing.
 
 ### How `/projects` gets there
 
-`plugins/projects.ts` is a Vite plugin with two modes behind one API:
+`packages/ui/plugins/projects.ts` is a Vite plugin with two modes behind one API:
 
 - **dev** — serves a live scan at `/__vs/projects.json`, so editing a file on
   disk shows up in the shell on reload.
@@ -318,7 +318,10 @@ text allowlist, so unguessable text files (`.firebaserc`, `.gql`) stay readable;
 a NUL-byte check catches anything mislabeled.
 
 Point it somewhere else with `voidshellProjects({ root: "/some/path" })` in
-`vite.config.ts`. It defaults to the parent of the Vite root.
+`packages/ui/vite.config.ts`, which is how it is wired today: the root is
+pinned to the directory holding the voidshell repo. Left unset it falls back to
+the parent of the Vite root, which since the workspace split is `packages/` —
+the wrong place, and empty.
 
 ### The Workspace: files and shell over one directory
 
@@ -432,7 +435,7 @@ actual game — `import example_cards` resolves, emoji render, and `input()` wor
 exists on the main thread, so the worker parks on `Atomics.wait` against a
 SharedArrayBuffer until the host writes the line back. That needs the page to be
 cross-origin isolated — `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: credentialless`, set in `vite.config.ts` for dev
+`Cross-Origin-Embedder-Policy: credentialless`, set in `packages/ui/vite.config.ts` for dev
 and in the `Caddyfile` for production. Without those headers everything else
 still works; only stdin degrades, with an explanation rather than a hang.
 
@@ -484,7 +487,7 @@ can script and navigate itself but can't reach the shell.
 Bookmarks live at `~/.bookmarks` as `url<tab>title`, because a file can be
 grepped, piped and edited and a store key can't.
 
-**Dev-only, by construction.** `plugins/host.ts` is `apply: "serve"`, so the
+**Dev-only, by construction.** `packages/ui/plugins/host.ts` is `apply: "serve"`, so the
 proxy does not exist in a production build. While the dev server runs it is a
 general-purpose web proxy bound to `127.0.0.1`, capped at 24 origins, and framed
 sites lose their clickjacking protection *inside the shell* — that is the trade
@@ -504,7 +507,7 @@ app 5174             → frame a port manually
 ```
 
 A browser has no process API, so this can only work via something outside the
-page. `plugins/host.ts` runs inside the Vite dev server: it spawns children,
+page. `packages/ui/plugins/host.ts` runs inside the Vite dev server: it spawns children,
 streams stdout/stderr back over SSE, and reverse-proxies a child's port under
 voidshell's own origin so it can be framed.
 
@@ -542,7 +545,7 @@ variables are set, and the error shows up in the console like any other.
 ## Swapping the renderer
 
 Write a `DomCompositor implements Compositor` that mounts surfaces as flat
-draggable divs, swap it in for `new ThreeCompositor()` in `src/main.ts`, and
+draggable divs, swap it in for `new ThreeCompositor()` in `packages/ui/src/main.ts`, and
 every module above renders unchanged in a 2D world. The optional methods
 (`linkSurfaces`, `lookAtSurface`, `arrange`…) degrade to no-ops, so a minimal
 backend is genuinely minimal.

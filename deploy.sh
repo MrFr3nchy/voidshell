@@ -19,9 +19,9 @@ fi
 echo "building..."
 npm run build
 
-echo "syncing dist/ -> ${TARGET}:${REMOTE_DIR}"
+echo "syncing packages/ui/dist/ -> ${TARGET}:${REMOTE_DIR}"
 ssh "$TARGET" "mkdir -p '${REMOTE_DIR}'"
-rsync -avz --delete dist/ "${TARGET}:${REMOTE_DIR}/"
+rsync -avz --delete packages/ui/dist/ "${TARGET}:${REMOTE_DIR}/"
 
 echo "reloading caddy..."
 ssh "$TARGET" 'sudo systemctl reload caddy || true'

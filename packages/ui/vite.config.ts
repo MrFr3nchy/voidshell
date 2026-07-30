@@ -1,6 +1,21 @@
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { defineConfig } from "vite";
 import { voidshellProjects } from "./plugins/projects";
 import { voidshellHost } from "./plugins/host";
+
+/**
+ * Where /projects and the host bridge look for sibling repos.
+ *
+ * Both plugins default this to `path.resolve(config.root, "..")`, which was
+ * the directory holding voidshell back when the Vite root *was* the repo root.
+ * The root is now packages/ui, so that default would resolve to packages/ and
+ * find nothing. Pin it explicitly instead of relying on the depth of the tree.
+ */
+const siblingRepos = path.resolve(
+  fileURLToPath(new URL(".", import.meta.url)),
+  "../../.." // packages/ui -> packages -> voidshell -> the directory holding it
+);
 
 /**
  * Cross-origin isolation. Required for SharedArrayBuffer, which is what lets
@@ -26,7 +41,7 @@ export default defineConfig({
   // live during dev, frozen into the bundle at build.
   // voidshellHost is `apply: "serve"` — it exists only while the dev server is
   // running, so the deployed static build has no command bridge at all.
-  plugins: [voidshellProjects(), voidshellHost()],
+  plugins: [voidshellProjects({ root: siblingRepos }), voidshellHost({ root: siblingRepos })],
   server: { port: 5173, open: true, headers: isolationHeaders },
   preview: { headers: isolationHeaders },
   build: { target: "es2021" },
