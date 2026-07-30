@@ -2,8 +2,10 @@
  * The trash.
  *
  * Until now `Delete` was immediate and permanent, in a shell whose entire
- * filesystem lives in localStorage and has no backups behind it. One mistyped
- * `rm -r` took your notes with it.
+ * filesystem was a single browser-storage key with no backups behind it. One
+ * mistyped `rm -r` took your notes with it. Files now live in the workspace on
+ * the server, which is backed up nightly, but a restore is somebody else's bad
+ * afternoon — the trash is what makes an ordinary mistake ordinary.
  *
  * The implementation is deliberately the boring one: trashing is a **move** to
  * ~/.Trash, so it costs nothing, keeps working with every existing FS tool, and

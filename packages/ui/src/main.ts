@@ -1,6 +1,8 @@
 import "./style.css";
 import "./ui/canvasStage.css";
 import { Kernel } from "./kernel/Kernel";
+import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
+import type { WorkspaceSnapshot } from "./kernel/persistence";
 import { ThreeCompositor } from "./compositor/ThreeCompositor";
 import { runBootSequence } from "./boot/bootSequence";
 import { createSpawner } from "./ui/spawner";
@@ -45,6 +47,27 @@ async function main() {
   const gl = document.getElementById("void")!;
   const hud = document.getElementById("hud")!;
 
+  /**
+   * Load the dashboard before anything else exists.
+   *
+   * A 401 here means no session. The lock screen that answers it properly
+   * lands in the next change; until then the shell boots onto an empty
+   * workspace and saves fail harmlessly against the same 401.
+   */
+  const host = new ApiWorkspaceHost((err) => {
+    console.warn("[voidshell] could not save workspace:", err);
+  });
+  let saved: WorkspaceSnapshot = { state: {}, fs: null };
+  try {
+    saved = (await api.session()).workspace;
+  } catch (err) {
+    if (err instanceof ApiError && err.offline) {
+      console.warn("[voidshell] the server is unreachable — running unsaved");
+    } else {
+      console.info("[voidshell] no session; starting an empty workspace");
+    }
+  }
+
   // The panel overlay sits above the WebGL canvas, below the HUD. It ignores
   // pointer events itself so drags on empty space reach the canvas; the panels
   // inside it re-enable pointer events and are fully interactive DOM.
@@ -56,7 +79,11 @@ async function main() {
   // plugin" story: swap ThreeCompositor for a DomCompositor and every module
   // above renders unchanged in a flat 2D world instead.
   const compositor = new ThreeCompositor();
-  const kernel = new Kernel(compositor);
+  const kernel = new Kernel(compositor, host);
+
+  // Before register(), and so before any defineSetting() seeds a default over
+  // a value the user actually chose.
+  kernel.hydrate(saved);
 
   kernel
     // services and world modules first — they publish settings the apps read
@@ -184,8 +211,9 @@ async function main() {
   ctx.on("shell.saveSession", () => kernel.saveSession());
   ctx.on("shell.factoryReset", () => {
     resetting = true;
-    kernel.factoryReset();
-    location.reload();
+    // Awaited: the reload would otherwise outrun the write and leave the old
+    // dashboard on the server.
+    void kernel.factoryReset().finally(() => location.reload());
   });
 
   /* ---------------- keybinds ---------------- */

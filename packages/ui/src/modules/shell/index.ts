@@ -17,6 +17,7 @@ import {
   resolveSlots,
 } from "../../ui/spawner";
 import { SECONDS_KEY, STATUSBAR_KEY } from "../../ui/statusBar";
+import { tone } from "../../ui/blip";
 
 export const SOUND_KEY = "system.sound";
 export const RESTORE_KEY = "system.restoreSession";
@@ -545,28 +546,18 @@ function rowUnder(
 }
 
 /**
- * A three-line synth. Notifications and window events get a short sine blip —
- * off by default, because an OS that makes noise without asking is a rude OS.
+ * Notification and window blips.
+ *
+ * Routed through the shared helper rather than a private AudioContext. The
+ * browser caps how many contexts a page may hold, and a page over the cap
+ * fails silently — audio simply stops, somewhere else, later, for reasons
+ * nothing connects back to here.
+ *
+ * Off by default, because an OS that makes noise without asking is a rude OS.
  */
 function makeBlipper(enabled: () => boolean): (freq: number, gain: number) => void {
-  let audio: AudioContext | null = null;
   return (freq, gain) => {
     if (!enabled()) return;
-    try {
-      audio ??= new AudioContext();
-      if (audio.state === "suspended") void audio.resume();
-      const osc = audio.createOscillator();
-      const amp = audio.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      amp.gain.setValueAtTime(0, audio.currentTime);
-      amp.gain.linearRampToValueAtTime(gain, audio.currentTime + 0.01);
-      amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.18);
-      osc.connect(amp).connect(audio.destination);
-      osc.start();
-      osc.stop(audio.currentTime + 0.2);
-    } catch {
-      /* no audio device, no problem */
-    }
+    tone({ freq, gain, decay: 0.18, wave: "sine" });
   };
 }

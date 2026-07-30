@@ -1,7 +1,6 @@
 type Sub = (value: unknown) => void;
 
-const DISK_KEY = "voidshell:state";
-/** Keys under this namespace are scratch: they never touch disk. */
+/** Keys under this namespace are scratch: they are never persisted. */
 const EPHEMERAL = "tmp.";
 
 /**
@@ -9,17 +8,20 @@ const EPHEMERAL = "tmp.";
  * changes. Kept intentionally schema-less: modules namespace their own keys
  * (e.g. "aurora.hue", "chronos.format").
  *
- * Everything except the `tmp.` namespace is mirrored to localStorage on a
- * short debounce, which is the entire persistence story for the OS — settings,
- * launcher bindings, saved dashboards and notes all ride on it for free.
+ * Everything except the `tmp.` namespace is part of the persisted workspace,
+ * which is the entire persistence story for the OS — settings, launcher
+ * bindings, saved dashboards and notes all ride on it for free. The Store
+ * itself neither knows nor cares where that goes; it just says when it
+ * changed. The kernel owns the answer.
  */
 export class Store {
   private data = new Map<string, unknown>();
   private subs = new Map<string, Set<Sub>>();
-  private flushTimer = 0;
+  private dirty: (() => void) | null = null;
 
-  constructor() {
-    this.load();
+  /** Told when any persisted key changes. The kernel wires this to the host. */
+  onChange(handler: () => void): void {
+    this.dirty = handler;
   }
 
   get<T>(key: string, fallback: T): T {
@@ -34,7 +36,7 @@ export class Store {
     this.data.set(key, value);
     const set = this.subs.get(key);
     if (set) for (const s of [...set]) s(value);
-    if (!key.startsWith(EPHEMERAL)) this.scheduleFlush();
+    if (!key.startsWith(EPHEMERAL)) this.dirty?.();
   }
 
   subscribe(key: string, handler: Sub): () => void {
@@ -50,43 +52,27 @@ export class Store {
   /** Nuke persisted state. The "factory reset" behind the Settings button. */
   wipe(): void {
     this.data.clear();
-    try {
-      localStorage.removeItem(DISK_KEY);
-    } catch {
-      /* storage unavailable — nothing to wipe */
+    this.dirty?.();
+  }
+
+  /**
+   * Load a workspace in. Called once at boot, before any module activates, so
+   * defineSetting() sees the user's values rather than overwriting them with
+   * defaults.
+   */
+  hydrate(state: Record<string, unknown>): void {
+    for (const [k, v] of Object.entries(state)) {
+      if (!k.startsWith(EPHEMERAL)) this.data.set(k, v);
     }
   }
 
-  private load(): void {
-    try {
-      const raw = localStorage.getItem(DISK_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      for (const [k, v] of Object.entries(parsed)) this.data.set(k, v);
-    } catch (err) {
-      // A corrupt blob must never stop the OS from booting.
-      console.warn("[store] could not restore state:", err);
+  /** Everything worth persisting, as a plain object. */
+  snapshot(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of this.data) {
+      if (k.startsWith(EPHEMERAL)) continue;
+      out[k] = v;
     }
-  }
-
-  private scheduleFlush(): void {
-    if (this.flushTimer) return;
-    this.flushTimer = window.setTimeout(() => {
-      this.flushTimer = 0;
-      this.flush();
-    }, 240);
-  }
-
-  private flush(): void {
-    try {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of this.data) {
-        if (k.startsWith(EPHEMERAL)) continue;
-        out[k] = v;
-      }
-      localStorage.setItem(DISK_KEY, JSON.stringify(out));
-    } catch (err) {
-      console.warn("[store] could not persist state:", err);
-    }
+    return out;
   }
 }
