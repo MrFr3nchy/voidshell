@@ -1,0 +1,37 @@
+[Unit]
+Description=voidshell API
+After=network.target
+
+[Service]
+Type=simple
+User=voidshell
+WorkingDirectory=/opt/voidshell/api
+Environment=NODE_ENV=production
+Environment=VOIDSHELL_DB=/var/lib/voidshell/db.json
+Environment=PORT=3000
+# server.js, not index.js. index.js exports build() and starts nothing — the
+# split is what keeps a test from booting a listener on the production
+# database. Pointing systemd at it would start a process that exits silently.
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=5
+
+# SIGTERM drains the write queue before exiting, so a deploy restart cannot
+# land in the middle of somebody's dashboard save. Give it room to finish.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# The one writable path. ProtectSystem=strict makes everything else read-only,
+# which is the point: a compromised API process cannot rewrite its own code.
+ReadWritePaths=/var/lib/voidshell
+
+[Install]
+WantedBy=multi-user.target

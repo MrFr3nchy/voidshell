@@ -1,0 +1,98 @@
+name: Deploy
+
+# Build here, not on the droplet. A 1 GB box running a Vite + Three.js build
+# alongside a live API is how you discover the OOM killer picks the API.
+# This also makes a deploy reproducible from a commit rather than from whatever
+# was in the droplet's working tree.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Two deploys rsyncing the same directory interleave their files and leave a
+  # half-and-half tree that matches no commit.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Deploying something that fails its own checks is worse than not
+      # deploying. CI runs these too; repeating them here means a manual
+      # workflow_dispatch can't skip them.
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: build the api
+        run: npm run build --workspace @voidshell/api
+
+      # Production dependencies only, installed against the API's own
+      # package.json, so the droplet gets fastify without vite or three.
+      - name: stage api runtime
+        run: |
+          mkdir -p stage/api
+          cp -r packages/api/dist stage/api/dist
+          cp packages/api/package.json stage/api/
+          cd stage/api && npm install --omit=dev --no-package-lock
+
+      - name: stage static + ops files
+        run: |
+          cp -r packages/ui/dist stage/www
+          cp deploy/backup.sh stage/
+          chmod +x stage/backup.sh
+
+      - name: ssh key
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned rather than StrictHostKeyChecking=no: accepting any key on
+          # a deploy that carries an SSH key is how a misdirected DNS record
+          # becomes a credential handover.
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: sync static
+        run: |
+          rsync -az --delete -e ssh stage/www/ \
+            "${{ secrets.DEPLOY_TARGET }}:/var/www/voidshell/"
+
+      # --delete is deliberately absent: /opt/voidshell also holds backup.sh
+      # and anything else installed by hand, and a deploy should not sweep the
+      # droplet's own furniture.
+      - name: sync api
+        run: |
+          rsync -az -e ssh stage/api/ "${{ secrets.DEPLOY_TARGET }}:/opt/voidshell/api/"
+          rsync -az -e ssh stage/backup.sh "${{ secrets.DEPLOY_TARGET }}:/opt/voidshell/backup.sh"
+
+      - name: restart and verify
+        run: |
+          ssh "${{ secrets.DEPLOY_TARGET }}" '
+            set -e
+            sudo systemctl restart voidshell-api
+            # Restart returns as soon as the unit is active, which is before
+            # the store has finished loading. Poll the health endpoint instead
+            # of sleeping and hoping.
+            for i in $(seq 1 20); do
+              if curl -fsS --max-time 2 http://127.0.0.1:3000/api/health > /tmp/health; then
+                echo "healthy: $(cat /tmp/health)"
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "api did not come back healthy" >&2
+            sudo journalctl -u voidshell-api -n 40 --no-pager >&2
+            exit 1
+          '

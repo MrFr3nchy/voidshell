@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up the voidshell database
+After=voidshell-api.service
+
+[Service]
+Type=oneshot
+User=voidshell
+ExecStart=/opt/voidshell/backup.sh
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/voidshell
