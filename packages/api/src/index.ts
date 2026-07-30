@@ -1,6 +1,8 @@
-import { pathToFileURL } from "node:url";
 import Fastify from "fastify";
+import cookie from "@fastify/cookie";
+import rateLimit from "@fastify/rate-limit";
 import { Store } from "./store.js";
+import { registerAuth } from "./auth.js";
 
 /**
  * The voidshell API.
@@ -11,8 +13,6 @@ import { Store } from "./store.js";
  */
 
 const DB_PATH = process.env.VOIDSHELL_DB ?? "/var/lib/voidshell/db.json";
-const PORT = Number(process.env.PORT ?? 3000);
-const HOST = process.env.HOST ?? "127.0.0.1";
 
 /** Expired sessions are swept at boot and then on this interval. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -35,7 +35,15 @@ export async function build(dbPath = DB_PATH) {
     bodyLimit: 512 * 1024,
   });
 
+  await app.register(cookie);
+  // Registered globally but off by default, so only the routes that opt in are
+  // limited. A global cap would throttle workspace saves, which are frequent
+  // and legitimate.
+  await app.register(rateLimit, { global: false });
+
   app.get("/api/health", async () => ({ ok: true, users: store.userCount() }));
+
+  registerAuth(app, store);
 
   const swept = await store.sweepExpiredSessions();
   if (swept) app.log.info(`swept ${swept} expired session(s) at boot`);
@@ -56,29 +64,4 @@ export async function build(dbPath = DB_PATH) {
   });
 
   return { app, store };
-}
-
-/** Only start a listener when run directly, so tests can build() in-process. */
-const isEntrypoint =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-
-if (isEntrypoint) {
-  const { app } = await build();
-
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.on(signal, () => {
-      app.log.info(`${signal} — closing`);
-      app.close().then(
-        () => process.exit(0),
-        () => process.exit(1)
-      );
-    });
-  }
-
-  try {
-    await app.listen({ port: PORT, host: HOST });
-  } catch (err) {
-    app.log.error({ err }, "failed to listen");
-    process.exit(1);
-  }
 }
