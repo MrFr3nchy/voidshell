@@ -43,46 +43,46 @@ g.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
 // jsdom has no layout, so nothing implements scrollIntoView.
 dom.window.Element.prototype.scrollIntoView = function () {};
 
-const { Kernel } = await import("../src/kernel/Kernel");
-const types = await import("../src/kernel/types");
+const { Kernel } = await import("../packages/ui/src/kernel/Kernel");
+const types = await import("../packages/ui/src/kernel/types");
 void types;
-const { aurora } = await import("../src/modules/aurora");
-const { horizon } = await import("../src/modules/horizon");
-const { shell } = await import("../src/modules/shell");
-const { settings } = await import("../src/modules/settings");
-const { dashboards } = await import("../src/modules/dashboards");
-const { notes } = await import("../src/modules/notes");
-const { vitals } = await import("../src/modules/vitals");
-const { monitor } = await import("../src/modules/monitor");
-const { portal, resolveQuery } = await import("../src/modules/portal");
-const { chronos } = await import("../src/modules/chronos");
-const { cosmos } = await import("../src/modules/cosmos");
-const { cradle } = await import("../src/modules/cradle");
-const { driftfield } = await import("../src/modules/driftfield");
-const { sandbox } = await import("../src/modules/sandbox");
-const { harmonograph } = await import("../src/modules/harmonograph");
-const { lunaria } = await import("../src/modules/lunaria");
-const { bubblewrap } = await import("../src/modules/bubblewrap");
-const { ripple } = await import("../src/modules/ripple");
-const { flock } = await import("../src/modules/flock");
-const { orrery } = await import("../src/modules/orrery");
-const { lavalamp } = await import("../src/modules/lavalamp");
-const { turmite } = await import("../src/modules/turmite");
-const { chaos } = await import("../src/modules/chaos");
-const { sunclock } = await import("../src/modules/sunclock");
-const { bell } = await import("../src/modules/bell");
-const { workspace } = await import("../src/modules/workspace");
-const { editor } = await import("../src/modules/editor");
-const { webapp } = await import("../src/modules/webapp");
-const { desktop } = await import("../src/modules/desktop");
-const { createSpawner, resolveSlots } = await import("../src/ui/spawner");
-const { createAppDrawer } = await import("../src/ui/appDrawer");
-const { createPalette } = await import("../src/ui/palette");
-const { createToasts } = await import("../src/ui/toasts");
-const { createStatusBar } = await import("../src/ui/statusBar");
-const { createPower } = await import("../src/ui/power");
+const { aurora } = await import("../packages/ui/src/modules/aurora");
+const { horizon } = await import("../packages/ui/src/modules/horizon");
+const { shell } = await import("../packages/ui/src/modules/shell");
+const { settings } = await import("../packages/ui/src/modules/settings");
+const { dashboards } = await import("../packages/ui/src/modules/dashboards");
+const { notes } = await import("../packages/ui/src/modules/notes");
+const { vitals } = await import("../packages/ui/src/modules/vitals");
+const { monitor } = await import("../packages/ui/src/modules/monitor");
+const { portal, resolveQuery } = await import("../packages/ui/src/modules/portal");
+const { chronos } = await import("../packages/ui/src/modules/chronos");
+const { cosmos } = await import("../packages/ui/src/modules/cosmos");
+const { cradle } = await import("../packages/ui/src/modules/cradle");
+const { driftfield } = await import("../packages/ui/src/modules/driftfield");
+const { sandbox } = await import("../packages/ui/src/modules/sandbox");
+const { harmonograph } = await import("../packages/ui/src/modules/harmonograph");
+const { lunaria } = await import("../packages/ui/src/modules/lunaria");
+const { bubblewrap } = await import("../packages/ui/src/modules/bubblewrap");
+const { ripple } = await import("../packages/ui/src/modules/ripple");
+const { flock } = await import("../packages/ui/src/modules/flock");
+const { orrery } = await import("../packages/ui/src/modules/orrery");
+const { lavalamp } = await import("../packages/ui/src/modules/lavalamp");
+const { turmite } = await import("../packages/ui/src/modules/turmite");
+const { chaos } = await import("../packages/ui/src/modules/chaos");
+const { sunclock } = await import("../packages/ui/src/modules/sunclock");
+const { bell } = await import("../packages/ui/src/modules/bell");
+const { workspace } = await import("../packages/ui/src/modules/workspace");
+const { editor } = await import("../packages/ui/src/modules/editor");
+const { webapp } = await import("../packages/ui/src/modules/webapp");
+const { desktop } = await import("../packages/ui/src/modules/desktop");
+const { createSpawner, resolveSlots } = await import("../packages/ui/src/ui/spawner");
+const { createAppDrawer } = await import("../packages/ui/src/ui/appDrawer");
+const { createPalette } = await import("../packages/ui/src/ui/palette");
+const { createToasts } = await import("../packages/ui/src/ui/toasts");
+const { createStatusBar } = await import("../packages/ui/src/ui/statusBar");
+const { createPower } = await import("../packages/ui/src/ui/power");
 const { emptyTrash, listTrash, moveToTrash, restoreFromTrash } = await import(
-  "../src/kernel/trash"
+  "../packages/ui/src/kernel/trash"
 );
 
 type Any = Record<string, unknown>;
@@ -208,7 +208,7 @@ check("modules registered", ctx.registry().length === MODULE_COUNT);
  * hypothetical: `bell` shipped that way. Read the registrations back out of
  * main.ts and make the drift itself a failure.
  */
-const mainSrc = readFileSync("src/main.ts", "utf8");
+const mainSrc = readFileSync("packages/ui/src/main.ts", "utf8");
 const registeredInMain = [...mainSrc.matchAll(/\.register\((\w+)\)/g)].map((m) => m[1]);
 check(
   `main.ts registers ${MODULE_COUNT} modules (found ${registeredInMain.length})`,
@@ -652,7 +652,7 @@ const power = createPower(hud, ctx, { save: () => {}, closeAll: () => {} });
  *
  * Add a class here whenever something new is shown and hidden via `.hidden`.
  */
-const css = readFileSync("src/style.css", "utf8");
+const css = readFileSync("packages/ui/src/style.css", "utf8");
 for (const cls of ["power-veil", "statusbar", "sb-popover", "pt-marks", "pt-frame"]) {
   const declaresDisplay = new RegExp(`\\.${cls}\\s*\\{[^}]*display:`).test(css);
   const hasGuard = new RegExp(
