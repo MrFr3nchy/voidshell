@@ -17,6 +17,23 @@ ${bold("voidshell deploy")} [user@host] [options]
   ${dim("--ui-only")}      skip the API
 `;
 
+/**
+ * Modes for everything shipped: directories traversable, files readable.
+ *
+ * `-a` implies `-p`, which faithfully preserves whatever the source happened
+ * to be — and the API's source is a `mkdtemp` staging directory, created 0700
+ * by design. Those modes rode to the droplet and left the unprivileged
+ * `voidshell` service user unable to enter its own WorkingDirectory: systemd
+ * failed with `status=200/CHDIR` before Node was ever executed, which reads
+ * like an application crash and isn't one.
+ *
+ * Stating the modes here also makes a deploy independent of the umask on
+ * whichever machine ran it. Nothing is group- or world-writable: the API only
+ * ever reads its own code, and root-owned files mean a compromised API cannot
+ * rewrite them. The database in `dataDir` is 0700 and untouched by this.
+ */
+const SHIPPED_MODES = "--chmod=D755,F644";
+
 export async function deploy(args, flags) {
   const config = load();
   const target = resolveTarget(args[0], config);
@@ -58,7 +75,14 @@ export async function deploy(args, flags) {
       // No --delete: /opt/voidshell also holds backup.sh and anything else
       // installed by hand, and a deploy shouldn't sweep the droplet's own
       // furniture.
-      const r = await rsync(["-az", "-e", "ssh", `${stage}/`, `${target}:${config.apiDir}/`]);
+      const r = await rsync([
+        "-az",
+        SHIPPED_MODES,
+        "-e",
+        "ssh",
+        `${stage}/`,
+        `${target}:${config.apiDir}/`,
+      ]);
       if (r.code !== 0) fail("could not sync the API");
     }
 
@@ -67,6 +91,7 @@ export async function deploy(args, flags) {
       const r = await rsync([
         "-az",
         "--delete",
+        SHIPPED_MODES,
         "-e",
         "ssh",
         `${join(REPO, "packages/ui/dist")}/`,
