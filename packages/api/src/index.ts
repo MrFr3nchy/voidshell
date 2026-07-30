@@ -39,6 +39,31 @@ export async function build(dbPath = DB_PATH) {
     bodyLimit: MAX_WORKSPACE_BYTES,
   });
 
+  /**
+   * An empty body with a JSON content-type is not an error.
+   *
+   * Fastify's default parser rejects that combination outright, and browsers
+   * produce it constantly: a bodyless POST — signup, signout — through any
+   * fetch wrapper that sets the header once for every request. The client no
+   * longer sends it, but a server that 400s on `curl -X POST -H
+   * 'content-type: application/json'` is refusing something entirely
+   * reasonable, and the failure reads as "signup is broken" rather than as a
+   * header problem.
+   *
+   * The body limit is enforced on the raw stream before this runs, so the
+   * 512KB cap is unaffected.
+   */
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    if (body === "") return done(null, {});
+    try {
+      done(null, JSON.parse(body as string));
+    } catch {
+      const err = new Error("body is not valid JSON") as Error & { statusCode?: number };
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
+
   await app.register(cookie);
   // Registered globally but off by default, so only the routes that opt in are
   // limited. A global cap would throttle workspace saves, which are frequent
