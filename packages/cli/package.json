@@ -1,0 +1,15 @@
+{
+  "name": "@voidshell/cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Set up, deploy, and operate a voidshell droplet.",
+  "bin": {
+    "voidshell": "bin/voidshell.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "commands"
+  ]
+}
