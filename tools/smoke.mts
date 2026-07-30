@@ -70,6 +70,7 @@ const { lavalamp } = await import("../src/modules/lavalamp");
 const { turmite } = await import("../src/modules/turmite");
 const { chaos } = await import("../src/modules/chaos");
 const { sunclock } = await import("../src/modules/sunclock");
+const { bell } = await import("../src/modules/bell");
 const { workspace } = await import("../src/modules/workspace");
 const { editor } = await import("../src/modules/editor");
 const { webapp } = await import("../src/modules/webapp");
@@ -188,9 +189,10 @@ kernel
   .register(lavalamp)
   .register(turmite)
   .register(chaos)
-  .register(sunclock);
+  .register(sunclock)
+  .register(bell);
 
-const MODULE_COUNT = 28;
+const MODULE_COUNT = 29;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -198,6 +200,20 @@ await kernel.boot({ gl, overlay: hud, hud });
 const ctx = kernel.context();
 
 check("modules registered", ctx.registry().length === MODULE_COUNT);
+
+/**
+ * The harness registers its own module list, so it stays self-consistent even
+ * when it drifts from the real one — a module added to main.ts but not here
+ * goes completely untested while every check still reports green. That is not
+ * hypothetical: `bell` shipped that way. Read the registrations back out of
+ * main.ts and make the drift itself a failure.
+ */
+const mainSrc = readFileSync("src/main.ts", "utf8");
+const registeredInMain = [...mainSrc.matchAll(/\.register\((\w+)\)/g)].map((m) => m[1]);
+check(
+  `main.ts registers ${MODULE_COUNT} modules (found ${registeredInMain.length})`,
+  registeredInMain.length === MODULE_COUNT
+);
 check("world patches flushed at boot", patches.length > 0);
 check("settings registry populated", ctx.settings().length >= 20);
 check(
@@ -210,13 +226,23 @@ check("commands registered", ctx.commands().length >= 8);
 check("defaults seeded into the store", ctx.state.get("world.fov", 0) === 68);
 
 // Every app must launch, render and close without throwing.
+//
+// Each one is closed again before the next launches. Letting them accumulate
+// puts the sweep in a race with MAX_SURFACES that the apps win: once the table
+// is full the kernel refuses to open anything more, and whichever app happens
+// to be registered last fails a check about the surface cap while reporting it
+// as its own breakage. There are already more apps than the cap allows.
 for (const m of ctx.registry().filter((x) => x.kind === "app")) {
   const before = ctx.openSurfaces().length;
   kernel.launch(m.id);
-  check(`launch ${m.id}`, ctx.openSurfaces().length === before + 1);
+  const opened = ctx.openSurfaces().length === before + 1;
+  check(`launch ${m.id}`, opened);
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }
 
 check("singleton re-launch does not clone", (() => {
+  // Self-contained: the sweep above no longer leaves anything open.
+  kernel.launch("chronos");
   const before = ctx.openSurfaces().length;
   kernel.launch("chronos");
   return ctx.openSurfaces().length === before;
@@ -239,7 +265,9 @@ check(
 );
 check("palette listed rows", hud.querySelectorAll(".palette-row").length > 0);
 
-// Settings must render a control for every def in the active group.
+// Settings must render a control for every def in the active group. Launched
+// here rather than relying on the sweep above, which closes what it opens.
+kernel.launch("settings");
 const setBody = hud.ownerDocument.querySelector(".set-body");
 check("settings app rendered controls", (setBody?.children.length ?? 0) > 0);
 
@@ -281,6 +309,9 @@ ctx.state.set("notes.doc.test", "hello void");
 check("note text stored", ctx.state.get("notes.doc.test", "") === "hello void");
 
 // The astronomy apps are computed, not fetched — they must answer offline.
+// Both are launched here for the same reason settings is, above.
+kernel.launch("lunaria");
+kernel.launch("sunclock");
 const readouts = [...hud.ownerDocument.querySelectorAll(".stage-value")].map(
   (el) => el.textContent ?? ""
 );
@@ -423,8 +454,8 @@ const second = moveToTrash(ctx, "/home/void/sub/doomed.txt");
 check("colliding names are uniquified", second !== "doomed.txt" && listTrash(ctx).length === 2);
 check("emptying the trash clears both", emptyTrash(ctx) === 2 && listTrash(ctx).length === 0);
 
-// The launch sweep above left the surface table near MAX_SURFACES, so clear it
-// before the routing checks — otherwise they fail on the cap, not on routing.
+// Start the routing checks from an empty table so they measure routing rather
+// than whatever the preceding sections happened to leave open.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 
 // openPath must route by extension through the `handles` table.
