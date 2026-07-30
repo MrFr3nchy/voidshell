@@ -72,9 +72,9 @@ async function openSession(): Promise<WorkspaceSnapshot> {
  * reload — and, more importantly, without a second WebGL context.
  */
 async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnapshot): Promise<void> {
-  const host = new ApiWorkspaceHost((err) => {
-    console.warn("[voidshell] could not save workspace:", err);
-  });
+  // Starts silent: there is no toast system until the kernel is up, and a
+  // save can fail before then. Upgraded to real toasts a few lines below.
+  const host = new ApiWorkspaceHost();
 
   // The panel overlay sits above the WebGL canvas, below the HUD. It ignores
   // pointer events itself so drags on empty space reach the canvas; the panels
@@ -198,6 +198,8 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
 
   createToasts(hud, ctx);
   createStatusBar(hud, ctx);
+
+  host.setNotifier((message, kind) => ctx.notify(message, kind));
 
   // Power owns the veil, so it needs the two things a module can't do for
   // itself: write the session down, and close windows it doesn't own.
@@ -337,7 +339,15 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     await kernel.flush();
   };
 
-  window.addEventListener("beforeunload", () => save(), { signal: teardown.signal });
+  window.addEventListener(
+    "beforeunload",
+    () => {
+      save();
+      // Cannot await here, so this is a keepalive request rather than a flush.
+      host.flushOnUnload();
+    },
+    { signal: teardown.signal }
+  );
   document.addEventListener(
     "visibilitychange",
     () => {

@@ -57,6 +57,12 @@ jobs:
             --outfile=lock-smoke.mjs --external:jsdom --log-level=error
           node lock-smoke.mjs
 
+      - name: smoke — persistence
+        run: |
+          npx esbuild tools/persist-smoke.mts --bundle --platform=node --format=esm \
+            --outfile=persist-smoke.mjs --external:jsdom --log-level=error
+          node persist-smoke.mjs
+
       - name: smoke — api store
         run: |
           npx esbuild tools/api-smoke.mts --bundle --platform=node --format=esm \
