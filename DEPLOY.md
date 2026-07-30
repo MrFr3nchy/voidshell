@@ -99,7 +99,27 @@ ssh root@DROPLET 'curl -s localhost:3000/api/health'   # {"ok":true,"users":0}
 ssh root@DROPLET 'systemctl list-timers voidshell-backup.timer'
 ```
 
-### 5. Firewall and TLS
+### 5. Optional: a model key for the trading simulator
+
+The stonks module asks Claude for its daily decision through `/api/stonks/decide`,
+so the key stays on the server and never reaches a dashboard:
+
+```bash
+ssh root@DROPLET 'umask 077 && cat > /etc/voidshell.env' <<'EOF'
+ANTHROPIC_API_KEY=sk-ant-...
+EOF
+ssh root@DROPLET 'chown root:root /etc/voidshell.env && chmod 600 /etc/voidshell.env && systemctl restart voidshell-api'
+```
+
+Entirely optional. Without it the route answers `503` with `{"fallback":"mock"}`
+and the module runs its deterministic simulator instead — a working app, not a
+broken one.
+
+Put the key in `/etc/voidshell.env`, never in the unit file: unit files are
+world-readable and `systemctl show` will print an `Environment=` line to any
+user on the box.
+
+### 6. Firewall and TLS
 
 ```bash
 sudo ufw allow OpenSSH && sudo ufw allow 80,443/tcp && sudo ufw enable

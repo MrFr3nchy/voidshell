@@ -9,6 +9,14 @@ WorkingDirectory=/opt/voidshell/api
 Environment=NODE_ENV=production
 Environment=VOIDSHELL_DB=/var/lib/voidshell/db.json
 Environment=PORT=3000
+# Secrets live here, not above: unit files are world-readable, and a key in
+# `Environment=` shows up in `systemctl show` for any user on the box.
+# Create /etc/voidshell.env as root, chmod 600, containing:
+#   ANTHROPIC_API_KEY=sk-ant-...
+# The dash makes it optional — without it the API still starts, and the
+# decision route reports itself unavailable so the client falls back to its
+# deterministic simulator rather than erroring.
+EnvironmentFile=-/etc/voidshell.env
 # server.js, not index.js. index.js exports build() and starts nothing — the
 # split is what keeps a test from booting a listener on the production
 # database. Pointing systemd at it would start a process that exits silently.
