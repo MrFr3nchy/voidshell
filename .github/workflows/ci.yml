@@ -57,6 +57,12 @@ jobs:
             --outfile=lock-smoke.mjs --external:jsdom --log-level=error
           node lock-smoke.mjs
 
+      - name: smoke — stonks decision proxy
+        run: |
+          npx esbuild tools/stonks-smoke.mts --bundle --platform=node --format=esm \
+            --packages=external --outfile=stonks-smoke.mjs --log-level=error
+          node stonks-smoke.mjs
+
       - name: smoke — persistence
         run: |
           npx esbuild tools/persist-smoke.mts --bundle --platform=node --format=esm \
