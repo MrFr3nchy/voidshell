@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly voidshell database backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+# A droplet that was asleep or rebooted at 03:30 should still get its backup,
+# rather than silently skipping a night.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

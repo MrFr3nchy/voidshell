@@ -8,9 +8,19 @@ example.com {
 	root * /var/www/voidshell
 	encode zstd gzip
 
-	# Single-page shell: any unknown path falls back to index.html.
-	try_files {path} /index.html
-	file_server
+	# The API, before the static handler — otherwise try_files answers /api/*
+	# with index.html and every request gets a 200 full of HTML, which the
+	# client reports as "not signed in" rather than as the misconfiguration
+	# it is.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle {
+		# Single-page shell: any unknown path falls back to index.html.
+		try_files {path} /index.html
+		file_server
+	}
 
 	# Vite emits content-hashed files in /assets — safe to cache forever.
 	@assets path /assets/*
@@ -34,6 +44,4 @@ example.com {
 		Cross-Origin-Embedder-Policy credentialless
 	}
 
-	# LATER: when you add a key-holding backend on localhost:3000, uncomment:
-	# reverse_proxy /api/* localhost:3000
 }
