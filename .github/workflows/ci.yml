@@ -51,6 +51,12 @@ jobs:
             --outfile=smoke.mjs --external:jsdom --log-level=error
           node smoke.mjs
 
+      - name: smoke — cli
+        run: |
+          npx esbuild tools/cli-smoke.mts --bundle --platform=node --format=esm \
+            --packages=external --outfile=cli-smoke.mjs --log-level=error
+          node cli-smoke.mjs
+
       - name: smoke — lock screen
         run: |
           npx esbuild tools/lock-smoke.mts --bundle --platform=node --format=esm \

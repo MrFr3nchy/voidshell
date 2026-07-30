@@ -11,6 +11,7 @@
     "dev": "npm run dev --workspace @voidshell/ui",
     "build": "npm run build --workspace @voidshell/ui",
     "preview": "npm run preview --workspace @voidshell/ui",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "voidshell": "node packages/cli/bin/voidshell.mjs"
   }
 }

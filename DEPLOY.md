@@ -1,9 +1,9 @@
 # Deploying voidshell
 
-voidshell is now two things on one droplet: a static bundle and a small API
-that holds the dashboards. They're split at the process boundary rather than
-the hardware one, so moving the API to its own box later is a one-line change
-to the proxy config.
+voidshell is two things on one droplet: a static bundle and a small API that
+holds the dashboards. They're split at the process boundary rather than the
+hardware one, so moving the API to its own box later is a one-line change to
+the proxy config.
 
 ```
                     ┌──────────────────────────────────────────┐
@@ -17,126 +17,120 @@ to the proxy config.
 ```
 
 The API binds **127.0.0.1 only**. It is never reachable except through the
-proxy. Nothing about the API is exposed to the internet directly, which is why
-the routes can assume TLS was terminated upstream.
+proxy, which is why the routes can assume TLS was terminated upstream.
+
+---
+
+## The short version
+
+```bash
+npm install
+
+npx voidshell config domain voidshell.example
+npx voidshell setup root@YOUR_DROPLET_IP
+npx voidshell deploy
+```
+
+That's a live deployment. `setup` is idempotent — re-run it any time you change
+a unit file or the Caddyfile.
+
+Run `npx voidshell` for the command list, or `npx voidshell <command> --help`
+for any one of them.
+
+| | |
+|---|---|
+| `voidshell dev` | run both halves locally |
+| `voidshell doctor` | check everything a deploy depends on |
+| `voidshell setup` | provision a droplet (idempotent) |
+| `voidshell deploy` | build, ship, restart, verify |
+| `voidshell status` | services, dashboards, backups, disk |
+| `voidshell logs` | tail the journal |
+| `voidshell backup` | back up now, list what's kept |
+| `voidshell restore` | replace the live database |
+| `voidshell key` | store the model API key on the droplet |
+| `voidshell config` | show or set saved defaults |
+
+Settings live in `.voidshell.json` beside the repo (gitignored), so the target
+is typed once. Any command still takes an explicit `user@host` to override it.
+
+---
+
+## Working locally
+
+```bash
+npx voidshell dev
+```
+
+Starts the API on `:3000` against a throwaway database in `.voidshell-dev/`,
+and Vite on `:5173` proxying `/api` to it. One Ctrl-C stops both.
+
+Same-origin in dev as in production, deliberately: the session cookie is
+`SameSite=Strict`, so pointing the client at `localhost:3000` directly would
+work right up until the cookie didn't.
+
+`--fresh` starts from an empty database. `--api-only` skips Vite.
+
+---
 
 ## What you need
 
-- A droplet — Ubuntu 24.04 LTS. 1 GB is enough **because the build happens in
-  CI**, not on the box. If you intend to build by hand there, add swap first
-  (below) or the OOM killer will pick your API mid-build.
-- A domain, with an `A` record pointing at the droplet.
-- An SSH key on the droplet.
-- Caddy — reverse proxy with automatic HTTPS. (An nginx equivalent is in
-  `deploy/nginx/voidshell.conf` if the box already runs nginx. Pick one.)
+- A droplet — Ubuntu 24.04 LTS. 1 GB is enough **because builds happen in CI or
+  on your machine**, not on the box.
+- A domain with an `A` record pointing at it.
+- An SSH key on the droplet, and passwordless `sudo` for the deploy user (or
+  connect as root).
 
-## One-time droplet setup
+`voidshell doctor` checks all of that and tells you which part is missing.
 
-### 1. Swap, if you will ever build by hand
+---
 
-```bash
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
+## What `setup` does
 
-### 2. Node, a service user, and somewhere for the data
+Everything below, idempotently. `--dry-run` prints the script it would run
+instead of running it, which is worth doing once.
 
-```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-
-sudo adduser --system --group --no-create-home voidshell
-sudo mkdir -p /var/lib/voidshell/backups /opt/voidshell/api /var/www/voidshell
-sudo chown -R voidshell:voidshell /var/lib/voidshell
-sudo chmod 700 /var/lib/voidshell
-```
-
-`db.json` holds every dashboard. It lives in `/var/lib`, owned by the service
-user, mode 0600 — not in the repo, not under `/var/www`, and never anywhere the
-static server could hand it out.
-
-### 3. Caddy
-
-```bash
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt update && sudo apt install -y caddy
-```
-
-Edit `Caddyfile` — replace `example.com` — then:
-
-```bash
-scp Caddyfile root@DROPLET:/etc/caddy/Caddyfile
-ssh root@DROPLET 'sudo systemctl reload caddy'
-```
+1. **Swap** — 2 GB, so a hand-run build isn't OOM-killed. Non-fatal if the
+   filesystem won't take one.
+2. **Node 22** via NodeSource, skipped if already current.
+3. **Service user and directories** — `voidshell:voidshell`, with
+   `/var/lib/voidshell` at mode `700`. `db.json` holds every dashboard on the
+   box; it lives outside the repo and outside `/var/www`, where the static
+   server could never hand it out.
+4. **systemd units** — the API service, the backup service, and the nightly
+   timer, enabled.
+5. **Reverse proxy** — Caddy by default (automatic HTTPS), or `--proxy nginx`.
+   The config is validated before anything is reloaded.
+6. **Firewall** — OpenSSH plus 80/443.
 
 > The `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers in
-> that file are **required**, not hardening. They're what grants
+> the proxy config are **required**, not hardening. They're what grants
 > `SharedArrayBuffer`, which is what lets the Python worker block on
 > `Atomics.wait` for `input()`. Drop them and the shell still loads and scripts
-> still run — but anything reading stdin reports that interactive input is
-> unavailable, which reads as a broken terminal rather than a missing header.
+> still run — but anything reading stdin reports interactive input unavailable,
+> which reads as a broken terminal rather than a missing header.
 
-### 4. The API service and the backup timer
+With nginx, TLS is a separate step: `ssh root@DROPLET 'certbot --nginx'`.
+Caddy gets certificates on first request.
 
-```bash
-scp deploy/systemd/*.service deploy/systemd/*.timer root@DROPLET:/etc/systemd/system/
-scp deploy/backup.sh root@DROPLET:/opt/voidshell/backup.sh
-ssh root@DROPLET '
-  chmod +x /opt/voidshell/backup.sh
-  systemctl daemon-reload
-  systemctl enable --now voidshell-api
-  systemctl enable --now voidshell-backup.timer
-'
-```
-
-Check it:
-
-```bash
-ssh root@DROPLET 'curl -s localhost:3000/api/health'   # {"ok":true,"users":0}
-ssh root@DROPLET 'systemctl list-timers voidshell-backup.timer'
-```
-
-### 5. Optional: a model key for the trading simulator
-
-The stonks module asks Claude for its daily decision through `/api/stonks/decide`,
-so the key stays on the server and never reaches a dashboard:
-
-```bash
-ssh root@DROPLET 'umask 077 && cat > /etc/voidshell.env' <<'EOF'
-ANTHROPIC_API_KEY=sk-ant-...
-EOF
-ssh root@DROPLET 'chown root:root /etc/voidshell.env && chmod 600 /etc/voidshell.env && systemctl restart voidshell-api'
-```
-
-Entirely optional. Without it the route answers `503` with `{"fallback":"mock"}`
-and the module runs its deterministic simulator instead — a working app, not a
-broken one.
-
-Put the key in `/etc/voidshell.env`, never in the unit file: unit files are
-world-readable and `systemctl show` will print an `Environment=` line to any
-user on the box.
-
-### 6. Firewall and TLS
-
-```bash
-sudo ufw allow OpenSSH && sudo ufw allow 80,443/tcp && sudo ufw enable
-```
-
-Caddy gets certificates automatically on first request. (With nginx instead,
-run `sudo certbot --nginx`.)
+---
 
 ## Deploying
 
-### From CI, which is the intended path
+```bash
+npx voidshell deploy
+```
 
-Push to `main`. `.github/workflows/deploy.yml` builds both packages, installs
-production-only dependencies for the API, rsyncs everything up, restarts the
-service, and polls `/api/health` until it answers — failing the deploy and
-dumping the last 40 journal lines if it doesn't.
+Builds both packages, stages production-only dependencies for the API (fastify,
+without vite or three), rsyncs both halves, restarts the service, and **polls
+`/api/health` until it answers** — failing with the last 40 journal lines
+rather than reporting success because `systemctl` returned zero.
 
+`--api-only` / `--ui-only` narrow it; `--skip-build` ships whatever is already
+in `dist/`.
+
+### From CI
+
+Push to `main`. `.github/workflows/deploy.yml` does the same thing on a runner.
 Three repository secrets:
 
 | Secret | What |
@@ -145,45 +139,83 @@ Three repository secrets:
 | `DEPLOY_KNOWN_HOSTS` | output of `ssh-keyscan YOUR_DROPLET` |
 | `DEPLOY_TARGET` | `root@1.2.3.4` |
 
-The deploy user needs passwordless `systemctl restart voidshell-api`.
+Host keys are pinned rather than using `StrictHostKeyChecking=no`, because a
+deploy that accepts any host key is a deploy that hands its SSH key to whatever
+answers the DNS record.
 
-`DEPLOY_KNOWN_HOSTS` is pinned rather than using
-`StrictHostKeyChecking=no`, because a deploy that accepts any host key is a
-deploy that hands its SSH key to whatever answers the DNS record.
+---
 
-### By hand
+## The model key (optional)
+
+The stonks module asks Claude for its daily decision through
+`/api/stonks/decide`, so the key stays on the server and never reaches a
+dashboard:
 
 ```bash
-./deploy.sh root@YOUR_DROPLET_IP
+npx voidshell key
+# or:  pass show anthropic/voidshell | npx voidshell key
 ```
 
-Builds locally, syncs both halves, restarts the API. Fine for a one-off; CI is
-better because it builds from a commit rather than from your working tree.
+Prompted for, never passed as an argument — anything in `argv` is visible in
+`ps` to every user on the machine. It lands in `/etc/voidshell.env` at mode
+`600`, owned by root, referenced from the unit via `EnvironmentFile=-`.
+
+Entirely optional. Without it the route answers `503` with
+`{"fallback":"mock"}` and the module runs its deterministic simulator — a
+working app, not a broken one. `voidshell key --clear` removes it.
+
+Never put the key in the unit file itself: unit files are world-readable and
+`systemctl show` prints `Environment=` lines to anyone on the box.
+
+---
 
 ## Backups
 
 `voidshell-backup.timer` copies `db.json` to
 `/var/lib/voidshell/backups/db-YYYYMMDD.json` nightly at 03:30 and keeps 14.
 
+```bash
+npx voidshell backup            # run one now, list what's kept
+npx voidshell backup --pull     # also download db.json for local inspection
+```
+
 Two details that matter more than they look:
 
-- It **refuses to back up a file that isn't valid JSON**. Retention is a
+- The script **refuses to back up a file that isn't valid JSON**. Retention is a
   rolling window, so copying a corrupt database for fourteen nights is exactly
-  how a working backup set turns into fourteen copies of the same broken file.
+  how a working backup set becomes fourteen copies of the same broken file.
 - `Persistent=true`, so a droplet that was off at 03:30 takes its backup on the
   next boot instead of silently skipping the night.
 
-Restoring:
+### Restoring
 
 ```bash
-sudo systemctl stop voidshell-api
-sudo -u voidshell cp /var/lib/voidshell/backups/db-20260729.json /var/lib/voidshell/db.json
-sudo systemctl start voidshell-api
+npx voidshell restore db-20260729.json        # a backup already on the box
+npx voidshell restore ./local-copy.json       # or a local file
 ```
 
-Stop the service first. The API holds the whole database in memory and writes
-it out whole, so a restore underneath a running process is overwritten by the
-next save.
+Validates the JSON, copies the current database aside as
+`db-pre-restore-*.json`, **stops the API**, installs the file at mode `600`, and
+starts it again — then waits for health.
+
+Stopping first is not optional: the API holds the whole database in memory and
+writes it out whole, so a restore underneath a running process is overwritten
+by the next save.
+
+---
+
+## Checking on it
+
+```bash
+npx voidshell status     # services, dashboards, backups, disk, memory
+npx voidshell logs -f    # follow the API journal
+npx voidshell logs --proxy
+```
+
+`status` flags the two states that are quietly wrong rather than loudly broken:
+a `db.json` that isn't mode `600`, and dashboards that exist with no backups yet.
+
+---
 
 ## Things that will bite
 
@@ -199,3 +231,11 @@ of HTML parses as neither a session nor an error.
 **Losing `db.json` loses every dashboard permanently.** Keys are stored as
 hashes and are unrecoverable by design; there is no reset-password path to fall
 back on. That is the whole reason the backup timer exists.
+
+---
+
+## Doing it by hand
+
+Everything above is ordinary files. `voidshell setup --dry-run` prints exactly
+what would run, and `deploy/` holds the units, the backup script, and the nginx
+config if you'd rather copy them up yourself.

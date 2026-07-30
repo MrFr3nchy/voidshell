@@ -11,3 +11,7 @@ dist/
 # misc
 .DS_Store
 *.log
+
+# CLI: per-checkout droplet settings and the local dev database
+.voidshell.json
+.voidshell-dev/

@@ -11,8 +11,18 @@ extended. Rename it, gut the modules, replace the compositor — that's the poin
 
 ```bash
 npm install
-npm run dev      # opens http://localhost:5173
+npx voidshell dev      # API on :3000, client on :5173, one Ctrl-C stops both
 ```
+
+Dashboards live on the server now, so the client alone gets you a lock screen
+and nothing behind it. `voidshell dev` runs both halves against a throwaway
+database in `.voidshell-dev/`; `--fresh` empties it, `--api-only` skips Vite.
+
+`npm run dev` still starts just the client if that's what you want.
+
+Deploying is the same CLI — `voidshell setup` provisions a droplet and
+`voidshell deploy` ships to it. See [DEPLOY.md](DEPLOY.md), or run
+`npx voidshell` for the full command list.
 
 Other scripts: `npm run build`, `npm run preview`, `npm run typecheck`. There's
 also a headless smoke harness in `tools/smoke.mts` that boots the whole kernel
@@ -94,10 +104,11 @@ so adding a knob never means editing the settings screen. `kind: "custom"` hands
 you a DOM node when a slider won't do — that's how the drag-to-reorder launcher
 slot editor lives inside the same list as the checkboxes.
 
-Everything written through `ctx.state` (except the `tmp.` namespace) is mirrored
-to `localStorage` on a debounce. That single mechanism is the whole persistence
-story: settings, launcher bindings, saved dashboards, notes and window layout
-all ride on it for free.
+Everything written through `ctx.state` (except the `tmp.` namespace) is part of
+the workspace the server holds for your account. That single mechanism is the
+whole persistence story: settings, launcher bindings, saved dashboards, notes
+and window layout all ride on it for free — and because it follows the account
+rather than the browser, the same key on another machine is the same dashboard.
 
 ## Constellations
 
@@ -243,10 +254,12 @@ verbs, and **⌘/ctrl + shift + L**), plus `/etc/autostart` deciding what opens 
 boot.
 
 All three power states are one veil with different contents, because they're the
-same idea at different depths. The lock screen is **honest about what it is** —
-there is no password, because a passphrase checked in client-side JavaScript
-against a value in localStorage protects nothing and would imply otherwise. It's
-a screen you can leave up, which is the part that's actually useful in a tab.
+same idea at different depths. The power lock screen is **honest about what it
+is** — it has no password, because a passphrase checked in client-side
+JavaScript against a value the client also holds protects nothing and would
+imply otherwise. It's a screen you can leave up, which is the part that's
+actually useful in a tab. The credential that does mean something is your
+account key, and that one is checked on the server.
 
 Autostart runs on every boot, restored session or not — that's what makes it
 autostart rather than a second session file. The singleton guard means anything
@@ -270,7 +283,7 @@ through `ctx.fs`. Five mounts ship:
 
 | mount | mode | backing |
 | --- | --- | --- |
-| `/home/void` | read-write | localStorage, debounced on change |
+| `/home/void` | read-write | your account's workspace, on the server |
 | `/projects` | read-only | build-time scan of the sibling project dirs |
 | `/proc` | synthetic | the process table and live system counters |
 | `/dev` | synthetic | `null`, `zero`, `random`, `console` |
