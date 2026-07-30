@@ -3,6 +3,7 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { Store } from "./store.js";
 import { registerAuth } from "./auth.js";
+import { registerWorkspace, MAX_WORKSPACE_BYTES } from "./workspace.js";
 
 /**
  * The voidshell API.
@@ -32,7 +33,9 @@ export async function build(dbPath = DB_PATH) {
     // limiting keys off it, and without this every request looks like 127.0.0.1
     // and the whole internet shares one bucket.
     trustProxy: true,
-    bodyLimit: 512 * 1024,
+    // Refused before parsing, so an oversized dashboard costs a header read
+    // rather than half a megabyte of JSON.parse.
+    bodyLimit: MAX_WORKSPACE_BYTES,
   });
 
   await app.register(cookie);
@@ -44,6 +47,7 @@ export async function build(dbPath = DB_PATH) {
   app.get("/api/health", async () => ({ ok: true, users: store.userCount() }));
 
   registerAuth(app, store);
+  registerWorkspace(app, store);
 
   const swept = await store.sweepExpiredSessions();
   if (swept) app.log.info(`swept ${swept} expired session(s) at boot`);
