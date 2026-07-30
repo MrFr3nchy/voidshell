@@ -1,10 +1,11 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
+import { WORKSPACE_BYTES } from "../../kernel/persistence";
 
 const HISTORY = 90;
 
 /**
  * Vitals is the OS admitting what it costs. Frame time, window count, bodies
- * in orbit, how much of the store is on disk — all read through the same
+ * in orbit, how big the saved workspace is — all read through the same
  * public syscalls any module gets, with no privileged backdoor into the
  * compositor. If this app can see it, so can yours.
  */
@@ -118,7 +119,7 @@ export const vitals: VoidModule = {
           set("procs", String(ctx.ps().length));
           set("uptime", `${Math.floor(up / 60)}m ${up % 60}s`);
           set("heap", mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(1)} mb` : "n/a");
-          set("state", `${storeBytes()} b`);
+          set("state", `${ctx.state.get(WORKSPACE_BYTES, 0)} b`);
           draw();
         };
 
@@ -134,11 +135,3 @@ export const vitals: VoidModule = {
     });
   },
 };
-
-function storeBytes(): number {
-  try {
-    return localStorage.getItem("voidshell:state")?.length ?? 0;
-  } catch {
-    return 0;
-  }
-}

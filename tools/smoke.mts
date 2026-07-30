@@ -31,7 +31,6 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   writable: true,
 });
-g.localStorage = dom.window.localStorage;
 g.HTMLElement = dom.window.HTMLElement;
 g.HTMLInputElement = dom.window.HTMLInputElement;
 g.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
@@ -84,6 +83,7 @@ const { createPower } = await import("../packages/ui/src/ui/power");
 const { emptyTrash, listTrash, moveToTrash, restoreFromTrash } = await import(
   "../packages/ui/src/kernel/trash"
 );
+const { MemoryWorkspaceHost } = await import("../packages/ui/src/kernel/persistence");
 
 type Any = Record<string, unknown>;
 
@@ -160,7 +160,10 @@ const check = (label: string, ok: boolean) => {
   if (!ok) failures.push(label);
 };
 
-const kernel = new Kernel(stub as never);
+// An explicit host, so the persistence checks can see what the kernel would
+// have sent to the server.
+const host = new MemoryWorkspaceHost();
+const kernel = new Kernel(stub as never, host);
 kernel
   .register(aurora)
   .register(horizon)
@@ -294,11 +297,29 @@ check("group visible to modules", ctx.listGroups()[0]?.name === "test cluster");
 ctx.unlinkGroup(gid);
 check("unlink removes it", ctx.listGroups().length === 0);
 
-// Persistence: settings survive a fresh kernel reading the same storage.
+// Persistence: a changed setting reaches the host, and a fresh kernel
+// hydrated from that snapshot comes back with it. This is the whole contract
+// now that there is no browser storage to peek into — and it is a better test
+// than the old one, which only checked that a string had been written and
+// never proved anything could read it back.
 ctx.state.set("appearance.intensity", 1.42);
-await new Promise((r) => dom.window.setTimeout(r, 400));
-const raw = dom.window.localStorage.getItem("voidshell:state") ?? "";
-check("state written to disk", raw.includes("appearance.intensity"));
+ctx.fs.write("/home/void/persisted.md", "# still here");
+await new Promise((r) => dom.window.setTimeout(r, 0));
+
+check("a change reaches the workspace host", host.latest.state["appearance.intensity"] === 1.42);
+check("the home tree rides along with it", JSON.stringify(host.latest.fs).includes("persisted.md"));
+check(
+  "ephemeral keys are not persisted",
+  Object.keys(host.latest.state).every((k) => !k.startsWith("tmp."))
+);
+
+{
+  const revived = new Kernel(stub as never);
+  revived.hydrate(host.latest);
+  const rctx = revived.context();
+  check("a fresh kernel restores the setting", rctx.state.get("appearance.intensity", 0) === 1.42);
+  check("a fresh kernel restores the files", rctx.fs.exists("/home/void/persisted.md"));
+}
 
 // Session round-trip.
 kernel.saveSession();

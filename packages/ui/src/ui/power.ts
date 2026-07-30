@@ -13,9 +13,11 @@ import { DEFAULT_HOSTNAME, DEFAULT_USER, HOSTNAME_KEY, USER_KEY } from "../kerne
  * what changes is whether it lets you back.
  *
  * The lock screen is honest about what it is — there is no password, because a
- * passphrase checked in client-side JavaScript against a value in localStorage
- * protects nothing and would imply otherwise. It is a screen you can leave up,
- * which is the part that's actually useful in a browser tab.
+ * passphrase checked in client-side JavaScript against a value the client also
+ * holds protects nothing and would imply otherwise. It is a screen you can
+ * leave up, which is the part that's actually useful in a browser tab. The
+ * credential that does mean something is the account key, and that is checked
+ * on the server.
  */
 
 export type PowerAction = "lock" | "reboot" | "shutdown";

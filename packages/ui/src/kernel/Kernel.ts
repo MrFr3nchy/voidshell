@@ -4,6 +4,12 @@ import { VFS } from "./vfs";
 import { Journal } from "./journal";
 import { KERNEL_PID, ProcTable } from "./procs";
 import {
+  MemoryWorkspaceHost,
+  WORKSPACE_BYTES,
+  type WorkspaceHost,
+  type WorkspaceSnapshot,
+} from "./persistence";
+import {
   AUTOSTART_KEY,
   buildDev,
   buildEtc,
@@ -71,8 +77,65 @@ export class Kernel {
   /** Placement waiting to be applied to the next surface a module opens. */
   private pendingPlacement: SurfacePlacement | null = null;
 
-  constructor(compositor: Compositor) {
+  /**
+   * Where this dashboard is persisted.
+   *
+   * Defaults to memory so a kernel built without one — the smoke harness, or a
+   * boot that hasn't reached the server yet — still runs. Nothing in the OS
+   * above this line knows whether its state survives the tab closing.
+   */
+  private host: WorkspaceHost;
+
+  /** Coalesces the two change sources into one snapshot per turn. */
+  private saveScheduled = false;
+
+  constructor(compositor: Compositor, host: WorkspaceHost = new MemoryWorkspaceHost()) {
     this.compositor = compositor;
+    this.host = host;
+    this.store.onChange(() => this.scheduleSave());
+  }
+
+  /**
+   * Load a saved dashboard.
+   *
+   * Must happen before boot(): module activation calls defineSetting(), which
+   * seeds defaults for keys the store doesn't have yet. Hydrating afterwards
+   * would mean every setting the user changed gets overwritten by its default
+   * on the way in.
+   */
+  hydrate(snapshot: WorkspaceSnapshot): void {
+    this.store.hydrate(snapshot.state);
+    if (snapshot.fs) this.fs.hydrateHome(snapshot.fs);
+  }
+
+  /** The current dashboard, as it would be persisted. */
+  snapshot(): WorkspaceSnapshot {
+    return { state: this.store.snapshot(), fs: this.fs.serializeHome() };
+  }
+
+  /**
+   * Batches saves to one per microtask.
+   *
+   * A single user action — dropping a window, running a shell command — can
+   * touch a dozen store keys and the filesystem. Each of those is a change
+   * worth persisting and none of them is worth its own snapshot, which
+   * re-serialises the entire home tree.
+   */
+  private scheduleSave(): void {
+    if (this.saveScheduled) return;
+    this.saveScheduled = true;
+    queueMicrotask(() => {
+      this.saveScheduled = false;
+      const snap = this.snapshot();
+      // Published for Vitals. Ephemeral, so it can't dirty the state it measures.
+      this.store.set(WORKSPACE_BYTES, JSON.stringify(snap).length);
+      this.host.save(snap);
+    });
+  }
+
+  /** Persist anything pending and wait for it. For signout and unload. */
+  flush(): Promise<void> {
+    return this.host.flush();
   }
 
   /**
@@ -188,16 +251,10 @@ export class Kernel {
     this.compositor.start?.();
     this.journal.write("kernel", "compositor initialised");
 
-    // Restore the user's files, then persist on every later mutation. Debounced
-    // because a shell loop can touch the tree many times in one frame, and each
-    // save re-serialises the whole home tree.
-    this.fs.load();
-    let saveTimer = 0;
-    this.fs.onChange(() => {
-      clearTimeout(saveTimer);
-      saveTimer = window.setTimeout(() => this.fs.save(), 250);
-    });
-    window.addEventListener("beforeunload", () => this.fs.save());
+    // Files were restored by hydrate() before boot; from here every mutation
+    // is a change worth persisting. Coalescing happens in scheduleSave, and
+    // the debounce that keeps this off the network lives in the host.
+    this.fs.onChange(() => this.scheduleSave());
 
     this.mountSysfs();
 
@@ -519,9 +576,19 @@ export class Kernel {
     }
   }
 
-  /** Forget everything: settings, layout, notes. Used by Settings > System. */
-  factoryReset(): void {
+  /**
+   * Forget everything: settings, layout, notes, files. Used by Settings >
+   * System.
+   *
+   * The empty workspace is flushed rather than merely scheduled — the caller
+   * reloads the page immediately afterwards, and a scheduled save would lose
+   * the race and leave the old dashboard on the server.
+   */
+  factoryReset(): Promise<void> {
     this.store.wipe();
+    this.fs.hydrateHome({ n: "void", k: "d", ch: [] });
+    this.host.save({ state: {}, fs: null });
+    return this.host.flush();
   }
 
   dispose(): void {

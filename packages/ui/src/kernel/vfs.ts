@@ -3,7 +3,7 @@
  *
  * A single tree of nodes, assembled from mounts. Four kinds ship today:
  *
- *   /home/void            writable, persisted to localStorage — your actual files
+ *   /home/void            writable, persisted to your workspace — your actual files
  *   /projects             read-only, materialised from the build-time disk scan
  *   /proc /dev /var/log   synthetic: content computed at the moment you read it
  *   /etc                  synthetic, but writable — backed by the settings store
@@ -126,12 +126,10 @@ export interface DirEntry {
   meta?: Record<string, string>;
 }
 
-const STORAGE_KEY = "voidshell.fs.home";
-
 /** One row of the mount table, as `mount` reports it. */
 export interface MountInfo {
   at: string;
-  /** What's behind it: localStorage, the build scan, or a live generator. */
+  /** What's behind it: the workspace, the build scan, or a live generator. */
   backing: string;
   readonly: boolean;
   synthetic: boolean;
@@ -152,7 +150,7 @@ export class VFS {
     // or `mount` would omit the one filesystem the user actually writes to.
     this.mountTable.push({
       at: "/home/void",
-      backing: "localStorage",
+      backing: "workspace",
       readonly: false,
       synthetic: false,
     });
@@ -402,20 +400,22 @@ export class VFS {
     return d;
   }
 
-  save(): void {
-    try {
-      const home = this.lookup("/home/void");
-      if (home) localStorage.setItem(STORAGE_KEY, JSON.stringify(this.serialize(home)));
-    } catch (err) {
-      console.warn("[vfs] could not persist home:", err);
-    }
+  /** The home tree as plain JSON, or null if it somehow isn't there. */
+  serializeHome(): unknown {
+    const home = this.lookup("/home/void");
+    return home ? this.serialize(home) : null;
   }
 
-  load(): void {
+  /**
+   * Graft a saved home tree in, replacing whatever is there.
+   *
+   * A malformed tree must not stop the OS from booting — losing the files is
+   * bad, but losing the shell that could have recovered them is worse.
+   */
+  hydrateHome(raw: unknown): void {
+    if (!raw || typeof raw !== "object") return;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const home = this.deserialize(JSON.parse(raw));
+      const home = this.deserialize(raw);
       const parent = this.must("/home");
       home.name = "void";
       parent.children!.set("void", home);

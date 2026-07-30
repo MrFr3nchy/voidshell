@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # A dashboard that lives in the browser is a dashboard that doesn't
+      # follow the account, which is the entire point of the server. This is
+      # a literal grep on purpose: anything clever enough to be worded around
+      # is a guard people learn to word around.
+      - name: no browser storage in the client
+        run: |
+          if grep -rn "localStorage\|sessionStorage\|indexedDB" packages/ui/src; then
+            echo "::error::browser storage found in packages/ui/src — workspace state belongs on the server"
+            exit 1
+          fi
+
+      # Every module must use the shared audio helper. Browsers cap how many
+      # AudioContexts a page may hold, and the failure is silent.
+      - name: audio only through blip.ts
+        run: |
+          if grep -rn "new AudioContext\|new webkitAudioContext" packages/ui/src --include="*.ts" \
+             | grep -v "packages/ui/src/ui/blip.ts"; then
+            echo "::error::a module is minting its own AudioContext — use src/ui/blip.ts"
+            exit 1
+          fi
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - name: install harness deps
+        run: npm i --no-save jsdom @types/jsdom
+
+      - name: smoke — client
+        run: |
+          npx esbuild tools/smoke.mts --bundle --platform=node --format=esm \
+            --outfile=smoke.mjs --external:jsdom --log-level=error
+          node smoke.mjs
+
+      - name: smoke — api store
+        run: |
+          npx esbuild tools/api-smoke.mts --bundle --platform=node --format=esm \
+            --packages=external --outfile=api-smoke.mjs --log-level=error
+          node api-smoke.mjs
+
+      - name: smoke — auth
+        run: |
+          npx esbuild tools/auth-smoke.mts --bundle --platform=node --format=esm \
+            --packages=external --outfile=auth-smoke.mjs --log-level=error
+          node auth-smoke.mjs
+
+      - name: smoke — workspace
+        run: |
+          npx esbuild tools/workspace-smoke.mts --bundle --platform=node --format=esm \
+            --packages=external --outfile=ws-smoke.mjs --log-level=error
+          node ws-smoke.mjs
