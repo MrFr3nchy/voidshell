@@ -147,11 +147,14 @@ export function spawnTier(wave: number, i: number): number {
 /**
  * Seconds of wave before the pterodactyl comes to move you along.
  *
- * Short enough that camping a safe ledge is not a strategy, long enough that a
- * wave played properly never sees one. Verified against a bot that clears
- * waves in well under this and correctly never triggers it.
+ * Measured rather than guessed. A deliberately mediocre bot — fixed flap
+ * rhythm, reversing every two thirds of a second, no target selection — clears
+ * a wave in a median 23s, p90 36s, worst 51s over 58 waves. At 38 it fired on
+ * 9% of those, which is far too often for something that is supposed to mean
+ * "you are stalling"; at 45 it fires on 5%, so a wave played at all cleanly
+ * never sees one and a wave that drags always will.
  */
-export const PTERO_AFTER = 38;
+export const PTERO_AFTER = 45;
 
 /* ---------------- the base, and what eats it ---------------- */
 
