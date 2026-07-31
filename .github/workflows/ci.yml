@@ -63,6 +63,12 @@ jobs:
             --outfile=lock-smoke.mjs --external:jsdom --log-level=error
           node lock-smoke.mjs
 
+      - name: smoke — prices
+        run: |
+          npx esbuild tools/prices-smoke.mts --bundle --platform=node \
+            --format=esm --outfile=prices-smoke.mjs --log-level=error
+          node prices-smoke.mjs
+
       - name: smoke — stonks decision proxy
         run: |
           npx esbuild tools/stonks-smoke.mts --bundle --platform=node --format=esm \
