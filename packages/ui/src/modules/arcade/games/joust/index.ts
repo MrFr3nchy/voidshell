@@ -164,6 +164,8 @@ export class Joust implements Game {
   private eggs: Egg[] = [];
   private ptero: Ptero | null = null;
   private troll: Troll | null = null;
+  /** Grace after a troll lets go, so escaping isn't immediately undone. */
+  private trollCd = 0;
   private bits: Bit[] = [];
 
   /** Fixed background, generated once so it doesn't shimmer between frames. */
@@ -393,6 +395,7 @@ export class Joust implements Game {
           p.vy = -150;
           p.y -= 6;
           this.troll = null;
+          this.trollCd = 1.6;
           this.sfx(() => tone({ freq: 300, toFreq: 700, decay: 0.18, wave: "square", gain: 0.09 }));
           return;
         }
@@ -485,6 +488,17 @@ export class Joust implements Game {
     const py = r.y;
     r.x = wrapX(r.x + r.vx * dt);
     r.y += r.vy * dt;
+
+    // The playfield has a ceiling. Without one, a player mashing flap simply
+    // leaves the top of the screen and keeps going: invisible, unreachable,
+    // and unbeatable, because nothing can get a lance above them. Found by the
+    // bot in the verification harness rather than by playing, which is the
+    // whole reason that harness runs four simulated minutes.
+    if (r.y < 0) {
+      r.y = 0;
+      if (r.vy < 0) r.vy = 30;
+    }
+
     r.grounded = false;
 
     for (const p of this.plats) {
@@ -630,6 +644,8 @@ export class Joust implements Game {
 
   private stepTroll(dt: number, flap: boolean): void {
     void flap;
+    this.trollCd = Math.max(0, this.trollCd - dt);
+
     if (this.troll) {
       const t = this.troll;
       t.t += dt;
@@ -644,6 +660,7 @@ export class Joust implements Game {
           this.sfx(() => burst({ freq: 150, q: 1, gain: 0.14, decay: 0.22 }));
         } else if (t.t > 1.1) {
           this.troll = null;
+          this.trollCd = 1.6;
         }
       } else if (t.t > TROLL_HOLD) {
         this.killPlayer();
@@ -652,8 +669,10 @@ export class Joust implements Game {
       return;
     }
 
-    // Only reaches for a player who is flying low over open lava.
-    if (this.phase !== "play" || this.player.invuln > 0) return;
+    // Only reaches for a player who is flying low over open lava — and not
+    // one who has just fought their way out of the last grab. Five flaps
+    // earned that escape; being seized again on the next frame takes it back.
+    if (this.phase !== "play" || this.player.invuln > 0 || this.trollCd > 0) return;
     const feet = this.player.y + FOOT;
     if (feet < 176 || feet > LAVA_Y) return;
     const overFloor = this.plats.some((p) => p.y === 210 && this.overX(this.player.x + HIT_DX, HIT_W, p));
