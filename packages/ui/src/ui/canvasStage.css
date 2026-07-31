@@ -103,8 +103,137 @@
   color: var(--cyan);
 }
 
+/* ---------- The arcade ----------
+   The cabinet borrows the ambient-stage chrome when a game is running and
+   swaps the same slot for a shelf of cards when one isn't. Nothing here uses
+   `hidden`, so none of it can trip the `[hidden] { display: none }` trap the
+   smoke harness guards against — the veil is toggled by class instead. */
+
+.arcade-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.arcade-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.arcade-head {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.arcade-card {
+  appearance: none;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 13px 15px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cyan) 4%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.arcade-card:hover {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 11%, transparent);
+  transform: translateY(-1px);
+}
+
+.arcade-glyph {
+  flex: none;
+  font-size: 24px;
+  line-height: 1.15;
+  color: var(--ember);
+}
+
+.arcade-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.arcade-title {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+.arcade-year,
+.arcade-keys {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.arcade-keys {
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+.arcade-blurb {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.arcade-hi {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+}
+
+.arcade-canvas {
+  cursor: crosshair;
+}
+
+/* Sits above the canvas and fades out once the cabinet owns the keyboard. */
+.arcade-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+  pointer-events: none;
+  transition: opacity 0.18s;
+}
+.arcade-view.is-engaged .arcade-veil {
+  opacity: 0;
+}
+
+/* The score readout runs along the bottom rather than stacking, because four
+   short numbers in a column wastes the height the playfield wants. */
+.arcade-facts {
+  flex-direction: row;
+  gap: 16px;
+}
+.arcade-facts .stage-row {
+  flex: 1;
+  gap: 8px;
+  border-bottom: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .stage-btn {
+    transition: none;
+  }
+  .arcade-card,
+  .arcade-veil {
     transition: none;
   }
 }
