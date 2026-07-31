@@ -70,6 +70,9 @@ const { turmite } = await import("../packages/ui/src/modules/turmite");
 const { chaos } = await import("../packages/ui/src/modules/chaos");
 const { sunclock } = await import("../packages/ui/src/modules/sunclock");
 const { bell } = await import("../packages/ui/src/modules/bell");
+const { arcade } = await import("../packages/ui/src/modules/arcade");
+const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
+const joustRules = await import("../packages/ui/src/modules/arcade/games/joust/rules");
 const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
@@ -180,6 +183,7 @@ kernel
   .register(vitals)
   .register(monitor)
   .register(portal)
+  .register(arcade)
   .register(cradle)
   .register(driftfield)
   .register(sandbox)
@@ -195,7 +199,7 @@ kernel
   .register(sunclock)
   .register(bell);
 
-const MODULE_COUNT = 29;
+const MODULE_COUNT = 30;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -771,6 +775,78 @@ check("daemons have no kill button", (() => {
   const daemonRow = mon?.querySelector(".mon-row.is-daemon");
   return Boolean(daemonRow) && !daemonRow!.querySelector(".mon-kill");
 })());
+
+/* ---------------- arcade ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("arcade");
+const arc = hud.ownerDocument.querySelector(".arcade-root");
+check("arcade mounted", Boolean(arc));
+check(
+  "the shelf listed every cabinet",
+  (arc?.querySelectorAll(".arcade-card").length ?? 0) === CABINETS.length
+);
+check("a cabinet card carries its record", Boolean(arc?.querySelector(".arcade-hi")));
+check(
+  "every cabinet publishes a palette verb",
+  CABINETS.every((c) => ctx.commands().some((cmd) => cmd.id === `arcade.play.${c.id}`))
+);
+
+// Launching with a game must drop straight into the cabinet, not the shelf.
+// This is also the only path that constructs a Game, so it proves the whole
+// simulation can be built without a canvas — jsdom has no 2D context, and
+// mountStage's null-context fallback is what keeps that from throwing.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("arcade", { game: "joust" });
+const cab = hud.ownerDocument.querySelector(".arcade-view");
+check("launching with a game skips the shelf", cab?.classList.contains("stage-host") === true);
+check("the cabinet asks for the keyboard", Boolean(cab?.querySelector(".arcade-veil")));
+
+/**
+ * Joust's rules, asserted directly.
+ *
+ * A game is judged by playing it, but the constants underneath it are not:
+ * getting the flap-to-gravity ratio wrong leaves something perfectly playable
+ * that simply isn't Joust, and nothing about it looks broken. These are the
+ * parts where being wrong is silent, so they are checked here rather than
+ * trusted.
+ */
+check(
+  "one flap lifts about a body height",
+  joustRules.flapApex() > 12 && joustRules.flapApex() < 17
+);
+check(
+  "the higher lance wins and level lances draw",
+  joustRules.resolveJoust(100, 120) === "a" &&
+    joustRules.resolveJoust(120, 100) === "b" &&
+    joustRules.resolveJoust(100, 102) === "draw"
+);
+check(
+  "the egg chain climbs and then caps",
+  [0, 1, 2, 3, 9].map(joustRules.eggChain).join(",") === "250,500,750,1000,1000"
+);
+check(
+  "the playfield is a cylinder",
+  joustRules.wrapDelta(10, 310) === -20 &&
+    joustRules.wrapDelta(310, 10) === 20 &&
+    joustRules.wrapX(-5) === joustRules.GAME_W - 5
+);
+check(
+  "egg waves field no enemies",
+  joustRules.waveKind(5) === "egg" && joustRules.waveEnemies(5) === 0
+);
+check(
+  "the enemy count grows and caps",
+  joustRules.waveEnemies(1) === 3 && joustRules.waveEnemies(29) === 8
+);
+check(
+  "the base erodes but never vanishes",
+  joustRules.arena(40)[0].w >= 24 && joustRules.arena(40)[0].w < joustRules.arena(1)[0].w
+);
+check(
+  "every arena platform stays above the lava",
+  [1, 7, 20, 40].every((w) => joustRules.arena(w).every((p) => p.y < joustRules.LAVA_Y))
+);
 
 /* ---------------- editor: buffer, gutter and run pane ---------------- */
 
