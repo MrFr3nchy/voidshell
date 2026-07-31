@@ -12,6 +12,9 @@ dist/
 .DS_Store
 *.log
 
+# Smoke harness bundles.
+prices-smoke.mjs
+
 # CLI: per-checkout droplet settings and the local dev database
 .voidshell.json
 .voidshell-dev/

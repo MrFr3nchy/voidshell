@@ -5,6 +5,7 @@ import { Store } from "./store.js";
 import { registerAuth } from "./auth.js";
 import { registerWorkspace, MAX_WORKSPACE_BYTES } from "./workspace.js";
 import { registerStonks } from "./stonks.js";
+import { registerPrices } from "./prices.js";
 
 /**
  * The voidshell API.
@@ -75,6 +76,7 @@ export async function build(dbPath = DB_PATH) {
   registerAuth(app, store);
   registerWorkspace(app, store);
   registerStonks(app, store);
+  registerPrices(app, store);
 
   const swept = await store.sweepExpiredSessions();
   if (swept) app.log.info(`swept ${swept} expired session(s) at boot`);
