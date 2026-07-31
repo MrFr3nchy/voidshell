@@ -343,7 +343,7 @@ export const arcade: VoidModule = {
         };
       },
     });
-  }
+  },
 };
 
 /**
@@ -354,60 +354,60 @@ export const arcade: VoidModule = {
  * should not depend on the caller's dispatch style.
  */
 function present(
-    g: CanvasRenderingContext2D,
-    w: number,
-    h: number,
-    def: GameDef,
-    game: Game,
-    opts: { crt: boolean; paused: boolean; engaged: boolean }
-  ): void {
-    const c = palette();
+  g: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  def: GameDef,
+  game: Game,
+  opts: { crt: boolean; paused: boolean; engaged: boolean }
+): void {
+  const c = palette();
 
-    g.fillStyle = "#04050c";
-    g.fillRect(0, 0, w, h);
+  g.fillStyle = "#04050c";
+  g.fillRect(0, 0, w, h);
 
-    const raw = Math.min(w / def.width, h / def.height);
-    const scale = raw >= 1 ? Math.floor(raw) : raw;
-    const vw = def.width * scale;
-    const vh = def.height * scale;
-    const ox = Math.round((w - vw) / 2);
-    const oy = Math.round((h - vh) / 2);
+  const raw = Math.min(w / def.width, h / def.height);
+  const scale = raw >= 1 ? Math.floor(raw) : raw;
+  const vw = def.width * scale;
+  const vh = def.height * scale;
+  const ox = Math.round((w - vw) / 2);
+  const oy = Math.round((h - vh) / 2);
 
-    g.save();
-    g.imageSmoothingEnabled = false;
-    g.beginPath();
-    g.rect(ox, oy, vw, vh);
-    g.clip();
-    g.translate(ox, oy);
-    g.scale(scale, scale);
-    game.draw(g);
-    g.restore();
+  g.save();
+  g.imageSmoothingEnabled = false;
+  g.beginPath();
+  g.rect(ox, oy, vw, vh);
+  g.clip();
+  g.translate(ox, oy);
+  g.scale(scale, scale);
+  game.draw(g);
+  g.restore();
 
-    if (opts.crt && scale >= 2) {
-      g.fillStyle = "rgba(0, 0, 0, 0.16)";
-      for (let y = oy; y < oy + vh; y += 2) g.fillRect(ox, y, vw, 1);
-    }
+  if (opts.crt && scale >= 2) {
+    g.fillStyle = "rgba(0, 0, 0, 0.16)";
+    for (let y = oy; y < oy + vh; y += 2) g.fillRect(ox, y, vw, 1);
+  }
 
-    // A hairline of the void's own colour around the picture, so the cabinet
-    // reads as part of the shell rather than as a video pasted into it.
-    g.strokeStyle = withAlpha(c.cyan, 0.28);
-    g.lineWidth = 1;
-    g.strokeRect(ox + 0.5, oy + 0.5, vw - 1, vh - 1);
+  // A hairline of the void's own colour around the picture, so the cabinet
+  // reads as part of the shell rather than as a video pasted into it.
+  g.strokeStyle = withAlpha(c.cyan, 0.28);
+  g.lineWidth = 1;
+  g.strokeRect(ox + 0.5, oy + 0.5, vw - 1, vh - 1);
 
-    if (!opts.engaged && !opts.paused) {
-      // No keyboard: say so by dimming, rather than letting the player press
-      // Space and watch the launcher ring open over their game.
-      g.fillStyle = "rgba(4, 5, 12, 0.45)";
-      g.fillRect(ox, oy, vw, vh);
-    }
+  if (!opts.engaged && !opts.paused) {
+    // No keyboard: say so by dimming, rather than letting the player press
+    // Space and watch the launcher ring open over their game.
+    g.fillStyle = "rgba(4, 5, 12, 0.45)";
+    g.fillRect(ox, oy, vw, vh);
+  }
 
-    if (opts.paused) {
-      g.fillStyle = "rgba(4, 5, 12, 0.62)";
-      g.fillRect(ox, oy, vw, vh);
-      g.fillStyle = c.text;
-      g.font = "600 13px ui-monospace, monospace";
-      g.textAlign = "center";
-      g.fillText("PAUSED", ox + vw / 2, oy + vh / 2);
-      g.textAlign = "left";
-    }
+  if (opts.paused) {
+    g.fillStyle = "rgba(4, 5, 12, 0.62)";
+    g.fillRect(ox, oy, vw, vh);
+    g.fillStyle = c.text;
+    g.font = "600 13px ui-monospace, monospace";
+    g.textAlign = "center";
+    g.fillText("PAUSED", ox + vw / 2, oy + vh / 2);
+    g.textAlign = "left";
+  }
 }
