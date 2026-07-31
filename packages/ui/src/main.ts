@@ -43,6 +43,7 @@ import { turmite } from "./modules/turmite";
 import { chaos } from "./modules/chaos";
 import { sunclock } from "./modules/sunclock";
 import { bell } from "./modules/bell";
+import { arcade } from "./modules/arcade";
 
 /**
  * Get a dashboard, one way or another.
@@ -118,6 +119,7 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     .register(vitals)
     .register(monitor)
     .register(portal)
+    .register(arcade)
     // ambient apps — things to leave open and look at
     .register(cradle)
     .register(driftfield)
