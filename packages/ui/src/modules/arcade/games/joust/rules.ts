@@ -30,9 +30,9 @@ export const LAVA_Y = 228;
  *
  * Fixed, and deliberately coarse. Running the physics at the display's refresh
  * rate produces motion that is smooth in a way nothing from 1982 was, and
- * smoothness is most of what made the first version feel wrong: a modern game
- * with Joust's rules rather than Joust. Ticking at 30Hz and drawing the result
- * without interpolating puts the chunk back — sprites step rather than glide.
+ * smoothness is most of what made this feel wrong: a modern game with Joust's
+ * rules rather than Joust. Ticking at 30Hz and drawing the result without
+ * interpolating puts the chunk back — sprites step rather than glide.
  *
  * Fixed-step also makes the whole game deterministic in the input sequence,
  * which is why the bot in the harness is worth anything.
@@ -51,7 +51,7 @@ export const MAX_TICKS = 4;
  * Applied at the point of *integration*, never to the stored velocity. That
  * distinction is not pedantry: rounding the stored value throws the remainder
  * away every tick, and any acceleration smaller than half a quantum per tick
- * is then annihilated rather than merely small. `ACC_AIR` contributes 1.4px/s
+ * is then annihilated rather than merely small. `ACC_AIR` contributes 0.6px/s
  * per tick against a 6px/s grid, so storing the rounded value silently reduced
  * air steering to *exactly* zero. Real fixed point keeps the residue and steps
  * once it has accumulated, which is what happens here.
@@ -76,14 +76,14 @@ export const TERMINAL_VY = 260;
  * This is the change that matters most. Holding a direction in mid-air used to
  * accelerate you smoothly, which meant the stick flew the bird and the flap
  * only supplied height — two independent controls, and far too much authority.
- * In Joust the wings do both: you go where you flap. `ACC_AIR` is now a
- * fraction of what it was, so drifting steers you a little and flapping is
- * what actually moves you, and the rhythm of the game is the flap rather than
- * the stick.
+ * In Joust the wings do both: you go where you flap. `ACC_AIR` is a sixth of
+ * what it was, so drifting steers you a little and flapping is what actually
+ * moves you. Measured: the stick alone reaches 36px/s in two seconds against
+ * 126 with the wings, so the rhythm of the game is the flap.
  */
 export const FLAP_DVX = 34;
 
-export const ACC_AIR = 30;
+export const ACC_AIR = 18;
 export const ACC_GROUND = 260;
 export const MAX_VX_AIR = 126;
 export const MAX_VX_GROUND = 84;
@@ -94,13 +94,33 @@ export const MAX_VX_GROUND = 84;
  * Was 2.2 — a boost, which made a reversal snappy and deleted the single most
  * characteristic thing about flying in this game. Below 1 it is *harder* to
  * turn than to keep going, so committing to a direction is a real decision and
- * changing your mind costs you about a second and most of a screen. That cost
- * is the skill ceiling; without it there is no reason to think before you flap.
+ * changing your mind costs you the width of the screen. That cost is the
+ * skill ceiling; without it there is no reason to think before you flap.
  */
 export const TURN_BOOST = 0.82;
 
-/** Almost nothing. You coast until something stops you. */
-export const DRAG_AIR = 0.22;
+/**
+ * Speed below which the bird is allowed to change which way it faces.
+ *
+ * Facing follows momentum rather than the stick. Ask for a reversal at speed
+ * and the sprite keeps facing the way it is travelling until the velocity
+ * actually crosses zero — so a turn is a skid you fly out of, and the bird
+ * visibly disagrees with you for most of a second. Flipping the sprite on the
+ * keypress is the single biggest reason controls read as modern: it makes the
+ * bird agree with your intent instead of with its own inertia.
+ */
+export const TURN_FACE_AT = 26;
+
+/**
+ * How much of a flap's horizontal kick survives when it opposes your motion.
+ *
+ * A wingbeat into your own momentum is a brake, not a thruster: it bleeds
+ * speed rather than reversing it, so a full turn costs several beats instead
+ * of one. Together with TURN_BOOST this is what stops the stick from being a
+ * steering wheel — measured, a full reversal now takes 1.68s and gives up 33px
+ * of ground, against 1.02s and 8px before.
+ */
+export const TURN_FLAP_BRAKE = 0.45;
 
 /**
  * Ground friction, and the skid.
@@ -114,6 +134,9 @@ export const DRAG_AIR = 0.22;
 export const DRAG_GROUND = 4.4;
 export const DRAG_SKID = 0.9;
 export const SKID_ABOVE = 46;
+
+/** Almost nothing. You coast until something stops you. */
+export const DRAG_AIR = 0.22;
 
 /** Sprite footprint. Collision uses an inset box; see `HIT_*`. */
 export const SPR_W = 20;
@@ -182,23 +205,19 @@ export interface Tier {
   color: string;
   shade: string;
   score: number;
-  /** Multiplier on steering force and flap rate. */
+  /** Multiplier on wingbeat rate. Sets how hard this tier drives. */
   vigour: number;
   /**
    * How long this tier goes between looking at the player, in seconds. It
    * steers at a *snapshot* taken this often, not at where you actually are,
-   * so a long interval means chasing a ghost of you from a second ago.
+   * so a long interval means chasing a ghost of you from a moment ago.
    */
   think: number;
-  /**
-   * Random offset added to the snapshot, in pixels. Large values are why a
-   * bounder crosses the screen for somewhere you have never been.
-   */
+  /** Random offset added to the snapshot, in pixels. */
   scatter: number;
   /**
    * Odds per decision of committing to a direction and refusing to reconsider
-   * until the next one. This is what produces the overshoot — sailing past
-   * you and having to come all the way back.
+   * until the next one.
    */
   commit: number;
   /**
@@ -209,45 +228,66 @@ export interface Tier {
   care: number;
 }
 
-/**
- * The ladder, and the competence gap along it.
- *
- * The three tiers used to differ by a single vigour multiplier spanning
- * 0.74–1.14, which made them the same opponent at three speeds — all of them
- * tracking accurately, all of them climbing to attack. The spread now runs
- * across five axes, and the bottom of it is genuinely incompetent: a bounder
- * looks at you about once a second, aims at a point up to 90px from where you
- * were when it looked, usually commits to that and won't reconsider, and only
- * pulls up out of the lava two times in three.
- *
- * Shadow lords are the ones that actually hunt — short think, little scatter,
- * rarely commits blindly, and reliably saves itself. Meeting one should feel
- * different in kind, not just faster.
- */
 export const TIERS: Tier[] = [
   { name: "bounder", color: "#d1443c", shade: "#8c241f", score: 500,
-    vigour: 0.5, think: 0.95, scatter: 90, commit: 0.62, care: 0.66 },
+    vigour: 0.74, think: 0.5, scatter: 38, commit: 0.3, care: 0.62 },
   { name: "hunter", color: "#b9c3d6", shade: "#6f7a90", score: 750,
-    vigour: 0.78, think: 0.6, scatter: 46, commit: 0.36, care: 0.85 },
+    vigour: 0.95, think: 0.36, scatter: 20, commit: 0.18, care: 0.82 },
   { name: "shadow lord", color: "#5f7dff", shade: "#33459c", score: 1500,
-    vigour: 1.0, think: 0.34, scatter: 16, commit: 0.14, care: 0.97 },
+    vigour: 1.18, think: 0.24, scatter: 7, commit: 0.07, care: 0.96 },
 ];
 
 /*
- * A note on `vigour`, because it was wrong once and the mistake is tempting.
+ * A note on where the stupidity is supposed to live.
  *
- * The first pass at "dumber" also raised these — the top tier went to 1.22 —
- * on the theory that a tier needs *something* going up as it climbs. That
- * produced enemies which were both erratic and quick, which is not
- * characterful but simply chaotic: a bench of 120 full games put a mediocre
- * player at a median of one wave and a death every twenty seconds.
+ * Two opposite mistakes have now been made here, and the second was mine
+ * over-correcting the first. Version one had every tier tracking the player's
+ * live position and climbing to attack — three competent duellists at three
+ * speeds. Version two scattered their aim by up to 90px, let them commit
+ * blindly for a second at a time, and cut their drive, which made them *bad at
+ * arriving*. Measured: the flock averaged half the player's top speed and sat
+ * 76px away, and a Joust player immediately called it out.
  *
- * Threat is supposed to come from `think` and `scatter` — from a shadow lord
- * actually knowing where you are and going there — and not from raw speed. So
- * vigour now falls below where it started for the low tiers and no longer
- * rises above it for the top one. A shadow lord is frightening because it is
- * paying attention.
+ * That is not what the original's simplicity looks like. A 1982 buzzard
+ * converges on you perfectly well; what it does badly is *choose* — it takes
+ * fights from below, it wanders when it loses you, and it flies into the lava.
+ * So pursuit is now direct at every tier, and the incompetence lives where it
+ * belongs: in `care`, in the odds of climbing before engaging, and in a
+ * snapshot that is stale rather than wildly wrong.
  */
+
+/**
+ * Seconds between wingbeats at vigour 1.0, divided by vigour.
+ *
+ * Gives roughly 3.4 beats/sec for a bounder up to 5.4 for a shadow lord, all
+ * under the 7.1/sec ceiling the flap cooldown imposes. Enemies beat on a
+ * cadence rather than a per-tick probability: it is what a bird does, and it
+ * makes the flock's chase speed a number you set instead of one you measure
+ * and then argue with. The dice version claimed 3.9 beats/sec by arithmetic
+ * and delivered 1.8, which is not a gap worth an afternoon.
+ */
+export const BEAT_PERIOD = 0.22;
+
+/**
+ * Speed above which a buzzard would rather use the screen wrap than turn.
+ *
+ * The playfield is a cylinder, so a target "behind you" is also ahead of you
+ * the long way round — and when you are already moving, the long way is often
+ * quicker than paying for a reversal. Enemies above this speed commit and come
+ * around the seam.
+ *
+ * This is the rule that makes the flock read as Joust rather than as pursuit
+ * AI: they streak across, overshoot, and reappear on the far side still coming.
+ * It also fixed a real thrashing bug — traced tick by tick, an enemy would
+ * close to 15px, take a fresh snapshot that landed on the other side of
+ * itself, reverse into its own momentum, and sail away again forever. Seam
+ * crossings went from 17 to 41 per minute and the flock's mean speed from 56
+ * to 97px/s.
+ *
+ * Set near half the air speed cap: fast enough that a cruising buzzard loops,
+ * slow enough that one which has genuinely stopped still turns to face you.
+ */
+export const WRAP_RATHER_THAN_TURN = 62;
 
 export const PTERO_SCORE = 1000;
 export const SURVIVAL_BONUS = 3000;
@@ -295,16 +335,11 @@ export function spawnTier(wave: number, i: number): number {
 /**
  * Seconds of wave before the pterodactyl comes to move you along.
  *
- * Measured, and re-measured after the momentum rework, which is the only
- * reason this number is 52 and not 45. Under the old smooth flight model a
- * mediocre bot cleared a wave in a median 23s; under this one the same policy
- * takes 33.5s, p75 42s, p90 51s. The threshold has to track that, or a change
- * to how the bird flies quietly turns a rare pressure mechanic into a
- * permanent third enemy.
- *
- * At 52 it fires on roughly one wave in ten — a wave played cleanly never
- * sees one, a wave that drags always will. Re-measure it if the flight model
- * moves again.
+ * Measured, and re-measured after the momentum rework. Under the old smooth
+ * flight model a mediocre bot cleared a wave in a median 23s; under this one
+ * the same policy takes around 30s. The threshold has to track that, or a
+ * change to how the bird flies quietly turns a rare pressure mechanic into a
+ * permanent third enemy. Re-measure it if the flight model moves again.
  */
 export const PTERO_AFTER = 52;
 
