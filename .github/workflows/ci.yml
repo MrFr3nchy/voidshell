@@ -17,13 +17,39 @@ jobs:
 
       - run: npm ci
 
+      # The source guards below are literal greps, deliberately — anything
+      # clever enough to be worded around is a guard people learn to word
+      # around. They just run against comment-stripped source now.
+      #
+      # Grepping the source directly cannot tell a call from a sentence, and
+      # the failure mode is worse than it sounds: the storage guard fired on a
+      # comment in kernel/apiWorkspace.ts explaining why we *stopped* using
+      # localStorage. A guard that fails the build for documenting the very
+      # decision it exists to enforce teaches people to delete the
+      # explanation, which is the opposite of what it is for.
+      #
+      # esbuild does the stripping because it is a real parser. No regex over
+      # source can separate a mention in a comment from a call in code without
+      # getting strings, template literals and regex literals wrong — and a
+      # guard with subtle holes is worse than one with none.
+      #
+      # Comments cannot execute, so nothing is weakened: every construct that
+      # could actually touch these APIs survives into the stripped output.
+      - name: strip comments for the source guards
+        run: |
+          rm -rf /tmp/src-nc
+          find packages/ui/src \( -name '*.ts' -o -name '*.tsx' \) -print0 \
+            | xargs -0 -r npx esbuild \
+                --outdir=/tmp/src-nc --outbase=packages/ui/src \
+                --format=esm --log-level=error
+
       # A dashboard that lives in the browser is a dashboard that doesn't
-      # follow the account, which is the entire point of the server. This is
-      # a literal grep on purpose: anything clever enough to be worded around
-      # is a guard people learn to word around.
+      # follow the account, which is the entire point of the server.
       - name: no browser storage in the client
         run: |
-          if grep -rn "localStorage\|sessionStorage\|indexedDB" packages/ui/src; then
+          hits=$(grep -rn "localStorage\|sessionStorage\|indexedDB" /tmp/src-nc || true)
+          if [ -n "$hits" ]; then
+            echo "$hits" | sed -e 's#^/tmp/src-nc/#packages/ui/src/#' -e 's#\.js:#.ts:#'
             echo "::error::browser storage found in packages/ui/src — workspace state belongs on the server"
             exit 1
           fi
@@ -32,8 +58,10 @@ jobs:
       # AudioContexts a page may hold, and the failure is silent.
       - name: audio only through blip.ts
         run: |
-          if grep -rn "new AudioContext\|new webkitAudioContext" packages/ui/src --include="*.ts" \
-             | grep -v "packages/ui/src/ui/blip.ts"; then
+          hits=$(grep -rn "new AudioContext\|new webkitAudioContext" /tmp/src-nc \
+                 | grep -v '^/tmp/src-nc/ui/blip\.js:' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits" | sed -e 's#^/tmp/src-nc/#packages/ui/src/#' -e 's#\.js:#.ts:#'
             echo "::error::a module is minting its own AudioContext — use src/ui/blip.ts"
             exit 1
           fi
