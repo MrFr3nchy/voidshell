@@ -2,9 +2,10 @@
  * Arcade — a cabinet in the void, and a shelf of games to put in it.
  *
  * The module owns everything that isn't a game: the canvas, the frame loop,
- * integer letterboxing, the keyboard, pause, mute, and a high-score table that
- * rides the ordinary settings store and so follows the account rather than the
- * browser. Games get a delta, a pad and a scaled 2D context — see `types.ts`.
+ * integer letterboxing, the CRT, the keyboard, pause, mute, and a high-score
+ * table that rides the ordinary settings store and so follows the account
+ * rather than the browser. Games get a delta, a pad and a scaled 2D context —
+ * see `types.ts`.
  *
  * Two things here are worth explaining, because both look like over-thinking
  * until you run it inside a shell that already has keybinds:
@@ -29,9 +30,11 @@ import type { KernelContext, LaunchArgs, VoidModule } from "../../kernel/types";
 import { mountStage, palette, toolbar, toolButton, withAlpha } from "../../ui/canvasStage";
 import type { Game, GameDef, GameKey, Pad } from "./types";
 import { CABINETS, cabinet } from "./registry";
+import { CRT_PRESETS, CrtScreen } from "./crt";
 
 const SOUND_KEY = "arcade.sound";
 const CRT_KEY = "arcade.crt";
+const CRT_DEFAULT = "classic";
 const hiKey = (id: string) => `arcade.hi.${id}`;
 
 /**
@@ -93,11 +96,17 @@ export const arcade: VoidModule = {
     });
     ctx.defineSetting({
       key: CRT_KEY,
-      label: "arcade scanlines",
-      kind: "toggle",
+      label: "arcade tube",
+      kind: "select",
       group: "Apps",
-      hint: "the tube it should have been played on",
-      default: true,
+      hint: "scanlines, phosphor glow and glass curvature",
+      default: CRT_DEFAULT,
+      options: [
+        { value: "off", label: "flat panel" },
+        { value: "subtle", label: "subtle" },
+        { value: "classic", label: "classic" },
+        { value: "worn", label: "worn cabinet" },
+      ],
     });
   },
 
@@ -186,6 +195,7 @@ export const arcade: VoidModule = {
         let def: GameDef | null = null;
         let stop: (() => void) | null = null;
         let paused = false;
+        let crt: CrtScreen | null = null;
 
         const muted = () => !ctx.state.get<boolean>(SOUND_KEY, true);
 
@@ -220,6 +230,8 @@ export const arcade: VoidModule = {
         const closeGame = () => {
           stop?.();
           stop = null;
+          crt?.dispose();
+          crt = null;
           game?.dispose?.();
           game = null;
           def = null;
@@ -285,6 +297,7 @@ export const arcade: VoidModule = {
           closeGame();
           def = c;
           game = c.create(host);
+          crt = new CrtScreen(c.width, c.height);
           view.className = "arcade-view stage-host";
           view.replaceChildren();
 
@@ -317,8 +330,8 @@ export const arcade: VoidModule = {
                 game.update(Math.min(dt, 1 / 30), pad);
                 edge.clear();
               }
-              present(st.g, st.w, st.h, def, game, {
-                crt: ctx.state.get<boolean>(CRT_KEY, true),
+              present(st.g, st.w, st.h, def, game, crt, {
+                tube: ctx.state.get<string>(CRT_KEY, CRT_DEFAULT),
                 paused,
                 engaged,
               });
@@ -347,7 +360,7 @@ export const arcade: VoidModule = {
 };
 
 /**
- * Letterbox, scale, draw, and put a tube in front of it.
+ * Letterbox, scale, draw through the tube, and label the state.
  *
  * A free function, not a method: `this` inside `launch` is only the module
  * when the kernel happens to call it as `mod.launch(...)`, and a render path
@@ -359,7 +372,8 @@ function present(
   h: number,
   def: GameDef,
   game: Game,
-  opts: { crt: boolean; paused: boolean; engaged: boolean }
+  crt: CrtScreen | null,
+  opts: { tube: string; paused: boolean; engaged: boolean }
 ): void {
   const c = palette();
 
@@ -373,19 +387,29 @@ function present(
   const ox = Math.round((w - vw) / 2);
   const oy = Math.round((h - vh) / 2);
 
-  g.save();
-  g.imageSmoothingEnabled = false;
-  g.beginPath();
-  g.rect(ox, oy, vw, vh);
-  g.clip();
-  g.translate(ox, oy);
-  g.scale(scale, scale);
-  game.draw(g);
-  g.restore();
+  const tube = CRT_PRESETS[opts.tube] ?? CRT_PRESETS[CRT_DEFAULT];
+  const useTube = crt !== null && crt.ready && opts.tube !== "off";
 
-  if (opts.crt && scale >= 2) {
-    g.fillStyle = "rgba(0, 0, 0, 0.16)";
-    for (let y = oy; y < oy + vh; y += 2) g.fillRect(ox, y, vw, 1);
+  if (useTube && crt) {
+    // Through the glass: the game draws at its own resolution into the tube,
+    // which then owns every pixel that reaches the panel. Curvature and bloom
+    // both need to read the finished frame, so there is no way to do this as
+    // an overlay on a direct draw.
+    const tg = crt.ctx!;
+    crt.begin();
+    game.draw(tg);
+    crt.present(g, ox, oy, vw, vh, scale, tube);
+  } else {
+    // No tube, or no 2D canvas to build one in. Draw straight to the panel.
+    g.save();
+    g.imageSmoothingEnabled = false;
+    g.beginPath();
+    g.rect(ox, oy, vw, vh);
+    g.clip();
+    g.translate(ox, oy);
+    g.scale(scale, scale);
+    game.draw(g);
+    g.restore();
   }
 
   // A hairline of the void's own colour around the picture, so the cabinet
