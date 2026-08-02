@@ -1,5 +1,6 @@
 import type { KernelContext, ModuleManifest } from "../kernel/types";
 import { COUNT_KEY, MAX_SLOTS, SLOTS_KEY, escapeHtml, resolveSlots } from "./spawner";
+import { GROUP_KEY, defineShelfSettings, groupModules } from "./appShelves";
 
 interface DrawerDeps {
   /** Opening the ring mid-drag is what makes "drop onto a node" possible. */
@@ -17,12 +18,20 @@ export interface AppDrawer {
  * A tile is three affordances at once: click to launch, drag into the void to
  * launch it exactly where you drop it, or drag it onto a launcher node to
  * rebind that node to this app. No settings screen required for the common case.
+ *
+ * Tiles are grouped onto shelves — see `appShelves.ts` — because thirty modules
+ * in a flat grid is a list rather than an organisation. Grouping can be turned
+ * off, and every assignment can be overridden.
  */
 export function createAppDrawer(
   hud: HTMLElement,
   ctx: KernelContext,
   deps: DrawerDeps
 ): AppDrawer {
+  // Published here rather than from a module: shelves belong to the drawer,
+  // and a module owning them would have to know about every other module.
+  defineShelfSettings(ctx);
+
   const root = document.createElement("div");
   root.className = "drawer";
   root.innerHTML = `
@@ -61,7 +70,35 @@ export function createAppDrawer(
       return;
     }
 
-    for (const m of mods) grid.appendChild(makeTile(m));
+    if (!ctx.state.get<boolean>(GROUP_KEY, true)) {
+      for (const m of mods) grid.appendChild(makeTile(m));
+      return;
+    }
+
+    // Headings and tiles are both direct children of the grid, with the heading
+    // spanning every column. Wrapping each shelf in its own container would
+    // give every shelf an independent column count and the tiles would stop
+    // lining up with each other down the sheet.
+    for (const group of groupModules(ctx, mods)) {
+      grid.appendChild(makeShelfLabel(group.shelf.label, group.shelf.hint, group.mods.length));
+      for (const m of group.mods) grid.appendChild(makeTile(m));
+    }
+  };
+
+  const makeShelfLabel = (label: string, hint: string, count: number): HTMLElement => {
+    const head = document.createElement("div");
+    head.className = "drawer-shelf-label";
+    const name = document.createElement("span");
+    name.className = "drawer-shelf-name";
+    name.textContent = label;
+    const sub = document.createElement("span");
+    sub.className = "drawer-shelf-hint";
+    sub.textContent = hint;
+    const n = document.createElement("span");
+    n.className = "drawer-shelf-count";
+    n.textContent = `${count}`;
+    head.append(name, sub, n);
+    return head;
   };
 
   const makeTile = (m: ModuleManifest): HTMLElement => {
