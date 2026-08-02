@@ -1,5 +1,6 @@
 import "./style.css";
 import "./ui/canvasStage.css";
+import "./ui/appShelves.css";
 import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { WorkspaceSnapshot } from "./kernel/persistence";
