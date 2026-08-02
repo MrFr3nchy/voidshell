@@ -11,30 +11,37 @@
  * - **Flap is per press.** A held key would make it a jetpack and delete the
  *   game. `Pad.hit` exists for exactly this.
  * - **The wings do the steering.** Holding a direction in the air is a nudge;
- *   the flap is what actually moves you sideways. Splitting height and
- *   heading into two independent controls is what made the first version of
- *   this feel like a modern platformer wearing Joust's rules.
- * - **Momentum is the difficulty.** Air drag is almost nothing, turning
- *   against your own velocity is harder than holding a line, and the sprite
- *   keeps facing the way it is *travelling* until the velocity actually
- *   crosses zero. A full reversal costs 1.68s and a third of a screen.
+ *   the flap is what actually moves you sideways.
+ * - **Momentum is the difficulty, but the sprite is not.** Air drag is almost
+ *   nothing and turning against your own velocity is harder than holding a
+ *   line, so a full reversal costs 1.68s and a third of a screen — yet the
+ *   bird turns to face the stick *at once*. Facing left while still sailing
+ *   right is the silhouette this game is made of.
  * - **The screen is a cylinder, and the flock uses it.** A fast buzzard whose
- *   target has ended up behind it takes the seam rather than braking, which
- *   is both what the original does and the fix for a real thrashing bug.
+ *   target has ended up behind it takes the seam rather than braking.
  * - **Eggs are the economy.** Killing something doesn't remove it, it drops an
- *   egg; ignore the egg and it hatches into an enemy *one tier stronger*. A
- *   wave you refuse to clean up gets worse, which is why the game has pacing
- *   without a timer.
+ *   egg; ignore the egg and it hatches into an enemy *one tier stronger*.
  *
- * The art is original — see `sprites.ts`. The mechanics are the 1982 design,
- * which is the part worth recreating; `rules.ts` holds the numbers and the
- * reasoning behind each of them.
+ * The art is original — see `sprites.ts`, which is explicit about what is and
+ * isn't reproduced. `rules.ts` holds the numbers and the reasoning for each.
  */
 
 import type { Game, GameDef, GameHost, Pad } from "../../types";
 import { burst, tone } from "../../../../ui/blip";
 import { palette, withAlpha } from "../../../../ui/canvasStage";
-import { blit, pterodactyl, text, textCentered, wings, EGG, RIDER, WALKER } from "./sprites";
+import {
+  blit,
+  pterodactyl,
+  riderInk,
+  text,
+  textCentered,
+  wings,
+  EGG,
+  HAND,
+  PAD,
+  RIDER,
+  WALKER,
+} from "./sprites";
 import type { Platform } from "./rules";
 import {
   ACC_AIR,
@@ -72,6 +79,9 @@ import {
   quantize,
   resolveJoust,
   SKID_ABOVE,
+  SPAWN_GAP,
+  SPAWN_LEAD,
+  SPAWN_ON,
   SPR_H,
   SPR_W,
   spawnTier,
@@ -80,7 +90,6 @@ import {
   TICK,
   TIERS,
   TURN_BOOST,
-  TURN_FACE_AT,
   TURN_FLAP_BRAKE,
   waveEnemies,
   waveKind,
@@ -99,14 +108,13 @@ const FOOT = SPR_H - 1;
  * clock — the hold rarely runs out because the lava arrives first. It has to
  * be slow enough that five flaps is a fight you can win from a normal grab
  * height and fast enough that being caught just above the surface is fatal.
- * Raising FLAP_COOLDOWN briefly made this unwinnable at any height, which is
- * why the escape flap no longer goes through the flight cooldown.
  */
 const TROLL_HOLD = 2.4;
 const TROLL_FLAPS = 5;
 const TROLL_DRAG = 18;
 
-const PLAYER_INK = { A: "#f2d24b", a: "#a8842a", B: "#ffe89a", b: "#c9a642", L: "#ffffff", Y: "#ff9b2f", E: "#241a05" };
+/** A yellow knight on a cream ostrich, with a red plume. */
+const PLAYER_INK = riderInk("#f0e0a8", "#b8a25c", "#f2d24b", "#a8842a", "#d1443c", "#ff9b2f");
 
 interface Rider {
   player: boolean;
@@ -217,8 +225,7 @@ export class Joust implements Game {
    * At 30Hz against a 60Hz display roughly half of all frames run no tick at
    * all, and the cabinet clears its edge set after every frame — so reading a
    * press straight into a tick would silently drop half of them, and the game
-   * would feel like it was ignoring the button. Latched here instead, and
-   * consumed by the next tick whenever that lands.
+   * would feel like it was ignoring the button.
    */
   private flapLatch = false;
   private startLatch = false;
@@ -306,16 +313,23 @@ export class Joust implements Game {
     this.subBanner =
       kind === "egg" ? "EGG WAVE" : kind === "survival" ? "SURVIVAL WAVE" : "";
 
+    // The player is placed first, and the flock is held back behind it. A wave
+    // used to open with everything arriving together and the enemies slightly
+    // in the lead, which gave you no beat to see where you were.
+    this.placePlayer();
+
     const n = waveEnemies(this.wave);
     for (let i = 0; i < n; i++) {
-      const p = this.plats[3 + (i % 6)];
+      // Skip pad 0: that one is the player's, and the flock must never
+      // materialise on top of someone who has only just become solid.
+      const p = this.plats[SPAWN_ON[1 + (i % (SPAWN_ON.length - 1))]];
       const r = this.makeRider(
         false,
         spawnTier(this.wave, i),
         wrapX(p.x + p.w / 2 - SPR_W / 2 + (i % 2 ? 14 : -14)),
         p.y - SPR_H
       );
-      r.spawn = 0.7 + i * 0.22;
+      r.spawn = SPAWN_LEAD + i * SPAWN_GAP;
       this.enemies.push(r);
     }
 
@@ -337,7 +351,6 @@ export class Joust implements Game {
     }
     this.waveEggs = this.eggs.length;
 
-    this.placePlayer();
     this.sfx(() => {
       tone({ freq: 220, toFreq: 440, decay: 0.14, wave: "square", gain: 0.07 });
       window.setTimeout(() => tone({ freq: 330, toFreq: 660, decay: 0.16, wave: "square", gain: 0.07 }), 130);
@@ -345,7 +358,7 @@ export class Joust implements Game {
   }
 
   private placePlayer(): void {
-    const pad = this.plats[5];
+    const pad = this.plats[SPAWN_ON[0]];
     this.player = this.makeRider(true, 0, pad.x + pad.w / 2 - SPR_W / 2, pad.y - SPR_H);
     this.player.invuln = 1.8;
     this.player.grounded = true;
@@ -507,8 +520,7 @@ export class Joust implements Game {
     }
 
     // Footfalls, paced by distance rather than by a timer, so the clop
-    // matches the stride instead of drifting against it. The original's
-    // walking sound is half of why the ground feels like ground.
+    // matches the stride instead of drifting against it.
     if (p.grounded && Math.abs(p.vx) > 12) {
       this.stride += Math.abs(p.vx) * dt;
       if (this.stride > 13) {
@@ -537,12 +549,8 @@ export class Joust implements Game {
    * instant, and then flies at that stale point until it looks again.
    *
    * Pursuit itself is direct, at every tier. An earlier pass scattered their
-   * aim by up to 90px and cut their drive, which made them bad at *arriving* —
-   * the flock averaged half the player's top speed. That is not what 1982
-   * simplicity looked like. A buzzard converges on you perfectly well; what it
-   * does badly is choose. So the incompetence lives in `care`, in whether it
-   * remembers to climb before engaging, and in a snapshot that is stale rather
-   * than wildly wrong.
+   * aim by up to 90px and cut their drive, which made them bad at *arriving*.
+   * A buzzard converges on you perfectly well; what it does badly is choose.
    */
   private stepEnemies(dt: number): void {
     for (const e of this.enemies) {
@@ -559,10 +567,9 @@ export class Joust implements Game {
 
         if (chasing) {
           e.seenX = wrapX(this.player.x + (Math.random() - 0.5) * 2 * t.scatter);
-          // Where the incompetence actually lives. Only the top tier reliably
-          // remembers to get *above* you first; a bounder mostly comes
-          // straight at your altitude and loses the lance comparison it never
-          // thought to win.
+          // Where the incompetence lives. Only the top tier reliably remembers
+          // to get *above* you first; a bounder mostly comes straight at your
+          // altitude and loses the comparison it never thought to win.
           const climbs = Math.random() < 0.18 + e.tier * 0.36;
           e.seenY = this.player.y - (climbs ? 14 + e.tier * 8 : 0);
         } else {
@@ -582,37 +589,22 @@ export class Joust implements Game {
       const dx = wrapDelta(e.x, e.seenX);
       let want = e.commit ? e.dir : ((Math.abs(dx) < 8 ? 0 : Math.sign(dx)) as -1 | 0 | 1);
 
-      // Take the seam rather than the brake.
-      //
-      // A buzzard already travelling fast, whose target has ended up behind
-      // it, keeps going and comes around the wrap. This is the single rule
-      // that makes the flock read as Joust: they streak across the screen,
-      // overshoot, and reappear on the far side still coming for you.
-      //
-      // It is also the fix for a genuine thrashing bug. Traced tick by tick,
-      // an enemy would close to 15px, take a fresh snapshot that landed on the
-      // other side of itself, reverse into its own momentum — which is now
-      // expensive on purpose — and sail away again, forever. Reversing was
-      // simply the wrong move, and continuing was both faster *and* the thing
-      // the original does.
+      // Take the seam rather than the brake. A buzzard already travelling fast
+      // whose target has ended up behind it keeps going and comes around the
+      // wrap — what the original does, and the fix for a thrashing bug where
+      // an enemy would close to 15px, re-snapshot behind itself, reverse into
+      // its own momentum, and sail away forever.
       if (want !== 0 && want * e.vx < 0 && Math.abs(e.vx) > WRAP_RATHER_THAN_TURN) {
         want = Math.sign(e.vx) as -1 | 0 | 1;
       }
 
       const doomed = e.y > 176 && !e.grounded;
       const wantsHeight = (doomed && e.careful) || e.y > e.seenY + 8;
-      // Horizontal thrust comes almost entirely from the flap — ACC_AIR is a
-      // nudge by design — so a buzzard that only flaps when it wants *height*
-      // barely moves sideways at all. That was a real bug: the flock averaged
-      // half the player's top speed and could not close. A buzzard beats its
-      // wings to chase, not merely to stop falling.
+      // Horizontal thrust is nearly all flap, so a buzzard that only flaps for
+      // *height* barely moves sideways. That was a real bug: the flock
+      // averaged half the player's speed and could not close.
       const wantsDrive = want !== 0 && want * e.vx < MAX_VX_AIR * 0.74;
 
-      // A steady cadence rather than a per-tick dice roll. The dice version
-      // was unpredictable to tune — it produced 1.8 beats/sec where the
-      // arithmetic said 3.9, and chasing that gap is not a good use of anyone's
-      // afternoon. A period is exactly as authentic and it means the flock's
-      // speed is a number you set rather than one you discover.
       e.beat -= dt;
       const flap = e.beat <= 0 && (wantsHeight || wantsDrive);
       if (flap) e.beat = BEAT_PERIOD / t.vigour;
@@ -634,12 +626,9 @@ export class Joust implements Game {
    * Shared integration. The player and every enemy fly by exactly this.
    *
    * The wings do the steering. Holding a direction in the air applies only
-   * `ACC_AIR`, a sixth of what it once was and barely a nudge; the real
-   * horizontal authority is `FLAP_DVX`, delivered per flap in whichever
-   * direction is held. That single change is most of what separates this from
-   * a modern platformer: you cannot simply *decide* to be somewhere else, you
-   * have to beat your way there, and whatever speed you built up on the way is
-   * still with you when you arrive.
+   * `ACC_AIR`, barely a nudge; the real horizontal authority is `FLAP_DVX`,
+   * delivered per flap in whichever direction is held. You cannot simply
+   * *decide* to be somewhere else, you have to beat your way there.
    */
   private move(r: Rider, dt: number, want: number, flap: boolean): void {
     if (want !== 0) {
@@ -647,13 +636,12 @@ export class Joust implements Game {
       // Turning against your own momentum is *harder* than holding a line.
       const against = want * r.vx < 0;
       r.vx += want * acc * (against ? TURN_BOOST : 1) * dt;
-      // Facing follows *momentum*, not the stick. Ask for a reversal at speed
-      // and the bird keeps facing — and travelling — the old way until the
-      // velocity actually crosses zero, so a turn is a visible skid you have
-      // to fly out of rather than an instant flip. Flipping on the keypress
-      // is the single biggest reason the controls read as modern: it makes
-      // the sprite agree with your intent instead of with its own inertia.
-      if (Math.abs(r.vx) < TURN_FACE_AT || want * r.vx > 0) r.face = want > 0 ? 1 : -1;
+      // The sprite turns at once; the momentum does not. Facing left while
+      // still sailing rightwards is the iconic Joust silhouette, and it only
+      // happens if the flip is immediate. Delaying it reads as unresponsive
+      // rather than heavy — the resistance belongs in the physics above, not
+      // in the picture.
+      r.face = want > 0 ? 1 : -1;
     } else if (r.grounded) {
       // Land fast and you slide; the feet only bite once you're slow.
       const grip = Math.abs(r.vx) > SKID_ABOVE ? DRAG_SKID : DRAG_GROUND;
@@ -667,8 +655,7 @@ export class Joust implements Game {
     if (flap && r.flapCd <= 0) {
       r.vy = Math.max(FLAP_VY_CAP, r.vy - FLAP_DV);
       // The same beat that lifts you also throws you along — but a flap into
-      // your own momentum is a brake, not a thruster. It bleeds speed rather
-      // than reversing it, so turning around costs you several beats.
+      // your own momentum is a brake, not a thruster.
       if (want !== 0) {
         const against = want * r.vx < 0;
         r.vx += want * FLAP_DVX * (against ? TURN_FLAP_BRAKE : 1);
@@ -684,16 +671,15 @@ export class Joust implements Game {
     r.vy = Math.min(TERMINAL_VY, r.vy + GRAVITY * dt);
 
     // Quantised here, at the integration, and not in the stored velocity —
-    // see VQ. Speed therefore arrives in visible steps while the fractional
-    // part keeps accumulating underneath, exactly as fixed point would.
+    // see VQ. Speed arrives in visible steps while the fractional part keeps
+    // accumulating underneath, exactly as fixed point would.
     const py = r.y;
     r.x = wrapX(r.x + quantize(r.vx) * dt);
     r.y += quantize(r.vy) * dt;
 
     // The playfield has a ceiling. Without one, a player mashing flap simply
     // leaves the top of the screen and keeps going: invisible, unreachable,
-    // and unbeatable, because nothing can get a lance above them. Found by the
-    // bot in the verification harness rather than by playing.
+    // and unbeatable, because nothing can get a lance above them.
     if (r.y < 0) {
       r.y = 0;
       if (r.vy < 0) r.vy = 30;
@@ -869,13 +855,12 @@ export class Joust implements Game {
       return;
     }
 
-    // Only reaches for a player who is flying low over open lava — and not
-    // one who has just fought their way out of the last grab. Five flaps
-    // earned that escape; being seized again on the next frame takes it back.
+    // Only reaches for a player flying low over open lava — and not one who
+    // has just fought their way out of the last grab.
     if (this.phase !== "play" || this.player.invuln > 0 || this.trollCd > 0) return;
     const feet = this.player.y + FOOT;
     if (feet < 176 || feet > LAVA_Y) return;
-    const overFloor = this.plats.some((p) => p.y === 210 && this.overX(this.player.x + HIT_DX, HIT_W, p));
+    const overFloor = this.plats.some((p) => p.y === 206 && this.overX(this.player.x + HIT_DX, HIT_W, p));
     if (overFloor) return;
     if (Math.random() > dt * 1.1) return;
     this.troll = { x: this.player.x + SPR_W / 2, y: LAVA_Y + 4, t: 0, grabbed: false, flaps: 0 };
@@ -924,8 +909,7 @@ export class Joust implements Game {
       const dx = wrapDelta(t.x + 12, p.x + SPR_W / 2);
       if (Math.abs(dx) < 16 && Math.abs(t.y + 7 - (p.y + 4)) < 12 && p.invuln <= 0) {
         // The beak, and only the beak, and only to a lance carried level and
-        // driven into it. Fleeing fast used to count as "closing" here, which
-        // made the pterodactyl killable by running away from it.
+        // driven into it.
         const level = Math.abs(p.y + 2 - (t.y + 6)) <= 4;
         const closing = Math.abs(p.vx) > 25 && Math.sign(p.vx) === -Math.sign(dx || 1);
         if (level && closing) {
@@ -1028,15 +1012,7 @@ export class Joust implements Game {
 
   /** Scores drift up from where they were earned. Cheap, and it reads instantly. */
   private floatText(x: number, y: number, value: number): void {
-    this.bits.push({
-      x,
-      y,
-      vx: 0,
-      vy: -26,
-      life: 0.9,
-      max: -value,
-      color: "#ffe89a",
-    });
+    this.bits.push({ x, y, vx: 0, vy: -26, life: 0.9, max: -value, color: "#ffe89a" });
   }
 
   private sfx(play: () => void): void {
@@ -1067,16 +1043,26 @@ export class Joust implements Game {
   draw(g: CanvasRenderingContext2D): void {
     const c = palette();
 
-    // Black, not a nebula. The starfield was a voidshell flourish and it was
-    // wrong twice over: the original's sky is empty, and a moving background
-    // behind hard sprites is exactly the sort of thing a 1982 board could not
-    // do. The theme still shows — on the platform edges, where it reads as
-    // rim light rather than as scenery.
+    // Black, not a nebula. The original's sky is empty, and a moving
+    // background behind hard sprites is exactly what a 1982 board could not
+    // do. The theme still shows on the platform edges, as rim light.
     g.fillStyle = "#000000";
     g.fillRect(0, 0, GAME_W, GAME_H);
 
     this.drawLava(g);
     for (const p of this.plats) this.drawPlatform(g, p, c.cyan, c.magenta);
+
+    // Spawn pads, brightest where the player will appear. Marking them is not
+    // decoration: knowing where the next buzzard is coming from is half of
+    // deciding where to be.
+    for (let i = 0; i < SPAWN_ON.length; i++) {
+      const p = this.plats[SPAWN_ON[i]];
+      const px = Math.round(p.x + p.w / 2 - 6);
+      blit(g, PAD, px, p.y - 3, {
+        S: withAlpha(i === 0 ? "#f2d24b" : c.cyan, 0.75),
+        s: withAlpha(i === 0 ? "#a8842a" : c.cyan, 0.3),
+      });
+    }
 
     for (const e of this.eggs) this.drawEgg(g, e);
     for (const e of this.enemies) this.drawRider(g, e, TIERS[e.tier]);
@@ -1119,8 +1105,8 @@ export class Joust implements Game {
     g.fillRect(0, LAVA_Y, GAME_W, h);
 
     // A jagged lip rather than a smooth wave. Two summed sines quantised to
-    // whole pixels gives a crust that churns without ever looking like a
-    // gradient — curves are the giveaway on a screen made of squares.
+    // whole pixels gives a crust that churns without looking like a gradient —
+    // curves are the giveaway on a screen made of squares.
     for (let x = 0; x < GAME_W; x += 2) {
       const crest = Math.sin(x * 0.11 + this.t * 2.2) + Math.sin(x * 0.05 - this.t * 1.3);
       const top = LAVA_Y - 1 + Math.round(crest * 1.6);
@@ -1137,10 +1123,9 @@ export class Joust implements Game {
     lit: string,
     edge: string
   ): void {
-    // Stone, not a slab. A flat rectangle reads as UI; the speckle and the
-    // lighter top course read as rock, which is what the original's platforms
-    // are. The dither is a deterministic hash of the pixel position so it
-    // never crawls between frames.
+    // Stone, not a slab. The speckle and the lighter top course read as rock;
+    // the dither is a deterministic hash of the pixel position so it never
+    // crawls between frames.
     g.fillStyle = "#6b5a3e";
     g.fillRect(p.x, p.y, p.w, p.h);
     g.fillStyle = "#8a7550";
@@ -1173,9 +1158,7 @@ export class Joust implements Game {
     }
     if (r.player && r.invuln > 0 && Math.floor(r.invuln * 12) % 2 === 0) return;
 
-    const ink = tier
-      ? { A: "#cfd6e8", a: "#7b8399", B: tier.color, b: tier.shade, L: "#e8ecff", Y: "#e0a33a", E: "#101425" }
-      : PLAYER_INK;
+    const ink = tier ? riderInk(tier.color, tier.shade, "#cfd6e8", "#7b8399", tier.shade) : PLAYER_INK;
     const flip = r.face < 0;
     const phase = 1 - Math.min(1, r.wing);
 
@@ -1190,13 +1173,14 @@ export class Joust implements Game {
       // Hatched: a rider on foot, which is the warning that it's about to
       // become a problem one tier bigger than the one you just solved.
       this.wrapDraw(e.x, 8, (px) =>
-        blit(g, WALKER, px, e.y - 1, { A: "#cfd6e8", a: "#7b8399" }, e.walk < 0)
+        blit(g, WALKER, px, e.y - 1,
+          { P: "#d1443c", H: "#cfd6e8", K: "#cfd6e8", k: "#7b8399", G: "#e0a33a" }, e.walk < 0)
       );
     } else {
       const wobble =
         e.state === "rest" && e.t > EGG_HATCH - 2 ? Math.sin(e.t * 26) * 1 : 0;
       this.wrapDraw(e.x, EGG_W, (px) =>
-        blit(g, EGG, px + wobble, e.y, { B: "#e8e2c8", b: "#a89f7c" })
+        blit(g, EGG, px + wobble, e.y, { B: "#e8e2c8", b: "#a89f7c", h: "#fffaf0" })
       );
     }
     if (e.buzz) {
@@ -1222,13 +1206,11 @@ export class Joust implements Game {
   private drawTroll(g: CanvasRenderingContext2D): void {
     const t = this.troll;
     if (!t) return;
-    g.fillStyle = "#c4552f";
-    g.fillRect(t.x - 5, t.y, 10, GAME_H - t.y);
-    g.fillStyle = "#e8794a";
-    for (let i = -2; i <= 2; i++) {
-      if (i === 0) continue;
-      g.fillRect(t.x + i * 3 - 1, t.y - 6 + Math.abs(i), 2, 8);
-    }
+    // The arm below the wrist, then the hand itself. Drawn as a sprite rather
+    // than as blocks so the fingers actually read as fingers.
+    g.fillStyle = "#8c2f14";
+    g.fillRect(t.x - 2, t.y + 10, 4, GAME_H - t.y);
+    blit(g, HAND, t.x - 6, t.y - 4, { F: "#ff8a2f", f: "#c4552f" });
     if (t.grabbed) {
       const left = TROLL_FLAPS - t.flaps;
       textCentered(g, `FLAP ${left}`, t.x, t.y - 22, "#ffd08a", 1);

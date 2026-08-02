@@ -1,21 +1,27 @@
 /**
- * The art. All of it original, drawn here as data rather than copied from
- * anywhere — a knight on a long-necked bird is a silhouette, not an asset, and
- * this is the void's version of it.
+ * The art.
+ *
+ * All original, authored here as data. To be explicit about why: Williams'
+ * actual sprite bitmaps are a copyrighted visual work and are not reproduced.
+ * What *is* reproduced is the subject and the read — a plumed knight with a
+ * couched lance on a long-necked bird — drawn from scratch on the same kind of
+ * grid the original had to work on. The first pass was too abstract: coloured
+ * blocks that parsed as "bird-ish" only because of context. These are drawn
+ * properly.
  *
  * Two techniques, chosen per part:
  *
- * - Anything that never changes shape (the body, the rider, an egg) is a
- *   string map, one character per pixel, run-length blitted. Cheap to author,
- *   cheap to read, and trivially recolourable — the three enemy tiers are the
- *   same map with a different ink table, which is exactly how the original
+ * - Anything with a fixed silhouette (rider, mount, egg, the troll's hand) is
+ *   a string map, one character per pixel, run-length blitted. Cheap to
+ *   author, cheap to read, and trivially recolourable — the three enemy tiers
+ *   are the same map with a different ink table, which is how the original
  *   distinguished them and why tier is readable at a glance.
- * - Anything that moves through a range (wings, the pterodactyl, the troll's
- *   hand) is drawn procedurally from the animation phase. Authoring eight flap
- *   frames by hand would be eight times the data and still less smooth.
+ * - Anything that moves through a range (wings, the pterodactyl) is drawn from
+ *   the animation phase. Eight hand-authored flap frames would be eight times
+ *   the data and still less smooth.
  *
- * The font is here for the same reason arcade machines had one: `fillText` at
- * a 3x integer scale renders anti-aliased glyphs over hard pixel art and the
+ * The font is here for the reason arcade machines had one: `fillText` at a 3x
+ * integer scale renders anti-aliased glyphs over hard pixel art, and that
  * mismatch is the single most obvious way a retro screen looks wrong.
  */
 
@@ -64,50 +70,61 @@ export function blit(
 /* ---------------- the rider ---------------- */
 
 /**
- * Knight and mount, facing right. `A`/`a` armour and its shade, `B`/`b` the
- * bird, `L` the lance, `Y` beak and legs, `E` the eye.
+ * Knight and mount, facing right, on a 20x16 grid.
  *
- * The lance tip sits on row 0 deliberately: combat compares the *top of the
- * sprite*, so the art and the rule agree by construction and there is no
+ * Legend: `L` lance, `P` helmet plume, `H` helmet, `K`/`k` armour and shade,
+ * `B`/`b` the bird and its underside, `N` neck, `E` eye, `Y` beak, `G` legs,
+ * `T` tail.
+ *
+ * Two details are load-bearing rather than decorative:
+ *
+ * The lance runs as an unbroken diagonal from the rider's fist at (6,4) to a
+ * tip at (18,0). It has to reach row 0, because combat compares the *top of
+ * the sprite* — so the art and the rule agree by construction and there is no
  * separate lance-height field to drift out of sync with the drawing.
+ *
+ * The neck is a distinct run climbing in single-pixel steps from the shoulder
+ * to a head that sits forward and high. That diagonal is the whole silhouette:
+ * without it this reads as a duck, and the one thing a player must recognise
+ * instantly is which way the bird is pointing.
  */
 export const RIDER: SpriteMap = [
-  "..........LL........",
-  ".........LL.........",
-  "...AAA..LL..........",
-  "..AAAAALL...........",
-  "..AaAAA......BEY....",
-  "...AAA.......BBY....",
-  "..AAAAA.....BBB.....",
-  ".BBBBBBBBBBBB.......",
-  "BBBBBBBBBBBB........",
-  "BbBBBBBBBBB.........",
-  ".bbBBBBBBb..........",
-  "..bb...bb...........",
-  "..Y.....Y...........",
-  "..Y.....Y...........",
-  ".YYY...YYY..........",
-  "....................",
+  "................LLL.",
+  "..P..........LLL....",
+  ".PP.......LLL.......",
+  "..HHH..LLL..........",
+  ".HHHHHL.............",
+  ".HkHHH.......NNE....",
+  "..KKK........NNYYY..",
+  "..KKKK......NN......",
+  ".BBBBBBBBBBBN.......",
+  "TBBBBBBBBBBB........",
+  "TTBBBBBBBBB.........",
+  ".TbbbBBBBb..........",
+  "...bb..bb...........",
+  "...G....G...........",
+  "...G....G...........",
+  "..GGG..GGG..........",
 ];
 
 /** A rider with no mount — hatched from an egg, or freshly unhorsed. */
 export const WALKER: SpriteMap = [
-  "..AAA...",
-  ".AAAAA..",
-  ".AaAAA..",
-  "..AAA...",
-  ".AAAAA..",
-  "AAAAAAA.",
-  ".AAAAA..",
-  "..A.A...",
-  "..A.A...",
-  ".AA.AA..",
+  "...PP...",
+  "..HHH...",
+  ".HHHHH..",
+  "..KKK...",
+  ".KKKKK..",
+  "KKKKKKK.",
+  ".KKKKK..",
+  "..K.K...",
+  "..K.K...",
+  ".GG.GG..",
 ];
 
 export const EGG: SpriteMap = [
   "..BBB..",
-  ".BBBBB.",
-  "BBBBBBB",
+  ".BhBBB.",
+  "BhBBBBB",
   "BBBBBBB",
   "BBBBBBB",
   "BBBBBBB",
@@ -115,6 +132,69 @@ export const EGG: SpriteMap = [
   ".bbbbb.",
   "..bbb..",
 ];
+
+/**
+ * The lava troll's hand, reaching up out of the pool.
+ *
+ * Four fingers and a thumb, drawn open rather than closed — a fist is a blob
+ * at this size, and splayed fingers are what make it read as *grabbing* from
+ * across the screen. `F` is lit flesh, `f` the shaded underside.
+ */
+export const HAND: SpriteMap = [
+  ".F.F.F.F.....",
+  ".F.F.F.F..F..",
+  ".FFFFFFF..F..",
+  ".FFFFFFFFFF..",
+  ".FFFFFFFFFF..",
+  "..FFFFFFFF...",
+  "..ffFFFFff...",
+  "...ffFFff....",
+  "....ffff.....",
+  "....fFFf.....",
+  "....fFFf.....",
+  "....fFFf.....",
+];
+
+/**
+ * The pad a rider materialises on.
+ *
+ * The original gives you somewhere to appear rather than dropping you out of
+ * the air, and it matters mechanically as much as visually: a spawn you can
+ * see coming is a spawn you can plan around.
+ */
+export const PAD: SpriteMap = [
+  ".SSSSSSSSSS.",
+  "SSSSSSSSSSSS",
+  "ssssssssssss",
+];
+
+/**
+ * Ink for a rider. Bird colour and armour colour are the two things that
+ * separate the player from a tier, so they are the two things this takes.
+ */
+export function riderInk(
+  bird: string,
+  birdShade: string,
+  armour: string,
+  armourShade: string,
+  plume: string,
+  beak = "#e0a33a"
+): Ink {
+  return {
+    L: "#e8ecff",
+    P: plume,
+    H: armour,
+    K: armour,
+    k: armourShade,
+    B: bird,
+    b: birdShade,
+    N: bird,
+    E: "#101425",
+    Y: beak,
+    G: beak,
+    T: birdShade,
+  };
+}
 
 /**
  * Wings, procedural, rooted at the shoulder.
@@ -135,7 +215,7 @@ export function wings(
 ): void {
   const back = flip ? 1 : -1;
   const rx = flip ? x + 20 - 7 : x + 7;
-  const ry = y + 8;
+  const ry = y + 9;
   const lift = -10 + 20 * phase;
 
   g.fillStyle = fill;
@@ -181,7 +261,7 @@ export function pterodactyl(
   g.fillRect(cx - 6, cy - 2, 12, 5);
   g.fillRect(cx + 5, cy - 5, 4, 5);
   // Beak — the only place a lance can reach it.
-  g.fillRect(cx + 8, cy - 3, 8 * d > 0 ? 8 : 8, 2);
+  g.fillRect(cx + 8, cy - 3, 8, 2);
   g.fillRect(cx + 2, cy - 8, 3, 4);
   g.fillStyle = wing;
   g.fillRect(cx + 6, cy - 4, 1, 1);

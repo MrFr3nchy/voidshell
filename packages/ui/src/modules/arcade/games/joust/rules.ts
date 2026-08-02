@@ -5,9 +5,7 @@
  * arguments, which is the point — the simulation in `index.ts` needs a canvas
  * and a frame loop and can only really be judged by playing it, but *these*
  * can be asserted headlessly, and they are the parts where being wrong is
- * silent. `flapApex` is the one that matters most: get gravity and the flap
- * impulse out of proportion and the game is still perfectly playable, just not
- * Joust, and nothing about it looks broken.
+ * silent.
  *
  * The lance rule is the whole game. Two riders collide and the higher lance
  * wins, full stop — not the faster one, not the one who struck first. Everything
@@ -30,9 +28,9 @@ export const LAVA_Y = 228;
  *
  * Fixed, and deliberately coarse. Running the physics at the display's refresh
  * rate produces motion that is smooth in a way nothing from 1982 was, and
- * smoothness is most of what made this feel wrong: a modern game with Joust's
- * rules rather than Joust. Ticking at 30Hz and drawing the result without
- * interpolating puts the chunk back — sprites step rather than glide.
+ * smoothness is most of what made the first version feel wrong: a modern game
+ * with Joust's rules rather than Joust. Ticking at 30Hz and drawing the result
+ * without interpolating puts the chunk back — sprites step rather than glide.
  *
  * Fixed-step also makes the whole game deterministic in the input sequence,
  * which is why the bot in the harness is worth anything.
@@ -73,13 +71,12 @@ export const TERMINAL_VY = 260;
 /**
  * Horizontal kick from a flap, in the direction being held.
  *
- * This is the change that matters most. Holding a direction in mid-air used to
- * accelerate you smoothly, which meant the stick flew the bird and the flap
- * only supplied height — two independent controls, and far too much authority.
- * In Joust the wings do both: you go where you flap. `ACC_AIR` is a sixth of
- * what it was, so drifting steers you a little and flapping is what actually
- * moves you. Measured: the stick alone reaches 36px/s in two seconds against
- * 126 with the wings, so the rhythm of the game is the flap.
+ * Holding a direction in mid-air used to accelerate you smoothly, which meant
+ * the stick flew the bird and the flap only supplied height — two independent
+ * controls, and far too much authority. In Joust the wings do both: you go
+ * where you flap. `ACC_AIR` is a sixth of what it was, so drifting steers you
+ * a little and flapping is what actually moves you. Measured: the stick alone
+ * reaches 36px/s in two seconds against 126 with the wings.
  */
 export const FLAP_DVX = 34;
 
@@ -94,22 +91,24 @@ export const MAX_VX_GROUND = 84;
  * Was 2.2 — a boost, which made a reversal snappy and deleted the single most
  * characteristic thing about flying in this game. Below 1 it is *harder* to
  * turn than to keep going, so committing to a direction is a real decision and
- * changing your mind costs you the width of the screen. That cost is the
- * skill ceiling; without it there is no reason to think before you flap.
+ * changing your mind costs you the width of the screen.
  */
 export const TURN_BOOST = 0.82;
 
-/**
- * Speed below which the bird is allowed to change which way it faces.
+/*
+ * A note on facing, because it was wrong and a Joust player spotted it.
  *
- * Facing follows momentum rather than the stick. Ask for a reversal at speed
- * and the sprite keeps facing the way it is travelling until the velocity
- * actually crosses zero — so a turn is a skid you fly out of, and the bird
- * visibly disagrees with you for most of a second. Flipping the sprite on the
- * keypress is the single biggest reason controls read as modern: it makes the
- * bird agree with your intent instead of with its own inertia.
+ * There was a `TURN_FACE_AT` here that held the sprite pointing the way it was
+ * *travelling* until the velocity crossed zero. That is not what the original
+ * does, and it confuses two separate things. The bird turns to face the stick
+ * immediately — it is the *momentum* that refuses to follow, not the sprite.
+ *
+ * Facing left while still sailing rightwards is the iconic Joust silhouette,
+ * and it only happens if the sprite flips at once. Delaying it makes the game
+ * feel unresponsive rather than heavy, which is a much worse failure: heavy is
+ * the goal, unresponsive is a bug. The resistance lives entirely in
+ * TURN_BOOST and TURN_FLAP_BRAKE, where it belongs.
  */
-export const TURN_FACE_AT = 26;
 
 /**
  * How much of a flap's horizontal kick survives when it opposes your motion.
@@ -117,8 +116,8 @@ export const TURN_FACE_AT = 26;
  * A wingbeat into your own momentum is a brake, not a thruster: it bleeds
  * speed rather than reversing it, so a full turn costs several beats instead
  * of one. Together with TURN_BOOST this is what stops the stick from being a
- * steering wheel — measured, a full reversal now takes 1.68s and gives up 33px
- * of ground, against 1.02s and 8px before.
+ * steering wheel — measured, a full reversal takes 1.68s and gives up 33px of
+ * ground, against 1.02s and 8px before.
  */
 export const TURN_FLAP_BRAKE = 0.45;
 
@@ -189,9 +188,7 @@ export function resolveJoust(aY: number, bY: number): Joust {
  * This is the *continuous* answer and the simulation no longer matches it: at
  * 30Hz with quantised velocity the real apex comes out around 11% lower (16.9
  * analytic against 15.0 actual). Keep it as the design ratio and the thing to
- * assert on — it is stable, it is checkable, and it is what you reach for when
- * deciding whether gravity and the flap are still in proportion — but do not
- * read it as a measurement of the shipped game.
+ * assert on, but do not read it as a measurement of the shipped game.
  */
 export function flapApex(dv: number = FLAP_DV, g: number = GRAVITY): number {
   return (dv * dv) / (2 * g);
@@ -209,8 +206,7 @@ export interface Tier {
   vigour: number;
   /**
    * How long this tier goes between looking at the player, in seconds. It
-   * steers at a *snapshot* taken this often, not at where you actually are,
-   * so a long interval means chasing a ghost of you from a moment ago.
+   * steers at a *snapshot* taken this often, not at where you actually are.
    */
   think: number;
   /** Random offset added to the snapshot, in pixels. */
@@ -240,31 +236,25 @@ export const TIERS: Tier[] = [
 /*
  * A note on where the stupidity is supposed to live.
  *
- * Two opposite mistakes have now been made here, and the second was mine
- * over-correcting the first. Version one had every tier tracking the player's
- * live position and climbing to attack — three competent duellists at three
- * speeds. Version two scattered their aim by up to 90px, let them commit
- * blindly for a second at a time, and cut their drive, which made them *bad at
- * arriving*. Measured: the flock averaged half the player's top speed and sat
- * 76px away, and a Joust player immediately called it out.
+ * Two opposite mistakes have been made here. Version one had every tier
+ * tracking the player's live position and climbing to attack — three competent
+ * duellists at three speeds. Version two scattered their aim by up to 90px and
+ * cut their drive, which made them *bad at arriving*: the flock averaged half
+ * the player's top speed and sat 76px away.
  *
- * That is not what the original's simplicity looks like. A 1982 buzzard
- * converges on you perfectly well; what it does badly is *choose* — it takes
- * fights from below, it wanders when it loses you, and it flies into the lava.
- * So pursuit is now direct at every tier, and the incompetence lives where it
- * belongs: in `care`, in the odds of climbing before engaging, and in a
- * snapshot that is stale rather than wildly wrong.
+ * A 1982 buzzard converges on you perfectly well; what it does badly is
+ * *choose* — it takes fights from below, it wanders when it loses you, and it
+ * flies into the lava. So pursuit is direct at every tier, and the
+ * incompetence lives in `care`, in the odds of climbing before engaging, and
+ * in a snapshot that is stale rather than wildly wrong.
  */
 
 /**
  * Seconds between wingbeats at vigour 1.0, divided by vigour.
  *
- * Gives roughly 3.4 beats/sec for a bounder up to 5.4 for a shadow lord, all
- * under the 7.1/sec ceiling the flap cooldown imposes. Enemies beat on a
- * cadence rather than a per-tick probability: it is what a bird does, and it
- * makes the flock's chase speed a number you set instead of one you measure
- * and then argue with. The dice version claimed 3.9 beats/sec by arithmetic
- * and delivered 1.8, which is not a gap worth an afternoon.
+ * Enemies beat on a cadence rather than a per-tick probability: it is what a
+ * bird does, and it makes the flock's chase speed a number you set instead of
+ * one you measure and then argue with.
  */
 export const BEAT_PERIOD = 0.22;
 
@@ -273,19 +263,10 @@ export const BEAT_PERIOD = 0.22;
  *
  * The playfield is a cylinder, so a target "behind you" is also ahead of you
  * the long way round — and when you are already moving, the long way is often
- * quicker than paying for a reversal. Enemies above this speed commit and come
- * around the seam.
- *
- * This is the rule that makes the flock read as Joust rather than as pursuit
- * AI: they streak across, overshoot, and reappear on the far side still coming.
- * It also fixed a real thrashing bug — traced tick by tick, an enemy would
- * close to 15px, take a fresh snapshot that landed on the other side of
- * itself, reverse into its own momentum, and sail away again forever. Seam
- * crossings went from 17 to 41 per minute and the flock's mean speed from 56
- * to 97px/s.
- *
- * Set near half the air speed cap: fast enough that a cruising buzzard loops,
- * slow enough that one which has genuinely stopped still turns to face you.
+ * quicker than paying for a reversal. This is the rule that makes the flock
+ * read as Joust: they streak across, overshoot, and reappear on the far side
+ * still coming. Seam crossings went from 17 to 41 per minute and the flock's
+ * mean speed from 56 to 97px/s.
  */
 export const WRAP_RATHER_THAN_TURN = 62;
 
@@ -339,11 +320,11 @@ export function spawnTier(wave: number, i: number): number {
  * flight model a mediocre bot cleared a wave in a median 23s; under this one
  * the same policy takes around 30s. The threshold has to track that, or a
  * change to how the bird flies quietly turns a rare pressure mechanic into a
- * permanent third enemy. Re-measure it if the flight model moves again.
+ * permanent third enemy.
  */
 export const PTERO_AFTER = 52;
 
-/* ---------------- the base, and what eats it ---------------- */
+/* ---------------- the arena ---------------- */
 
 export interface Platform {
   x: number;
@@ -355,28 +336,63 @@ export interface Platform {
 /**
  * The arena for a given wave.
  *
- * From wave 7 the base burns back from both ends of each segment, so the lava
- * gaps widen and the floor stops being a place to rest. It never disappears
+ * Six platforms, not nine. The first version invented a symmetrical nine-piece
+ * layout that had no island and no overhang, and a Joust player spotted the
+ * count immediately. This is the original's shape: a floor broken by two lava
+ * pools, a large island in the middle, a shelf on the left, and a pair on the
+ * right where the upper one stands slightly proud of the lower.
+ *
+ * From wave 7 the floor burns back from both ends of each run, so the pools
+ * widen and the ground stops being a place to rest. It never disappears
  * entirely — a floorless wave isn't hard, it's over.
  */
 export function arena(wave: number): Platform[] {
   const erode = Math.max(0, wave - 6) * 2;
   const base = (x: number, w: number): Platform => {
     const bite = Math.min(erode, Math.max(0, (w - 24) / 2));
-    return { x: x + bite, y: 210, w: w - bite * 2, h: 8 };
+    return { x: x + bite, y: 206, w: w - bite * 2, h: 9 };
   };
   return [
-    base(0, 96),
-    base(128, 64),
-    base(224, 96),
-    { x: 24, y: 168, w: 72, h: 7 },
-    { x: 224, y: 168, w: 72, h: 7 },
-    { x: 120, y: 132, w: 80, h: 7 },
-    { x: 0, y: 96, w: 56, h: 7 },
-    { x: 264, y: 96, w: 56, h: 7 },
-    { x: 132, y: 62, w: 56, h: 7 },
+    // The floor, in two runs. The gaps leave one pool in the middle and one
+    // straddling the wrap seam — two pools, which is what the troll reaches
+    // out of. Laying the runs flush to 0 and 320 instead joins the outer gaps
+    // through the seam into a single pool, which the first version did by
+    // accident and nobody noticed until the pools were counted.
+    base(20, 120),
+    base(180, 120),
+    // The island. The centrepiece of the original screen and the thing this
+    // layout was most obviously missing — it is what makes the middle of the
+    // arena somewhere to fight over rather than empty air.
+    { x: 116, y: 148, w: 88, h: 8 },
+    // Left shelf.
+    { x: 0, y: 118, w: 62, h: 7 },
+    // The right-hand pair: a lower shelf with a second above and slightly
+    // proud of it, so crossing the lower one walks you into the upper.
+    { x: 246, y: 132, w: 74, h: 7 },
+    { x: 232, y: 92, w: 60, h: 7 },
   ];
 }
+
+/**
+ * Where riders materialise, in spawn order.
+ *
+ * The player takes the first, so they always appear before anything else and
+ * always in the same place; the flock fills the rest. Indexes into `arena()`
+ * rather than into free space, because a rider has to land on something the
+ * instant it becomes solid.
+ */
+export const SPAWN_ON = [2, 3, 4, 5, 0, 1];
+
+/**
+ * Seconds after the player materialises before the first enemy does.
+ *
+ * The player has to be on screen and solid first. Previously everything came
+ * in together with the flock leading by a fraction, so a wave opened with the
+ * board already busy — the original gives you the beat to see where you are.
+ */
+export const SPAWN_LEAD = 1.4;
+/** Seconds between successive enemies arriving. They trickle in, not swarm. */
+export const SPAWN_GAP = 0.75;
 
 /* ---------------- eggs ---------------- */
 
