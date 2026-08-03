@@ -1,0 +1,90 @@
+/* ---------- Formed panels ----------
+   Windows with a silhouette instead of a rectangle. See
+   compositor/surfaceForms.ts. Everything here is scoped to .vs-formed, so a
+   panel without a form is untouched and deleting this file restores the plain
+   glass panel exactly. */
+
+.vs-panel.vs-formed {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: visible;
+}
+
+/* The glass panel's own surface treatment has to go, or it paints a rectangle
+   of frost inside the silhouette and the object looks like it is sitting in a
+   box. The clip-path is applied inline by panelChrome. */
+.vs-panel.vs-formed .vs-panel-content {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  position: absolute;
+  inset: 0;
+}
+
+/* The bar survives as the drag handle — the compositor binds to it — but it is
+   transparent and pulled over the top of the object rather than sitting above
+   it in the layout. Removing it would have silently broken dragging. */
+.vs-panel.vs-formed .vs-panel-bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  height: 16%;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.vs-panel.vs-formed .vs-panel-title,
+.vs-panel.vs-formed .vs-panel-link {
+  display: none;
+}
+
+/* Controls stay out of the way until wanted. An ambient object with a row of
+   buttons welded to it is just a window again. */
+.vs-panel.vs-formed .vs-panel-tools {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  gap: 2px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(6, 8, 16, 0.82);
+  border: 1px solid var(--edge);
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+.vs-panel.vs-formed:hover .vs-panel-tools,
+.vs-panel.vs-formed:focus-within .vs-panel-tools {
+  opacity: 1;
+}
+
+/* The object's own furniture: base, cap, glass. Over the content, because
+   those parts are not screen. Never interactive — the bar above it is. */
+.vs-panel-form {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.vs-panel-form svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The menu is anchored to a corner that no longer exists, so bring it inside. */
+.vs-panel.vs-formed .vs-menu {
+  z-index: 4;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vs-panel.vs-formed .vs-panel-tools {
+    transition: none;
+  }
+}
