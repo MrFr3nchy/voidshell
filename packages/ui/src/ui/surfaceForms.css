@@ -1,8 +1,8 @@
 /* ---------- Formed panels ----------
    Windows with a silhouette instead of a rectangle. See
-   compositor/surfaceForms.ts. Everything here is scoped to .vs-formed, so a
-   panel without a form is untouched and deleting this file restores the plain
-   glass panel exactly. */
+   compositor/surfaceForms.ts. Everything is scoped to .vs-formed, so a panel
+   without a shape is untouched and switching one back to "glass panel" leaves
+   no trace. */
 
 .vs-panel.vs-formed {
   border: none;
@@ -13,8 +13,8 @@
 }
 
 /* The glass panel's own surface treatment has to go, or it paints a rectangle
-   of frost inside the silhouette and the object looks like it is sitting in a
-   box. The clip-path is applied inline by panelChrome. */
+   of frost inside the silhouette and the object looks like it is in a box.
+   The clip-path itself is set inline by applyForm(). */
 .vs-panel.vs-formed .vs-panel-content {
   border: none;
   border-radius: 0;
@@ -24,9 +24,9 @@
   inset: 0;
 }
 
-/* The bar survives as the drag handle — the compositor binds to it — but it is
-   transparent and pulled over the top of the object rather than sitting above
-   it in the layout. Removing it would have silently broken dragging. */
+/* The bar survives as the drag handle — the compositor binds dragging to it —
+   but it is transparent and pulled over the top of the object rather than
+   sitting above it in the layout. Removing it would silently break dragging. */
 .vs-panel.vs-formed .vs-panel-bar {
   position: absolute;
   inset: 0 0 auto 0;
@@ -38,6 +38,13 @@
 }
 .vs-panel.vs-formed .vs-panel-title,
 .vs-panel.vs-formed .vs-panel-link {
+  display: none;
+}
+
+/* No free resize: a lamp dragged to 3:1 is not a lamp, and the aspect is fixed
+   by the shape. Hidden rather than removed, because the compositor holds
+   references to these grips and wires pointer handlers to them. */
+.vs-panel.vs-formed .vs-panel-grip {
   display: none;
 }
 
@@ -61,8 +68,9 @@
   opacity: 1;
 }
 
-/* The object's own furniture: base, cap, glass. Over the content, because
-   those parts are not screen. Never interactive — the bar above it is. */
+/* The object's own furniture: base, cap, glass, bezel. Painted over the
+   content, because those parts are not screen. Never interactive — the
+   transparent bar above it is what you grab. */
 .vs-panel-form {
   position: absolute;
   inset: 0;
@@ -75,12 +83,47 @@
   height: 100%;
 }
 
-/* The menu is anchored to a corner that no longer exists, so bring it inside. */
-.vs-panel.vs-formed .vs-menu {
-  z-index: 4;
-  right: auto;
-  left: 50%;
-  transform: translateX(-50%);
+/* ---------- the shape picker in Settings ---------- */
+
+.form-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.form-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+.form-picker-name {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.form-picker-pick {
+  flex: none;
+  appearance: none;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 3px 9px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.form-picker-pick:hover,
+.form-picker-pick:focus {
+  color: var(--text);
+  border-color: var(--cyan);
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
