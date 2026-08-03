@@ -1,7 +1,18 @@
 import type { Surface } from "../kernel/types";
-import { formFor } from "./surfaceForms";
 
 export const GROUP_COLORS = ["#4fe3d0", "#c05cff", "#ff8a5c", "#7ea8ff", "#5fd6a8"];
+
+/**
+ * NOTE: `createPanelChrome` is currently unused.
+ *
+ * `ThreeCompositor.mountSurface` builds its own panel markup inline — similar
+ * to this, but not identical: it has three resize grips instead of one and no
+ * overflow menu. Window shapes were briefly implemented here and did nothing
+ * at all as a result, which is the sort of thing worth a warning label.
+ *
+ * Either delete this file or make the compositor call it. Two functions that
+ * both look like they build the panel, only one of which does, is a trap.
+ */
 
 /** Every part of a mounted panel the compositor needs to wire behaviour to. */
 export interface PanelChrome {
@@ -21,25 +32,12 @@ export interface PanelChrome {
  * Build the glass shell around a module's DOM. Purely structural — no state,
  * no listeners beyond what the markup needs — so the compositor stays about
  * space and this stays about widgets.
- *
- * A module with a registered *form* (see `surfaceForms.ts`) gets a silhouette
- * instead of a rectangle. Everything the compositor wires up survives that:
- * the bar still exists and is still the drag handle, it is simply transparent
- * and sitting over the top of the object. Removing it would have been the
- * obvious move and would have quietly broken dragging, since the compositor
- * binds to `.vs-panel-bar` and knows nothing about any of this.
  */
 export function createPanelChrome(surface: Surface): PanelChrome {
-  const form = formFor(surface.moduleId);
-
   const panel = document.createElement("div");
   panel.className = "vs-panel materializing";
   panel.style.width = `${surface.width}px`;
-  // A silhouette only reads at the proportions it was drawn for, so the form's
-  // aspect wins over whatever height the module asked for.
-  panel.style.height = form
-    ? `${Math.round(surface.width / form.aspect)}px`
-    : `${surface.height}px`;
+  panel.style.height = `${surface.height}px`;
   panel.dataset.surface = surface.id;
 
   const bar = document.createElement("div");
@@ -77,27 +75,6 @@ export function createPanelChrome(surface: Surface): PanelChrome {
   menu.className = "vs-menu";
 
   panel.append(bar, body, grip, menu);
-
-  if (form) {
-    panel.classList.add("vs-formed");
-    // clip-path clips hit-testing as well as painting, so the corners around
-    // the silhouette stop swallowing clicks meant for the void behind it.
-    panel.style.clipPath = form.silhouette;
-    if (form.vessel) panel.style.background = form.vessel;
-
-    // Nothing sensible happens when you drag a fixed silhouette to 3:1, so the
-    // handle goes rather than being left to produce a broken shape.
-    grip.remove();
-
-    const art = document.createElement("div");
-    art.className = "vs-panel-form";
-    art.innerHTML =
-      `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${form.furniture}</svg>`;
-    // After the content so it paints over it: the base and cap of the object
-    // are not screen, and the content must not show through them.
-    body.after(art);
-  }
-
   return { panel, bar, tools, link, grip, menu, more, pin, min, close };
 }
 

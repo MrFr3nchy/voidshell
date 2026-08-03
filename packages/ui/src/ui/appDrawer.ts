@@ -1,6 +1,7 @@
 import type { KernelContext, ModuleManifest } from "../kernel/types";
 import { COUNT_KEY, MAX_SLOTS, SLOTS_KEY, escapeHtml, resolveSlots } from "./spawner";
 import { GROUP_KEY, defineShelfSettings, groupModules } from "./appShelves";
+import { initWindowForms } from "../compositor/surfaceForms";
 
 interface DrawerDeps {
   /** Opening the ring mid-drag is what makes "drop onto a node" possible. */
@@ -31,6 +32,12 @@ export function createAppDrawer(
   // Published here rather than from a module: shelves belong to the drawer,
   // and a module owning them would have to know about every other module.
   defineShelfSettings(ctx);
+
+  // Window shapes are the same kind of cross-cutting presentation concern, and
+  // this is the first place after boot that has both a context and a live
+  // panel layer to observe. Its disposer is dropped deliberately: the observer
+  // watches #panel-layer, which the shell removes wholesale on signout.
+  initWindowForms(ctx);
 
   const root = document.createElement("div");
   root.className = "drawer";
