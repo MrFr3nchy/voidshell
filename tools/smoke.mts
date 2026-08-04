@@ -72,7 +72,7 @@ const { sunclock } = await import("../packages/ui/src/modules/sunclock");
 const { bell } = await import("../packages/ui/src/modules/bell");
 const { arcade } = await import("../packages/ui/src/modules/arcade");
 const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
-const joustRules = await import("../packages/ui/src/modules/arcade/games/joust/rules");
+const { arcadeChecks } = await import("./arcade-checks.mts");
 const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
@@ -803,50 +803,16 @@ check("launching with a game skips the shelf", cab?.classList.contains("stage-ho
 check("the cabinet asks for the keyboard", Boolean(cab?.querySelector(".arcade-veil")));
 
 /**
- * Joust's rules, asserted directly.
+ * The cabinets' own rules, asserted directly.
  *
  * A game is judged by playing it, but the constants underneath it are not:
- * getting the flap-to-gravity ratio wrong leaves something perfectly playable
- * that simply isn't Joust, and nothing about it looks broken. These are the
- * parts where being wrong is silent, so they are checked here rather than
- * trusted.
+ * getting a flap-to-gravity ratio or a ghost's speed table wrong leaves
+ * something perfectly playable that simply isn't the game it claims to be, and
+ * nothing about it looks broken. Those checks live in `arcade-checks.mts` —
+ * there are enough of them now, across four cabinets, that keeping them here
+ * made this file mostly about the arcade.
  */
-check(
-  "one flap lifts about a body height",
-  joustRules.flapApex() > 12 && joustRules.flapApex() < 17
-);
-check(
-  "the higher lance wins and level lances draw",
-  joustRules.resolveJoust(100, 120) === "a" &&
-    joustRules.resolveJoust(120, 100) === "b" &&
-    joustRules.resolveJoust(100, 102) === "draw"
-);
-check(
-  "the egg chain climbs and then caps",
-  [0, 1, 2, 3, 9].map(joustRules.eggChain).join(",") === "250,500,750,1000,1000"
-);
-check(
-  "the playfield is a cylinder",
-  joustRules.wrapDelta(10, 310) === -20 &&
-    joustRules.wrapDelta(310, 10) === 20 &&
-    joustRules.wrapX(-5) === joustRules.GAME_W - 5
-);
-check(
-  "egg waves field no enemies",
-  joustRules.waveKind(5) === "egg" && joustRules.waveEnemies(5) === 0
-);
-check(
-  "the enemy count grows and caps",
-  joustRules.waveEnemies(1) === 3 && joustRules.waveEnemies(29) === 8
-);
-check(
-  "the base erodes but never vanishes",
-  joustRules.arena(40)[0].w >= 24 && joustRules.arena(40)[0].w < joustRules.arena(1)[0].w
-);
-check(
-  "every arena platform stays above the lava",
-  [1, 7, 20, 40].every((w) => joustRules.arena(w).every((p) => p.y < joustRules.LAVA_Y))
-);
+await arcadeChecks(check, CABINETS);
 
 /* ---------------- editor: buffer, gutter and run pane ---------------- */
 
