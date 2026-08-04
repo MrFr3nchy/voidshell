@@ -75,7 +75,8 @@ work right up until the cookie didn't.
 ## What you need
 
 - A droplet — Ubuntu 24.04 LTS. 1 GB is enough **because builds happen in CI or
-  on your machine**, not on the box.
+  on your machine**, not on the box. The one exception is the console-side
+  script below, which builds on the droplet and therefore insists on swap.
 - A domain with an `A` record pointing at it.
 - An SSH key on the droplet, and passwordless `sudo` for the deploy user (or
   connect as root).
@@ -142,6 +143,66 @@ Three repository secrets:
 Host keys are pinned rather than using `StrictHostKeyChecking=no`, because a
 deploy that accepts any host key is a deploy that hands its SSH key to whatever
 answers the DNS record.
+
+**This is the way to deploy without your own machine.** The workflow has
+`workflow_dispatch` on it, so Actions → Deploy → *Run workflow*, from a phone
+or any browser, does a full build-and-ship on a runner. Nothing below is needed
+unless Actions itself is unavailable.
+
+### From the droplet itself
+
+For when neither your machine nor Actions is reachable — the DigitalOcean web
+console, a borrowed laptop, a branch you'd rather not push:
+
+```bash
+/opt/voidshell/src/deploy/droplet-deploy.sh              # main
+/opt/voidshell/src/deploy/droplet-deploy.sh feat/thing   # any branch
+```
+
+It fetches, hard-resets to `origin/<branch>`, builds, ships both halves,
+restarts, and polls health — the same sequence as everything else here, just
+without a second machine involved.
+
+The trade is memory. Rollup holding a Three.js module graph peaks well past
+what a 1 GB droplet has free while the API is also resident, and the kernel
+resolves that shortfall by killing the largest process — which is the API. So
+the script **refuses to start** below roughly 2.4 GB of RAM plus swap. Pass
+`--make-swap` once to add a 2 GB swapfile and it will stop complaining:
+
+```bash
+/opt/voidshell/src/deploy/droplet-deploy.sh --make-swap
+```
+
+The previous API build is copied to `/opt/voidshell/api.prev` before anything
+is overwritten, and a failed health check prints the one-line command to put it
+back. `--skip-checks` drops the typecheck if you need the minutes.
+
+#### First-time setup on the box
+
+The script lives in the checkout it deploys, so it updates itself on every run.
+Getting the first checkout there is the only manual part. On the droplet, once:
+
+```bash
+ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519
+cat /root/.ssh/id_ed25519.pub
+```
+
+Add that key at **Settings → Deploy keys** on the repo — read-only is enough,
+and a read-only deploy key is the whole point: a droplet that can be pushed
+from is a droplet that can rewrite history if it's ever compromised. Then:
+
+```bash
+git clone git@github.com:MrFr3nchy/voidshell.git /opt/voidshell/src
+/opt/voidshell/src/deploy/droplet-deploy.sh
+```
+
+Note what this puts on the box: a checkout, and full devDependencies under
+`/opt/voidshell/src/node_modules`. The API does not read any of it — it runs
+from `/opt/voidshell/api`, which still gets only production dependencies — but
+it is a few hundred megabytes of code sitting on a production machine, which is
+a real if modest increase in what an intruder finds there. That is the actual
+cost of being able to deploy from a phone, and it is why this is the third
+option rather than the first.
 
 ---
 
