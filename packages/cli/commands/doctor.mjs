@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { run, have, sshScript } from "../lib/sh.mjs";
+import { run, have, sshScript, sshHint } from "../lib/sh.mjs";
 import { REPO, load } from "../lib/config.mjs";
 import { say, ok, warn, fail, dim, bold, step, green, red, yellow, table } from "../lib/ui.mjs";
 
@@ -67,8 +67,12 @@ echo "disk=$(df --output=pcent / | tail -1 | tr -d ' %')"`,
       { capture: true }
     );
 
+    // The table wants a short reason; the fix is a whole sentence and gets
+    // printed under it rather than wrapped inside a column.
+    let sshAdvice = null;
     if (probe.code !== 0) {
       record("ssh", "bad", probe.stderr.trim().split("\n")[0] || "could not connect");
+      sshAdvice = sshHint(probe.stderr);
     } else {
       const f = Object.fromEntries(
         probe.stdout.split("\n").filter((l) => l.includes("=")).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1).trim()])
@@ -89,6 +93,10 @@ echo "disk=$(df --output=pcent / | tail -1 | tr -d ' %')"`,
 
     say();
     table(rows);
+    if (sshAdvice) {
+      say();
+      say(dim(sshAdvice));
+    }
   }
 
   say();

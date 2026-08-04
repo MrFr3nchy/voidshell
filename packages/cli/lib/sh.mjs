@@ -36,8 +36,57 @@ export async function must(cmd, args, opts = {}) {
 /**
  * `BatchMode=yes` so a host that wants a password fails fast with a readable
  * error instead of hanging on an invisible prompt inside a captured pipe.
+ *
+ * The cost of that is real and worth stating: BatchMode also suppresses the
+ * passphrase prompt for an encrypted key. A key that is not loaded into an
+ * agent therefore fails here as `Permission denied (publickey)`, which is the
+ * same string ssh prints for a key the server has never seen. `sshPreflight`
+ * exists to tell those two apart before a deploy has done any work.
  */
 const SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
+
+/**
+ * The exit status ssh uses for its own failures — DNS, TCP, host keys, auth —
+ * as opposed to relaying the remote command's status. 255 means no remote
+ * shell ever ran, so nothing that happened on the droplet can be blamed.
+ */
+export const SSH_TRANSPORT_FAILURE = 255;
+
+/**
+ * Turns ssh's terser refusals into the sentence that fixes them.
+ *
+ * Returns null for anything unrecognised, so the caller falls back to printing
+ * ssh's own stderr rather than a confidently wrong guess.
+ */
+export function sshHint(stderr) {
+  if (/Permission denied \(publickey/i.test(stderr)) {
+    return "ssh could not authenticate without prompting. If your key has a passphrase, load it once with `ssh-add` — deploy captures output on some steps, and a prompt there cannot be answered.";
+  }
+  if (/Host key verification failed/i.test(stderr)) {
+    return "the droplet's host key is not in ~/.ssh/known_hosts — connect once by hand to accept it.";
+  }
+  if (/Could not resolve hostname/i.test(stderr)) {
+    return "that hostname does not resolve — check the address.";
+  }
+  if (/Connection timed out|No route to host|Connection refused/i.test(stderr)) {
+    return "the droplet did not answer — check that it is running and reachable on port 22.";
+  }
+  return null;
+}
+
+/**
+ * Confirms ssh can authenticate unattended, before anything expensive happens.
+ *
+ * Without this the first failure surfaces at the restart step, after a full
+ * build and two rsyncs, wearing the label "the API did not come back healthy"
+ * — which sends you to the droplet's logs to debug a laptop's ssh-agent.
+ */
+export async function sshPreflight(target) {
+  const result = await run("ssh", [...SSH_OPTS, target, "true"], { capture: true });
+  if (result.code === 0) return { ok: true };
+  const stderr = result.stderr.trim();
+  return { ok: false, stderr, hint: sshHint(stderr) };
+}
 
 export const ssh = (target, script, opts = {}) =>
   run("ssh", [...SSH_OPTS, target, "bash -s"], { ...opts, input: script, capture: opts.capture });

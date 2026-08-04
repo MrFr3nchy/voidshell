@@ -16,6 +16,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const exec = promisify(execFile);
 
@@ -218,6 +219,69 @@ const script = (await cli(["setup", "root@203.0.113.10", "--domain", "voidshell.
 
   const bogus = await cli(["setup", "root@203.0.113.10", "--domain", "x.test", "--proxy", "lighttpd", "--dry-run"]);
   check("an unsupported proxy is rejected", bogus.code !== 0);
+}
+
+/* ---------------- deploy checks the connection first ---------------- */
+
+{
+  // `.invalid` is reserved and never resolves, so this fails immediately
+  // rather than sitting out ConnectTimeout.
+  //
+  // What is actually being asserted is the ordering. A deploy that only
+  // discovers an unusable key at the restart step has already spent minutes on
+  // rollup, and reports the failure as "the API did not come back healthy" —
+  // sending you to journalctl on a droplet that is perfectly fine.
+  const started = Date.now();
+  const dead = await cli(["deploy", "root@voidshell-nowhere.invalid"]);
+  const elapsed = Date.now() - started;
+
+  check("deploy refuses a target it cannot reach", dead.code !== 0);
+  check("it gives up before building anything", !dead.stdout.includes("Building the client"));
+  check("it gives up quickly", elapsed < 60_000);
+  check("it blames the connection, not the API", dead.stderr.includes("cannot reach") && !dead.stderr.includes("healthy"));
+}
+
+/* ---------------- ssh's refusals are translated ---------------- */
+
+{
+  const { sshHint, SSH_TRANSPORT_FAILURE } = await import(
+    pathToFileURL(join(REPO, "packages/cli/lib/sh.mjs")).href
+  );
+
+  check("ssh's own failures are recognised by code", SSH_TRANSPORT_FAILURE === 255);
+  // The string ssh prints for a passphrase-locked key under BatchMode is the
+  // same one it prints for a key the server has never seen. The hint has to
+  // name the likelier cause or the message is useless.
+  check(
+    "a locked key is explained as an agent problem",
+    (sshHint("root@203.0.113.10: Permission denied (publickey).") ?? "").includes("ssh-add")
+  );
+  check("an untrusted host key is explained", (sshHint("Host key verification failed.") ?? "").includes("known_hosts"));
+  check(
+    "a name that does not resolve is explained",
+    (sshHint("ssh: Could not resolve hostname nope: Name or service not known") ?? "").includes("resolve")
+  );
+  check("unfamiliar stderr produces no guess", sshHint("something new and strange") === null);
+}
+
+/* ---------------- the droplet-side script ---------------- */
+
+{
+  const path = join(REPO, "deploy/droplet-deploy.sh");
+  const parsed = await exec("bash", ["-n", path]).then(
+    () => true,
+    () => false
+  );
+  check("droplet-deploy.sh is valid bash", parsed);
+
+  const src = await readFile(path, "utf8");
+  // The same lesson as the CLI's SHIPPED_MODES: a 0700 `mktemp -d` shipped
+  // as-is once and left systemd failing status=200/CHDIR before Node ran.
+  check("it states the shipped modes rather than inheriting 0700", src.includes("--chmod=D755,F644"));
+  check("it refuses to build without the memory to do it", src.includes("MIN_TOTAL_MB"));
+  check("it leaves a rollback copy behind", src.includes(".prev"));
+  check("it polls health rather than trusting systemctl", src.includes("/api/health"));
+  check("it resets rather than merging", src.includes("git reset -q --hard"));
 }
 
 await rm(sandbox, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import { mkdtemp, rm, cp, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { run, must, sshScript, rsync, q } from "../lib/sh.mjs";
+import { run, must, sshScript, rsync, sshPreflight, SSH_TRANSPORT_FAILURE } from "../lib/sh.mjs";
 import { REPO, resolveTarget, load } from "../lib/config.mjs";
 import { step, ok, info, say, fail, dim, bold, warn } from "../lib/ui.mjs";
 
@@ -42,6 +42,16 @@ export async function deploy(args, flags) {
 
   say();
   step(`Deploying to ${bold(target)}`);
+
+  // Before the build, not after it. Every later ssh runs with its output
+  // captured, where an unanswerable passphrase prompt turns into a bare
+  // "Permission denied (publickey)" attached to whatever step happened to be
+  // running — usually the health check, which then blames the API.
+  const reachable = await sshPreflight(target);
+  if (!reachable.ok) {
+    say();
+    fail(`cannot reach ${target} unattended`, reachable.hint ?? reachable.stderr.split("\n")[0]);
+  }
 
   if (!flags["skip-build"]) {
     if (doUi) {
@@ -126,6 +136,17 @@ journalctl -u voidshell-api -n 40 --no-pager >&2
 exit 1`,
     { capture: true }
   );
+
+  // 255 is ssh's own failure, not the remote script's. The droplet may be
+  // perfectly healthy and simply unreachable, and saying otherwise sends you
+  // to journalctl to debug a network.
+  if (result.code === SSH_TRANSPORT_FAILURE) {
+    say();
+    fail(
+      "lost the connection to the droplet while restarting",
+      reachable.hint ?? result.stderr.trim().split("\n")[0] ?? "ssh exited 255"
+    );
+  }
 
   if (result.code !== 0) {
     say();
