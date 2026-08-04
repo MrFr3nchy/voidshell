@@ -68,9 +68,9 @@ for arg in "$@"; do
   esac
 done
 
-log()  { printf '\033[36m\u2192\033[0m %s\n' "$*"; }
-ok()   { printf '\033[32m\u2713\033[0m %s\n' "$*"; }
-die()  { printf '\033[31m\u2717\033[0m %s\n' "$*" >&2; exit 1; }
+log()  { printf '\033[36m→\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "run this as root — it writes to ${API_DIR}, ${WWW_DIR}, and restarts a unit"
 
