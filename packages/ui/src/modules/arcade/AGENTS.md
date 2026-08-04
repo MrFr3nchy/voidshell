@@ -21,6 +21,11 @@ export interface GameDef {
 }
 ```
 
+The one thing you may share with other cabinets is `games/shared/pixel.ts`:
+the run-length sprite blitter and the 3x5 font. Everything else — your art,
+your rules, your simulation — stays in your own folder, so a cabinet is a
+directory you can delete.
+
 A `Game` gets a delta, a pad, and a 2D context already scaled to its own pixel
 grid. **No DOM, no kernel, no settings, no audio routing, no canvas.** If you
 find yourself wanting one of those, it belongs in the cabinet, not in the game.
@@ -65,7 +70,28 @@ in the input sequence, which is what makes a test bot worth anything.
 **The trap:** at 30Hz against a 60Hz display, half your frames run no tick, and
 the cabinet clears its edge set every frame. Reading `pad.hit()` inside the tick
 silently drops half your button presses and the game feels like it is ignoring
-you. **Latch presses in `update`, consume them in `tick`.**
+you. **Latch presses in `update`, consume them in `tick`.** The trap also runs
+the other way: at 60Hz against a 120Hz panel, exactly the same thing happens.
+Latch regardless of your tick rate.
+
+**Fixed, yes. 30Hz, not necessarily.** Joust ticks at 30 because Williams'
+motion has a chunk that a 60Hz sim smooths away. That reasoning does not
+transfer automatically, and three of the four cabinets do not follow it:
+
+- *Pac-Man* ticks at 60 because its speeds are **defined** as fractions of a
+  pixel per 60Hz frame. Halving the rate does not add period texture, it
+  rounds every entry in the speed table to something else and puts the ghosts
+  on the wrong side of the player.
+- *Galaga* ticks at 60 because its enemies fly along curves. At 30Hz a diver
+  steps four pixels through the tightest part of its loop and the arc becomes
+  a visible polygon.
+- *Missile Command* ticks at 60 for the same reason: everything is a straight
+  line at speed, and coarse sampling turns a trajectory into a dotted one.
+
+The question to ask is *where does the quantisation in this game come from*. If
+it comes from the clock, use a coarse clock. If it comes from a speed table or
+a curve, a coarse clock only damages it. Either way, **write down which and
+why**, next to the constant.
 
 ### 2. Quantise at the integration, never the stored velocity
 
@@ -101,7 +127,22 @@ nudge. Splitting them into two independent controls gives far too much
 authority. Whatever your game's central verb is (flap, thrust, jump) it should
 be doing most of the work.
 
-### 5. If the screen wraps, everything goes through `wrapDelta`
+### 5. On a grid, test the wall where you *leave*, not where you arrive
+
+Pac-Man's mover was written the obvious way first: move, then check whether the
+new tile is solid. It passed a typecheck, looked fine, and put Pac-Man inside a
+wall eighteen seconds into the first bot run — an entity resting exactly on a
+tile centre against a wall skipped the check entirely on the following tick and
+stepped straight through.
+
+Structure the loop around **centre crossings**: land exactly on each tile
+centre in turn, make every decision there, and refuse to depart into a solid
+tile. Then entering a wall is not a bug that has been fixed, it is a state the
+loop cannot express — and it holds at any speed, which matters, because
+returning eyes move at more than twice walking pace and a proximity-tolerance
+version fails precisely there.
+
+### 6. If the screen wraps, everything goes through `wrapDelta`
 
 Steering, collision, drawing. Otherwise entities turn *away* from something
 standing next to them through the seam.
@@ -181,12 +222,39 @@ measures nothing; one that flaps blindly pins itself to the ceiling where
 nothing can reach it. Both looked like game bugs and were not. Give the bot the
 instincts a player acquires in a minute.
 
+**Make your stub context answer chained calls.** A `Proxy` returning bare
+no-ops is not enough. `createLinearGradient(...).addColorStop(...)` is an
+ordinary thing to do in a draw path, and against a no-op stub it throws on the
+gradient rather than on anything the test is about — which reads as the game
+being broken. Return the proxy itself from every call. Joust failed the
+"draws with no canvas" check on exactly this, and Joust was fine.
+
+**Check whether you measured one game a hundred times.** These sims are
+deterministic in the input sequence, which is the property that makes a bot
+worth anything and also the one that will quietly hand you a hundred identical
+runs. The tell is `max == median`. Vary the seed per run or you are reporting a
+sample size of one with great confidence.
+
 **Benchmark before you tune.** A handful of runs is noise: one sample said a
 median wave was 33.5s and the next said 46.8s. Run 100+ full games. And measure
 *two* bots, one that ignores the core mechanic and one that uses it. The gap
 between them is whether your game is learnable. Joust: 12 waves cleared versus
 132, an 11x payoff for grasping "get above them". That ratio is the number that
 matters, not the absolute difficulty.
+
+Measured the same way, on 120 seeded games per bot:
+
+| cabinet | bot that understands it | bot that flails | gap |
+| --- | --- | --- | --- |
+| Pac-Man | 8,780 / 2 boards | 240 / 0 boards | 36x |
+| Galaga | 54,160 / stage 12 | 4,500 / stage 1 | 12x |
+| Missile Command | 17,975 / wave 8 | 425 / wave 2 | 42x |
+
+**And drive the set pieces by hand anyway.** Four minutes of bot play never
+once constructed the pterodactyl, and it never once got a Galaga fighter
+captured either. Both mechanics were verified by poking the state directly —
+put a boss in formation over the ship, step, assert the capture; then send the
+carrying boss on a dive, shoot it, assert the dual fighter.
 
 **Record the reasoning at the constant.** `PTERO_AFTER` carries the measurement
 that produced it, so the next person re-measures instead of re-guessing, and it
