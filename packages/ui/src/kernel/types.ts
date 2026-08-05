@@ -91,6 +91,8 @@ export interface Compositor {
   }): void | Promise<void>;
   /** Give a surface a body in the world. Returns a disposer. */
   mountSurface(surface: Surface): () => void;
+  /** Change the name a mounted window shows. */
+  retitleSurface?(id: string, title: string): void;
   /** Bring an existing surface back to the user and focus it (singleton re-launch). */
   focusSurface?(id: string): void;
   /** Swing the camera until the given surface is dead ahead. */
@@ -326,6 +328,18 @@ export interface KernelContext {
   /** Open a window into the world. */
   openSurface(req: SurfaceRequest): Surface;
   closeSurface(id: string): void;
+  /**
+   * Rename an open window.
+   *
+   * A title used to be fixed at open, which is fine for an app that is only
+   * ever itself and wrong for every app that holds a *document*: the editor's
+   * title went stale the moment you opened a second file into it, the file
+   * manager never said which directory you were in, and the browser always
+   * claimed to be "portal" whatever page it was showing. The title bar, the
+   * compass and the command palette all read the same string, so this fixes
+   * all three at once.
+   */
+  setTitle(surfaceId: string, title: string): void;
   /** Every surface currently open — for launchers, task lists, merge pickers. */
   openSurfaces(): { id: string; title: string; moduleId: string }[];
   /** Bring a window back to the front of your attention. */

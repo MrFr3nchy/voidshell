@@ -117,7 +117,10 @@ export const portal: VoidModule = {
         ? resolveQuery(args.url)
         : ctx.state.get<string>(HOME_KEY, DEFAULT_HOME);
 
-    ctx.openSurface({
+    // Assigned after openSurface returns; every read is inside a handler.
+    let sid = "";
+
+    const surface = ctx.openSurface({
       title: "portal",
       width: 900,
       height: 620,
@@ -367,6 +370,12 @@ export const portal: VoidModule = {
         /* ---------------- painting ---------------- */
 
         function paint(): void {
+          // A browser window is named after the page it is showing, not after
+          // the browser. With several portals open in the void, "portal" three
+          // times over tells you nothing.
+          const cur = current();
+          ctx.setTitle(sid, cur?.title?.trim() || "portal");
+
           // tab strip
           strip.replaceChildren();
           tabs.forEach((t, i) => {
@@ -470,5 +479,7 @@ export const portal: VoidModule = {
         };
       },
     });
+
+    sid = surface.id;
   },
 };

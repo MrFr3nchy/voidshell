@@ -171,6 +171,7 @@ export class Kernel {
       },
       openSurface: (req) => this.openSurface(req),
       closeSurface: (id) => this.closeSurface(id),
+      setTitle: (id, title) => this.setTitle(id, title),
       openSurfaces: () =>
         [...this.surfaces.values()].map((s) => ({
           id: s.id,
@@ -528,6 +529,20 @@ export class Kernel {
     });
     this.bus.emit("surface.opened", { id, title: surface.title });
     return surface;
+  }
+
+  /**
+   * Rename an open window. The kernel holds the authoritative title — the
+   * compass, the palette and `openSurfaces()` all read it from here — so this
+   * updates the record first and then asks the compositor to redraw it.
+   */
+  setTitle(id: string, title: string): void {
+    const surface = this.surfaces.get(id);
+    const next = title.trim();
+    if (!surface || !next || surface.title === next) return;
+    surface.title = next;
+    this.compositor.retitleSurface?.(id, next);
+    this.bus.emit("surface.retitled", { id, title: next });
   }
 
   closeSurface(id: string): void {

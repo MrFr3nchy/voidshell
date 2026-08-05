@@ -198,7 +198,7 @@ Everything a module can do, deliberately small:
 - `emit` / `on` — the OS's IPC
 - `state.get/set/subscribe` — shared memory, persisted
 - `fs.*` — the filesystem (see below)
-- `openSurface` / `closeSurface` / `openSurfaces` / `focusSurface`
+- `openSurface` / `closeSurface` / `openSurfaces` / `focusSurface` / `setTitle`
 - `lookAt` / `lookAtGroup` / `resetView` / `arrange` — move the viewer, not the windows
 - `linkSurfaces` / `unlinkGroup` / `listGroups` — constellations
 - `spawnBody` / `destroyBody` / `attachSurface` / `listBodies` — the sky
@@ -465,6 +465,21 @@ the edge you aren't holding and lets the one you are holding track the pointer.
 Dragging *out of* `/projects` copies rather than moves — the source is a
 read-only mount, and a move would fail with `EROFS` the user can do nothing
 about.
+
+### Windows are named after what they hold
+
+A title used to be fixed at open. That's fine for an app that is only ever
+itself, and wrong for every app that holds a *document*: the editor's title went
+stale the moment you opened a second file into it, the file manager never said
+which directory you were in, and the browser claimed to be "portal" whatever
+page it was showing — which tells you nothing at all when three of them are
+floating in the void.
+
+`ctx.setTitle(surfaceId, title)` renames a live window. The kernel holds the
+authoritative title and the compositor draws it, so the title bar, the compass
+and the command palette all follow from one call. The editor marks unsaved work
+with a leading `•`, the Workspace shows its working directory, and Portal is
+named after the page it is showing.
 
 ### Apps, associations, and arguments
 
