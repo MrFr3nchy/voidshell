@@ -130,6 +130,25 @@ export class Kernel {
 
   private modules = new Map<string, VoidModule>();
   private deactivators = new Map<string, () => void>();
+  /**
+   * Which module published each setting and each command.
+   *
+   * Only interesting because modules can now leave. A registry that cannot say
+   * who put something in it cannot take it back out, and a module that is
+   * uninstalled while its settings and verbs stay behind is worse than one
+   * that never left: the palette offers to run code that is no longer there.
+   */
+  private settingOwners = new Map<string, string>();
+  private commandOwners = new Map<string, string>();
+  /**
+   * Modules installed after boot — the only ones that may be removed.
+   *
+   * A module the shell was compiled with is not something anybody installed,
+   * so it is not something anybody gets to uninstall.
+   */
+  private runtime = new Set<string>();
+  /** True once boot() has activated everything registered up front. */
+  private booted = false;
   private surfaces = new Map<string, Surface>();
   private surfaceDisposers = new Map<string, () => void>();
   private settingDefs = new Map<string, SettingDef>();
@@ -291,9 +310,10 @@ export class Kernel {
       screenToWorld: (x, y, d) =>
         this.compositor.screenToWorld?.(x, y, d) ?? { x: 0, y: 0, z: -d },
       registry: () => this.registry(),
-      defineSetting: (def) => this.defineSetting(def),
+      // Tagged with the caller so both can be withdrawn if that module leaves.
+      defineSetting: (def) => this.defineSetting(def, tag),
       settings: () => this.settings(),
-      defineCommand: (cmd) => this.defineCommand(cmd),
+      defineCommand: (cmd) => this.defineCommand(cmd, tag),
       commands: () => this.commands(),
       notify: (text, opts) => this.notify(text, opts),
       stats: (): CompositorStats =>
@@ -319,6 +339,120 @@ export class Kernel {
     }
     this.modules.set(mod.manifest.id, mod);
     return this;
+  }
+
+  /**
+   * Install a module the shell was never built with.
+   *
+   * `register` is for wiring the system up before it starts: it adds to the
+   * table and nothing else, because `boot` is what activates. Installing has
+   * to do both — and, unlike registering, has to be undoable. That is the
+   * whole difference between a module that shipped inside the build and one
+   * somebody wrote thirty seconds ago.
+   *
+   * Throws rather than warning on a duplicate id. A caller loading a module
+   * needs to know it didn't take, and the old `register` behaviour of logging
+   * and carrying on would leave the author looking at a launcher tile that
+   * runs somebody else's code.
+   */
+  install(mod: VoidModule): string {
+    const { id, name, kind } = mod.manifest;
+    if (this.modules.has(id)) {
+      throw new Error(`a module called "${id}" is already registered`);
+    }
+
+    this.modules.set(id, mod);
+    this.runtime.add(id);
+
+    // Before boot, installing is only registering: boot() activates everything
+    // in the table, and doing it here as well would activate twice. A module
+    // that installs another from inside its own activate() lands here, and the
+    // boot loop picks the new one up as it goes.
+    if (!this.booted) return id;
+
+    if (kind !== "app") this.procs.spawnDaemon(id, name, kind);
+
+    try {
+      const off = mod.activate(this.context(id));
+      if (typeof off === "function") this.deactivators.set(id, off);
+    } catch (err) {
+      // Leave nothing half-installed. A module that threw on the way in is not
+      // running, and a registry entry for it is a launcher tile that cannot
+      // work sitting on an id nobody else can use.
+      this.uninstall(id);
+      this.journal.write("kernel", `${id} failed to install: ${err}`, "error");
+      throw err;
+    }
+
+    this.journal.write("kernel", `installed ${id}`);
+    this.bus.emit("module.installed", { id });
+    return id;
+  }
+
+  /**
+   * Remove a runtime-installed module and everything it published.
+   *
+   * Refuses anything the shell was compiled with, for the same reason `kill`
+   * refuses the daemons: uninstalling `aurora` would take every colour in the
+   * build with it, and there would be no way back short of a reload.
+   *
+   * The module's *settings values* are deliberately left in the store. The
+   * definitions go, so nothing renders a control for a module that isn't
+   * there; the values stay, so re-installing it finds the toggles the way you
+   * left them rather than reset.
+   */
+  uninstall(id: string): boolean {
+    if (!this.runtime.has(id)) {
+      if (this.modules.has(id)) {
+        this.notify(`operation not permitted: ${id} is built in`, "warn");
+      }
+      return false;
+    }
+
+    // Windows first, so each one still runs its own cleanup through the
+    // ordinary close path while the module underneath it is still there.
+    for (const surface of [...this.surfaces.values()]) {
+      if (surface.moduleId === id) this.closeSurface(surface.id);
+    }
+
+    try {
+      this.deactivators.get(id)?.();
+    } catch (err) {
+      // A module that throws on the way out still has to leave.
+      this.journal.write("kernel", `${id} threw while deactivating: ${err}`, "error");
+    }
+    this.deactivators.delete(id);
+
+    for (const [key, owner] of [...this.settingOwners]) {
+      if (owner !== id) continue;
+      this.settingDefs.delete(key);
+      this.settingOwners.delete(key);
+    }
+    for (const [cmdId, owner] of [...this.commandOwners]) {
+      if (owner !== id) continue;
+      this.commandDefs.delete(cmdId);
+      this.commandOwners.delete(cmdId);
+    }
+
+    // A world or service module holds a daemon that closeSurface never reaps,
+    // because it never owned a window to begin with.
+    for (const proc of this.procs.list()) {
+      if (proc.moduleId === id) this.procs.reap(proc.pid);
+    }
+
+    this.modules.delete(id);
+    this.runtime.delete(id);
+
+    this.journal.write("kernel", `uninstalled ${id}`);
+    // The settings app redraws off this, and it has just lost some controls.
+    this.bus.emit("settings.changed", { key: "" });
+    this.bus.emit("module.uninstalled", { id });
+    return true;
+  }
+
+  /** Ids of every module installed after boot, in install order. */
+  runtimeModules(): string[] {
+    return [...this.runtime];
   }
 
   /** Boot: init the compositor, mount the system tree, then activate modules. */
@@ -366,6 +500,9 @@ export class Kernel {
         console.error(`[kernel] "${id}" threw while activating:`, err);
       }
     }
+
+    // From here, installing a module means activating it on the spot.
+    this.booted = true;
 
     this.journal.write(
       "kernel",
@@ -573,8 +710,9 @@ export class Kernel {
 
   /* ---------------- settings & commands ---------------- */
 
-  defineSetting(def: SettingDef): void {
+  defineSetting(def: SettingDef, owner = "shell"): void {
     this.settingDefs.set(def.key, def);
+    this.settingOwners.set(def.key, owner);
     // Seed the store so a fresh install reads the author's default rather than
     // whatever fallback each call site happens to pass.
     if (def.default !== undefined && !this.store.has(def.key)) {
@@ -589,8 +727,9 @@ export class Kernel {
     );
   }
 
-  defineCommand(cmd: Command): void {
+  defineCommand(cmd: Command, owner = "shell"): void {
     this.commandDefs.set(cmd.id, cmd);
+    this.commandOwners.set(cmd.id, owner);
   }
 
   commands(): Command[] {
