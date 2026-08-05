@@ -1,6 +1,10 @@
 import type { KernelContext, LaunchArgs, VoidModule } from "../../kernel/types";
 import { basename } from "../../kernel/vfs";
+import { tildify } from "../../kernel/fsutil";
+import { extensionOf } from "../../kernel/filetypes";
 import { createProgram, isRunnable, type Program } from "../../runtime/program";
+import { renderMarkdown } from "./markdown";
+import { openStartPane, rememberRecent } from "./start";
 
 /**
  * The editor, and the place code actually runs.
@@ -14,6 +18,11 @@ import { createProgram, isRunnable, type Program } from "../../runtime/program";
  * Read-only files (anything under /projects) open as a viewer — same window,
  * no save button, rather than a save that would fail with EROFS. They can still
  * be run: reading is allowed, it's only writing that isn't.
+ *
+ * Launched with no file it used to be a rectangle reading "No file.", which is
+ * an app that exists in the launcher and does nothing when you use it from
+ * there. It now opens on what you were last working on: recent files, the
+ * documents in your home directory, and a way to make a new one.
  */
 
 /** Tab inserts this much, matching the repo's own style. */
@@ -26,19 +35,33 @@ export const editor: VoidModule = {
     kind: "app",
     glyph: "✎",
     blurb: "write and run code",
-    version: "0.2.0",
+    singleton: false,
+    version: "0.3.0",
   },
 
-  // "*" makes this the fallback opener for any text file with no better match.
-  // .py/.js land here too now that running is something the editor does.
-  handles: ["md", "txt", "json", "ts", "tsx", "js", "jsx", "mjs", "cjs", "css",
-            "html", "py", "rs", "sh", "toml", "yml", "yaml", "gd", "qml", "*"],
+  // Text it knows by name, plus `fallback` for unclaimed text types. The old
+  // `"*"` also claimed PNGs and ZIPs, which meant "open with the editor" was
+  // offered for files it can only render as replacement characters.
+  handles: ["md", "markdown", "txt", "text", "log", "json", "jsonc", "ts", "tsx",
+            "js", "jsx", "mjs", "cjs", "css", "scss", "html", "htm", "svg", "xml",
+            "py", "rs", "go", "c", "h", "cc", "cpp", "sh", "bash", "toml", "ini",
+            "conf", "yml", "yaml", "env", "csv", "sql", "gd", "qml"],
+  fallback: true,
 
-  activate() {},
+  activate(ctx: KernelContext) {
+    ctx.defineCommand({
+      id: "editor.new",
+      label: "New file",
+      hint: "in your home directory",
+      glyph: "✎",
+      run: (c) => c.launch("editor", { new: true }),
+    });
+  },
 
   launch(ctx: KernelContext, args?: LaunchArgs) {
     const path = args?.path;
     const autoRun = args?.run === true;
+    if (path) rememberRecent(ctx, path);
 
     // Assigned right after openSurface returns. Every use is inside an event
     // handler, so it is always set by the time it is read — render() itself
@@ -54,13 +77,14 @@ export const editor: VoidModule = {
         root.innerHTML = "";
         root.className = "ed-root";
 
+        // No argument means "I want to write something", not "show me an
+        // error". The start pane answers that with the files you had open
+        // last, what is in your home directory, and a new-file line.
         if (!path) {
-          const empty = document.createElement("div");
-          empty.className = "ed-empty";
-          empty.textContent =
-            "No file. Open one from the desktop or the Workspace, or use `edit <file>`.";
-          root.appendChild(empty);
-          return () => root.replaceChildren();
+          return openStartPane(root, ctx, {
+            open: (p) => ctx.launch("editor", { path: p }),
+            newFile: args?.new === true,
+          });
         }
 
         let text = "";
@@ -77,7 +101,10 @@ export const editor: VoidModule = {
         head.className = "ed-head";
         const title = document.createElement("span");
         title.className = "ed-title";
-        title.textContent = path;
+        // `~/notes/x.md` rather than `/home/void/notes/x.md`: the prefix is the
+        // same for every file you own and tells you nothing.
+        title.textContent = tildify(path);
+        title.title = path;
         head.appendChild(title);
         root.appendChild(head);
 
@@ -176,7 +203,33 @@ export const editor: VoidModule = {
         saveBtn.className = "fm-btn";
         saveBtn.textContent = "save";
 
+        /* ---------------- markdown preview ---------------- */
+
+        // Markdown is the format the shell writes by default — the welcome
+        // file, the desktop readme, every note — and until now the only way to
+        // see one rendered was to not have written it in Markdown.
+        const isMarkdown = extensionOf(path) === "md" || extensionOf(path) === "markdown";
+        const preview = document.createElement("div");
+        preview.className = "ed-preview";
+        const previewBtn = document.createElement("button");
+        previewBtn.className = "fm-btn";
+        previewBtn.textContent = "preview";
+
+        let previewing = false;
+        const paintPreview = () => {
+          preview.replaceChildren(renderMarkdown(buffer()));
+        };
+        const setPreview = (on: boolean) => {
+          previewing = on;
+          previewBtn.classList.toggle("on", on);
+          wrap.classList.toggle("hidden", on);
+          preview.classList.toggle("shown", on);
+          if (on) paintPreview();
+        };
+        previewBtn.addEventListener("click", () => setPreview(!previewing));
+
         bar.append(status, hint);
+        if (isMarkdown) bar.append(previewBtn);
         if (runnable) bar.append(stopBtn, runBtn);
         if (!readonly) bar.append(saveBtn);
 
@@ -198,8 +251,12 @@ export const editor: VoidModule = {
         inputRow.append(inputPrompt, stdin);
         out.append(outLog, inputRow);
 
-        root.append(wrap, bar);
+        root.append(wrap, preview, bar);
         if (runnable) root.append(out);
+
+        // A read-only .md is almost always something you want to read rather
+        // than audit the source of — /projects READMEs, the welcome file.
+        if (isMarkdown && readonly) setPreview(true);
 
         const print = (kind: string, line: string) => {
           const el = document.createElement("div");
@@ -286,6 +343,7 @@ export const editor: VoidModule = {
             status.textContent = "modified";
             markDirty(true);
             renderGutter();
+            if (previewing) paintPreview();
           });
         }
 
@@ -300,6 +358,11 @@ export const editor: VoidModule = {
           if (mod && e.key.toLowerCase() === "s") {
             e.preventDefault();
             doSave();
+            return;
+          }
+          if (mod && isMarkdown && e.key.toLowerCase() === "p") {
+            e.preventDefault();
+            setPreview(!previewing);
             return;
           }
           // Tab indents instead of escaping to the next control. An editor that

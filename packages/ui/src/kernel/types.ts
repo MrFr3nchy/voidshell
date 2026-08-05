@@ -274,10 +274,25 @@ export interface VoidModule {
   launch?(ctx: KernelContext, args?: LaunchArgs): void;
   /**
    * File extensions this module can open, lowercase and without the dot.
-   * The kernel builds its association table from these. `"*"` means "will
-   * take anything", used as the fallback opener.
+   * The kernel builds its association table from these. `"dir"` is the
+   * pseudo-extension for directories.
    */
   handles?: string[];
+  /**
+   * Take unclaimed *text* files when nothing else names their extension.
+   *
+   * Replaces the old `handles: ["*"]`, which also claimed PNGs and ZIPs. A
+   * fallback is never offered for binary types or for directories.
+   */
+  fallback?: boolean;
+  /**
+   * Tie-break weight when several modules handle the same type; higher wins.
+   *
+   * Association used to be decided by registration order, which meant the one
+   * comment in `main.ts` explaining that order was the only thing standing
+   * between you and directories opening in a text editor.
+   */
+  priority?: number;
 }
 
 /** A tiny typed event. Modules talk through this, never to each other directly. */
@@ -428,6 +443,20 @@ export interface KernelContext {
    * both route double-clicks through here rather than deciding themselves.
    */
   openPath(path: string): void;
+  /**
+   * Every app that could open this path, best first — the "Open With…" menu.
+   *
+   * Empty means nothing can, which is a thing worth saying out loud rather
+   * than handing the file to a text editor and letting it fail.
+   */
+  handlersFor(path: string): ModuleManifest[];
+  /** Open a path with a named module, ignoring the association table. */
+  openWith(path: string, moduleId: string): void;
+  /**
+   * Make `moduleId` the default for this path's type from now on. Pass an
+   * empty id to go back to whatever the system would have picked.
+   */
+  setDefaultApp(path: string, moduleId: string): void;
   /** 3D world position the camera is currently looking at, `dist` units out. */
   focalPoint(dist?: number): Vec3;
   /** Pin bare DOM into the world (desktop icons). */

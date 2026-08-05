@@ -56,7 +56,11 @@ const DEFAULTS: Record<string, string> = {
   desktop: "tools",
   webapp: "tools",
   dashboards: "tools",
+  trash: "tools",
+  calculator: "tools",
+  calendar: "tools",
 
+  timer: "instruments",
   monitor: "instruments",
   vitals: "instruments",
   chronos: "instruments",

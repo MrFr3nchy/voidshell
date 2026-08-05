@@ -96,9 +96,19 @@ export function hostExec(
     .catch((err) => print("warn", err instanceof Error ? err.message : String(err)));
 }
 
+/**
+ * The job table, as data.
+ *
+ * `hostJobs` prints, which is all a console needs and no use at all to a UI
+ * that wants to list what is running. Both go through here so there is one
+ * definition of "what counts as a job".
+ */
+export function fetchHostJobs(): Promise<HostJob[]> {
+  return fetch(JOBS).then((r) => bridgeJson(r) as Promise<HostJob[]>);
+}
+
 export function hostJobs(print: Printer): void {
-  fetch(JOBS)
-    .then((r) => bridgeJson(r) as Promise<HostJob[]>)
+  fetchHostJobs()
     .then((list) => {
       if (!list.length) return print("muted", "no jobs");
       for (const j of list) {

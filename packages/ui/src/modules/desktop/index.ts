@@ -1,8 +1,10 @@
 import type { AnchorHandle, FsEntry, KernelContext, VoidModule, Vec3 } from "../../kernel/types";
-import { basename, dirname, normalize } from "../../kernel/vfs";
-import { moveToTrash } from "../../kernel/trash";
-import { closeContextMenu, promptInline, showContextMenu } from "../../ui/contextMenu";
+import { basename } from "../../kernel/vfs";
+import { copyRecursive, transferInto, uniqueName } from "../../kernel/fsutil";
+import { fileTypeFor } from "../../kernel/filetypes";
+import { closeContextMenu, showContextMenu } from "../../ui/contextMenu";
 import { clipboard } from "../../ui/clipboard";
+import { newMenuItems, showFileInfo, showFileMenu, trashWithUndo } from "../../ui/fileMenu";
 
 /**
  * The desktop.
@@ -22,18 +24,6 @@ const DESKTOP_DIR = "/home/void/Desktop";
 const LAYOUT_FILE = "/home/void/.desktop-layout.json";
 
 type Layout = Record<string, Vec3>;
-
-const GLYPHS: Record<string, string> = {
-  dir: "▸",
-  md: "✎", txt: "✎", json: "{}", ts: "TS", tsx: "TS", js: "JS", jsx: "JS",
-  css: "#", html: "<>", py: "PY", rs: "RS", sh: "$", toml: "⚙", yml: "⚙", yaml: "⚙",
-};
-
-function glyphFor(entry: FsEntry): string {
-  if (entry.kind === "dir") return GLYPHS.dir;
-  const ext = entry.name.slice(entry.name.lastIndexOf(".") + 1).toLowerCase();
-  return GLYPHS[ext] ?? "·";
-}
 
 export const desktop: VoidModule = {
   manifest: {
@@ -81,18 +71,6 @@ export const desktop: VoidModule = {
 
     // ---------- actions ----------
 
-    const uniqueName = (dir: string, base: string): string => {
-      if (!ctx.fs.exists(`${dir}/${base}`)) return base;
-      const dot = base.lastIndexOf(".");
-      const stem = dot > 0 ? base.slice(0, dot) : base;
-      const ext = dot > 0 ? base.slice(dot) : "";
-      for (let i = 2; i < 500; i++) {
-        const candidate = `${stem} ${i}${ext}`;
-        if (!ctx.fs.exists(`${dir}/${candidate}`)) return candidate;
-      }
-      return `${stem}-${Date.now()}${ext}`;
-    };
-
     /**
      * Filesystem errors here are user-facing (EROFS, EEXIST, ENOTEMPTY) and
      * must not disappear into a console nobody is reading. The shell owns the
@@ -113,23 +91,32 @@ export const desktop: VoidModule = {
       }
     };
 
-    const newFolder = (x: number, y: number) =>
-      promptInline(x, y, "New Folder", "folder name", (name) =>
-        guard(() => {
-          const target = `${DESKTOP_DIR}/${uniqueName(DESKTOP_DIR, name)}`;
-          ctx.fs.mkdir(target);
-          placeAt(target, x, y);
-        })
-      );
-
-    const newFile = (x: number, y: number) =>
-      promptInline(x, y, "untitled.md", "file name", (name) =>
-        guard(() => {
-          const target = `${DESKTOP_DIR}/${uniqueName(DESKTOP_DIR, name)}`;
-          ctx.fs.write(target, "");
-          placeAt(target, x, y);
-        })
-      );
+    /**
+     * What the desktop hands the shared file menu.
+     *
+     * The three callbacks are the whole of what makes the desktop's copy of
+     * the menu different from the file manager's: an icon has a position, and
+     * creating, renaming or deleting a file has to carry that position with it.
+     */
+    const hooks = {
+      guard,
+      onCreated: (path: string, x: number, y: number) => placeAt(path, x, y),
+      onRenamed: (from: string, to: string) => {
+        if (!layout[from]) return;
+        layout[to] = layout[from];
+        delete layout[from];
+        saveLayout();
+      },
+      onDeleted: (path: string) => {
+        // The icon's saved position goes with it: if the file comes back it
+        // should land where the tidy pass puts it, not on top of whatever took
+        // its spot.
+        if (!layout[path]) return;
+        delete layout[path];
+        saveLayout();
+      },
+      pasteDir: DESKTOP_DIR,
+    };
 
     /**
      * Pin a path's icon to the world point under a screen coordinate. Renders
@@ -144,42 +131,21 @@ export const desktop: VoidModule = {
       saveLayout();
     };
 
-    const rename = (entry: FsEntry, x: number, y: number) =>
-      promptInline(x, y, entry.name, "new name", (name) =>
-        guard(() => {
-          const dest = `${dirname(entry.path)}/${name}`;
-          ctx.fs.mv(entry.path, dest);
-          if (layout[entry.path]) {
-            layout[dest] = layout[entry.path];
-            delete layout[entry.path];
-            saveLayout();
-          }
-        })
-      );
-
-    // Delete on the desktop is recoverable, like delete everywhere else. The
-    // icon's saved position is dropped either way: if it comes back it should
-    // land wherever the tidy pass puts it, not on top of whatever took its spot.
-    const remove = (entry: FsEntry) =>
-      guard(() => {
-        const name = moveToTrash(ctx, entry.path);
-        delete layout[entry.path];
-        saveLayout();
-        ctx.notify(`${entry.name} → trash · restore ${name}`);
-      });
+    // Delete on the desktop is recoverable, like delete everywhere else, and
+    // the notice carries the undo rather than instructions for one.
+    const remove = (entry: FsEntry) => guard(() => trashWithUndo(ctx, entry, hooks));
 
     const paste = (x: number, y: number) =>
       guard(() => {
         const item = clipboard.get();
         if (!item) return;
-        const dest = `${DESKTOP_DIR}/${uniqueName(DESKTOP_DIR, basename(item.path))}`;
-        if (item.mode === "cut") {
-          ctx.fs.mv(item.path, dest);
-          clipboard.clear();
-        } else {
-          copyRecursive(ctx, item.path, dest);
+        for (const src of item.paths) {
+          const dest = `${DESKTOP_DIR}/${uniqueName(ctx, DESKTOP_DIR, basename(src))}`;
+          if (item.mode === "cut") ctx.fs.mv(src, dest);
+          else copyRecursive(ctx, src, dest);
+          placeAt(dest, x, y);
         }
-        placeAt(dest, x, y);
+        if (item.mode === "cut") clipboard.clear();
       });
 
     // ---------- icon rendering ----------
@@ -190,9 +156,11 @@ export const desktop: VoidModule = {
       el.tabIndex = 0;
       el.dataset.path = entry.path;
 
+      const type = fileTypeFor(entry.path, entry.kind);
       const glyph = document.createElement("div");
-      glyph.className = `vs-icon-glyph ${entry.kind}`;
-      glyph.textContent = glyphFor(entry);
+      glyph.className = `vs-icon-glyph ${entry.kind} fam-${type.family}`;
+      glyph.textContent = entry.omitted ? "◌" : type.glyph;
+      glyph.title = type.label;
 
       const label = document.createElement("div");
       label.className = "vs-icon-label";
@@ -212,35 +180,13 @@ export const desktop: VoidModule = {
         el.classList.add("sel");
       });
 
+      // The same menu the file manager shows, from the same builder. Two
+      // menus for one object is two chances to disagree about what you can do
+      // with it, and this used to be exactly that.
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const runnable = /\.(py|js|mjs|cjs)$/i.test(entry.name);
-        showContextMenu(e.clientX, e.clientY, [
-          { label: "Open", action: () => ctx.openPath(entry.path) },
-          ...(runnable
-            ? [
-                {
-                  label: "Run",
-                  action: () => ctx.launch("editor", { path: entry.path, run: true }),
-                },
-              ]
-            : []),
-          ...(entry.kind === "file"
-            ? [{ label: "Edit", action: () => ctx.launch("editor", { path: entry.path }) }]
-            : []),
-          {
-            label: "Open in Workspace",
-            action: () =>
-              ctx.launch("workspace", {
-                path: entry.kind === "dir" ? entry.path : dirname(entry.path),
-              }),
-          },
-          { label: "Rename…", separated: true, action: () => rename(entry, e.clientX, e.clientY) },
-          { label: "Copy", action: () => clipboard.set(entry.path, "copy") },
-          { label: "Cut", action: () => clipboard.set(entry.path, "cut") },
-          { label: "Delete", separated: true, danger: true, action: () => remove(entry) },
-        ]);
+        showFileMenu(ctx, entry, e.clientX, e.clientY, hooks);
       });
 
       bindIconDrag(el, entry.path);
@@ -355,17 +301,24 @@ export const desktop: VoidModule = {
       e.preventDefault();
       const item = clipboard.get();
       showContextMenu(e.clientX, e.clientY, [
-        { label: "New Folder", action: () => newFolder(e.clientX, e.clientY) },
-        { label: "New File", action: () => newFile(e.clientX, e.clientY) },
         {
-          label: item ? `Paste "${basename(item.path)}"` : "Paste",
+          label: "New",
+          submenu: newMenuItems(ctx, DESKTOP_DIR, { x: e.clientX, y: e.clientY }, hooks),
+        },
+        {
+          label: item
+            ? item.paths.length > 1
+              ? `Paste ${item.paths.length} items`
+              : `Paste "${basename(item.path)}"`
+            : "Paste",
           action: item ? () => paste(e.clientX, e.clientY) : undefined,
         },
         {
-          label: "Open Workspace Here",
+          label: "Open Files Here",
           separated: true,
           action: () => ctx.launch("workspace", { path: DESKTOP_DIR }),
         },
+        { label: "Open Trash", action: () => ctx.launch("trash") },
         {
           label: "Tidy Icons",
           separated: true,
@@ -403,21 +356,16 @@ export const desktop: VoidModule = {
       if (target.closest(".vs-panel")) return;
       e.preventDefault();
 
-      guard(() => {
-        const dest = `${DESKTOP_DIR}/${uniqueName(DESKTOP_DIR, basename(src))}`;
-        // Read-only sources (anything under /projects) are copied, not moved —
-        // the alternative is an EROFS failure the user can't act on.
-        if (ctx.fs.stat(src).readonly) copyRecursive(ctx, src, dest);
-        else ctx.fs.mv(src, dest);
-        placeAt(dest, e.clientX, e.clientY);
-      });
+      // Read-only sources (anything under /projects) are copied, not moved —
+      // the alternative is an EROFS failure the user can't act on.
+      guard(() => placeAt(transferInto(ctx, src, DESKTOP_DIR), e.clientX, e.clientY));
     };
 
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("dragleave", onDragLeave);
     window.addEventListener("drop", onDrop);
 
-    // Keyboard: Delete removes the selected icon, Escape clears selection.
+    // Keyboard: Delete trashes the selected icon, Enter opens it, ⌘I inspects.
     const onKey = (e: KeyboardEvent) => {
       const sel = document.querySelector(".vs-icon.sel") as HTMLElement | null;
       if (!sel || (e.target as HTMLElement)?.matches("input, textarea")) return;
@@ -430,6 +378,10 @@ export const desktop: VoidModule = {
       } else if (e.key === "Enter") {
         e.preventDefault();
         ctx.openPath(sel.dataset.path!);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        const r = sel.getBoundingClientRect();
+        showFileInfo(ctx, sel.dataset.path!, r.right, r.top);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -450,23 +402,3 @@ export const desktop: VoidModule = {
     };
   },
 };
-
-/** Deep copy within the VFS — used for paste and for read-only sources. */
-export function copyRecursive(ctx: KernelContext, from: string, to: string): void {
-  const src = normalize(from);
-  const dest = normalize(to);
-  if (ctx.fs.isDir(src)) {
-    ctx.fs.mkdir(dest);
-    for (const child of ctx.fs.ls(src)) {
-      copyRecursive(ctx, child.path, `${dest}/${child.name}`);
-    }
-  } else {
-    let text = "";
-    try {
-      text = ctx.fs.read(src);
-    } catch {
-      text = ""; // binary or unembedded: copy as an empty placeholder
-    }
-    ctx.fs.write(dest, text);
-  }
-}

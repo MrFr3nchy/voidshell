@@ -77,6 +77,13 @@ const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
 const { desktop } = await import("../packages/ui/src/modules/desktop");
+const { trash: trashApp } = await import("../packages/ui/src/modules/trash");
+const { calculator, evaluate, present } = await import(
+  "../packages/ui/src/modules/calculator"
+);
+const { calendar, dayKey } = await import("../packages/ui/src/modules/calendar");
+const { timer } = await import("../packages/ui/src/modules/timer");
+const { renderMarkdown } = await import("../packages/ui/src/modules/editor/markdown");
 const { createSpawner, resolveSlots } = await import("../packages/ui/src/ui/spawner");
 const { createAppDrawer } = await import("../packages/ui/src/ui/appDrawer");
 const { createPalette } = await import("../packages/ui/src/ui/palette");
@@ -185,6 +192,10 @@ kernel
   .register(workspace)
   .register(webapp)
   .register(editor)
+  .register(trashApp)
+  .register(calculator)
+  .register(calendar)
+  .register(timer)
   .register(chronos)
   .register(cosmos)
   .register(settings)
@@ -209,7 +220,7 @@ kernel
   .register(sunclock)
   .register(bell);
 
-const MODULE_COUNT = 30;
+const MODULE_COUNT = 34;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -521,9 +532,13 @@ check(
 kernel.saveSession();
 check("session recorded", JSON.stringify(ctx.state.get("system.session", [])).length > 2);
 
-// Notes actually persist their text.
-ctx.state.set("notes.doc.test", "hello void");
-check("note text stored", ctx.state.get("notes.doc.test", "") === "hello void");
+// Notes are files now, not store keys — so the rest of the OS can see them.
+check("notes directory exists", ctx.fs.isDir("/home/void/notes"));
+ctx.fs.write("/home/void/notes/from-a-test.md", "# hello void");
+check(
+  "a note is an ordinary file",
+  ctx.fs.read("/home/void/notes/from-a-test.md") === "# hello void"
+);
 
 // The astronomy apps are computed, not fetched — they must answer offline.
 // Both are launched here for the same reason settings is, above.
@@ -699,6 +714,135 @@ ctx.fs.write("/home/void/second.md", "# second");
 const beforeSecond = ctx.openSurfaces().length;
 ctx.openPath("/home/void/second.md");
 check("a second file opens its own window", ctx.openSurfaces().length === beforeSecond + 1);
+
+/* ---------------- associations ---------------- */
+
+// The editor's old `handles: ["*"]` claimed every extension there is. A text
+// app must not be offered for bytes it can only render as garbage.
+ctx.fs.write("/home/void/pic.png", "not really a png");
+check(
+  "no text app is offered for a binary file",
+  ctx.handlersFor("/home/void/pic.png").length === 0
+);
+check(
+  "unclaimed text still falls back to the editor",
+  ctx.handlersFor("/home/void/mystery.conf").some((m) => m.id === "editor")
+);
+check(
+  "a directory's handler is the file manager, not the editor",
+  ctx.handlersFor("/home/void/adir")[0]?.id === "workspace"
+);
+
+// Opening a binary must say so rather than opening an empty editor.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+const beforeBinary = ctx.openSurfaces().length;
+ctx.openPath("/home/void/pic.png");
+check("opening a binary opens nothing", ctx.openSurfaces().length === beforeBinary);
+
+// A user's chosen default must beat the built-in ordering.
+ctx.setDefaultApp("/home/void/routed.md", "notes");
+check(
+  "setting a default app is remembered",
+  ctx.state.get("assoc.md", "") === "notes"
+);
+ctx.state.set("assoc.md", "");
+
+/* ---------------- apps that used to do nothing on their own ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("editor");
+const start = hud.ownerDocument.querySelector(".ed-start");
+check("the editor without a file opens a start pane", Boolean(start));
+check(
+  "the start pane offers something to open",
+  Boolean(start?.querySelector(".ed-start-row") || start?.querySelector(".ed-start-empty"))
+);
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("webapp");
+check(
+  "the dev server app without a port offers a picker",
+  Boolean(hud.ownerDocument.querySelector(".wa-jobs"))
+);
+
+/* ---------------- trash has a window ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+ctx.fs.write("/home/void/tossme.md", "# bye");
+moveToTrash(ctx, "/home/void/tossme.md");
+kernel.launch("trash");
+const tr = hud.ownerDocument.querySelector(".tr-root");
+check("trash app mounted", Boolean(tr));
+check(
+  "the trash lists what was deleted",
+  [...(tr?.querySelectorAll(".tr-name") ?? [])].some((el) => el.textContent === "tossme.md")
+);
+check("the trash says where it came from", Boolean(tr?.querySelector(".tr-from")));
+emptyTrash(ctx);
+
+/* ---------------- the generic apps ---------------- */
+
+check("calculator does arithmetic", present(evaluate("2 + 3 * 4")) === "14");
+check("calculator honours parentheses", present(evaluate("(2 + 3) * 4")) === "20");
+check("calculator has functions", present(evaluate("sqrt(144)")) === "12");
+check("calculator does percentages", present(evaluate("340 * 18%")) === "61.2");
+check("calculator carries ans", present(evaluate("ans * 2", 21)) === "42");
+check(
+  "calculator refuses to reach outside itself",
+  (() => {
+    try {
+      evaluate("constructor");
+      return false;
+    } catch {
+      return true;
+    }
+  })()
+);
+check(
+  "calculator refuses division by zero",
+  (() => {
+    try {
+      evaluate("1/0");
+      return false;
+    } catch {
+      return true;
+    }
+  })()
+);
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("calculator");
+check("calculator mounted", Boolean(hud.ownerDocument.querySelector(".calc-input")));
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("timer");
+check("timer mounted", Boolean(hud.ownerDocument.querySelector(".tm-readout")));
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("calendar");
+const cal = hud.ownerDocument.querySelector(".cal-root");
+check("calendar mounted", Boolean(cal));
+check(
+  "calendar drew a whole month",
+  (cal?.querySelectorAll(".cal-day:not(.pad)").length ?? 0) >= 28
+);
+check("calendar day keys are local dates", dayKey(new Date(2026, 7, 4)) === "2026-08-04");
+
+/* ---------------- markdown rendering ---------------- */
+
+{
+  const md = renderMarkdown(
+    "# Title\n\nSome **bold** and `code`.\n\n- one\n- two\n\n```js\nlet x = 1;\n```\n"
+  );
+  check("markdown renders a heading", md.querySelector("h1")?.textContent === "Title");
+  check("markdown renders emphasis", Boolean(md.querySelector("strong")));
+  check("markdown renders lists", md.querySelectorAll(".md-list li").length === 2);
+  check("markdown renders code blocks", Boolean(md.querySelector(".md-code")));
+  // The renderer never sets innerHTML, so a script tag in a README is text.
+  const evil = renderMarkdown("<script>window.pwned = 1</script>\n\n[x](javascript:alert(1))");
+  check("markdown does not build script elements", !evil.querySelector("script"));
+  check("markdown refuses non-http links", !evil.querySelector("a"));
+}
 
 /* ---------------- workspace: files + console over one cwd ---------------- */
 
