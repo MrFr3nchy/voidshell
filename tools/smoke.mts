@@ -96,6 +96,8 @@ const bodies = new Map<string, { id: string; kind: string }>();
 let n = 0;
 
 const mounted = new Map<string, unknown>();
+/** Every rename the kernel asked the compositor to draw. */
+const retitles = new Map<string, string>();
 
 const stub = {
   name: "stub",
@@ -110,6 +112,7 @@ const stub = {
       mounted.delete(surface.id);
     };
   },
+  retitleSurface: (id: string, title: string) => void retitles.set(id, title),
   focusSurface: () => {},
   lookAtSurface: () => {},
   lookAtGroup: () => {},
@@ -275,6 +278,36 @@ for (const m of ctx.registry().filter((x) => x.kind === "app")) {
   check(`launch ${m.id}`, opened);
   for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }
+
+/* ---------------- live window titles ---------------- */
+
+check("a window can be renamed", (() => {
+  kernel.launch("chronos");
+  const s = ctx.openSurfaces()[0];
+  ctx.setTitle(s.id, "renamed");
+  const listed = ctx.openSurfaces().find((x) => x.id === s.id)?.title === "renamed";
+  // Both halves matter: the kernel is what the compass and the palette read,
+  // and the compositor is what the title bar draws.
+  const drawn = retitles.get(s.id) === "renamed";
+  for (const open of ctx.openSurfaces()) kernel.closeSurface(open.id);
+  return listed && drawn;
+})());
+
+check("an empty rename is refused", (() => {
+  kernel.launch("chronos");
+  const s = ctx.openSurfaces()[0];
+  ctx.setTitle(s.id, "   ");
+  const kept = ctx.openSurfaces().find((x) => x.id === s.id)?.title === "chronos";
+  for (const open of ctx.openSurfaces()) kernel.closeSurface(open.id);
+  return kept;
+})());
+
+check("the file manager is named after its directory", (() => {
+  kernel.launch("workspace");
+  const named = ctx.openSurfaces().some((s) => s.title === "~");
+  for (const open of ctx.openSurfaces()) kernel.closeSurface(open.id);
+  return named;
+})());
 
 check("singleton re-launch does not clone", (() => {
   // Self-contained: the sweep above no longer leaves anything open.

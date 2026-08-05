@@ -43,7 +43,10 @@ export const workspace: VoidModule = {
           : dirname(args.path)
         : HOME;
 
-    ctx.openSurface({
+    // Assigned after openSurface returns; every read is inside a handler.
+    let sid = "";
+
+    const surface = ctx.openSurface({
       title: "workspace",
       width: 900,
       height: 520,
@@ -109,10 +112,16 @@ export const workspace: VoidModule = {
 
         /* ---------------- shared navigation ---------------- */
 
+        // The window says where it is. Browsing and typing share a working
+        // directory, so the one title can honestly describe both panes.
+        const titleFor = (p: string) =>
+          p === HOME ? "~" : p.startsWith(`${HOME}/`) ? `~${p.slice(HOME.length)}` : p;
+
         const goTo = (p: string) => {
           if (!ctx.fs.exists(p) || !ctx.fs.isDir(p)) return;
           cwd = p;
           pathEl.textContent = p;
+          ctx.setTitle(sid, titleFor(p));
           browser.setCwd(p);
           console_.setCwd(p);
         };
@@ -166,5 +175,9 @@ export const workspace: VoidModule = {
         };
       },
     });
+
+    sid = surface.id;
+    // The initial directory is set before the surface exists, so name it now.
+    ctx.setTitle(sid, start === HOME ? "~" : start);
   },
 };

@@ -35,6 +35,8 @@ const RESIZE_TITLES: Record<ResizeAxis, string> = {
 export interface PanelChrome {
   panel: HTMLElement;
   bar: HTMLElement;
+  /** Kept so the compositor can rename a live window without a DOM query. */
+  title: HTMLElement;
   tools: HTMLElement;
   link: HTMLElement;
   grips: Record<ResizeAxis, HTMLElement>;
@@ -91,7 +93,7 @@ export function createPanelChrome(surface: Surface): PanelChrome {
   }
 
   panel.append(bar, body, ...RESIZE_AXES.map((a) => grips[a]));
-  return { panel, bar, tools, link, grips, more, pin, min, max, close };
+  return { panel, bar, title, tools, link, grips, more, pin, min, max, close };
 }
 
 /** What the menu needs to know about the window it belongs to. */

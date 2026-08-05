@@ -26,6 +26,9 @@ interface PanelEntry {
   id: string;
   title: string;
   el: HTMLElement;
+  /** The title span and the close button, both of which carry the name. */
+  titleEl: HTMLElement;
+  closeEl: HTMLElement;
   /** Own world anchor, used when the panel isn't merged onto a body. */
   anchor: THREE.Vector3;
   bodyId: string | null;
@@ -321,7 +324,7 @@ export class ThreeCompositor implements Compositor {
   mountSurface(surface: Surface): () => void {
     // One place decides what a window is made of. The compositor used to build
     // this inline while `createPanelChrome` sat unused next to it.
-    const { panel, bar, tools, link, grips, more, pin, min, max, close } =
+    const { panel, bar, title, tools, link, grips, more, pin, min, max, close } =
       createPanelChrome(surface);
     this.overlay.appendChild(panel);
 
@@ -348,6 +351,8 @@ export class ThreeCompositor implements Compositor {
       id: surface.id,
       title: surface.title,
       el: panel,
+      titleEl: title,
+      closeEl: close,
       anchor,
       bodyId: null,
       offset: new THREE.Vector3(),
@@ -411,6 +416,20 @@ export class ThreeCompositor implements Compositor {
       panel.classList.add("dissolving");
       setTimeout(() => panel.remove(), 320);
     };
+  }
+
+  /**
+   * Rename a live window. The compass and the palette read the kernel's copy of
+   * the title, so all this has to do is the two places it is drawn.
+   */
+  retitleSurface(id: string, title: string): void {
+    const p = this.panels.get(id);
+    if (!p) return;
+    p.title = title;
+    p.titleEl.textContent = title;
+    const label = `Dismiss ${title}`;
+    p.closeEl.title = label;
+    p.closeEl.setAttribute("aria-label", label);
   }
 
   /**

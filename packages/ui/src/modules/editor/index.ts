@@ -40,7 +40,13 @@ export const editor: VoidModule = {
     const path = args?.path;
     const autoRun = args?.run === true;
 
-    ctx.openSurface({
+    // Assigned right after openSurface returns. Every use is inside an event
+    // handler, so it is always set by the time it is read — render() itself
+    // runs before the kernel has registered the surface, and a rename there
+    // would have nothing to rename.
+    let sid = "";
+
+    const surface = ctx.openSurface({
       title: path ? basename(path) : "editor",
       width: 640,
       height: 460,
@@ -233,6 +239,7 @@ export const editor: VoidModule = {
           try {
             ctx.fs.write(path, ta.value);
             status.textContent = "saved";
+            markDirty(false);
             setTimeout(() => {
               if (status.textContent === "saved") status.textContent = "";
             }, 1400);
@@ -266,9 +273,18 @@ export const editor: VoidModule = {
           program?.send(line);
         });
 
+        // The window title carries the dirty state too. The status line is
+        // inside the window, which is no use at all once the window is one of
+        // six floating in the void.
+        const markDirty = (dirty: boolean) => {
+          if (!path) return;
+          ctx.setTitle(sid, dirty ? `\u2022 ${basename(path)}` : basename(path));
+        };
+
         if (ta) {
           ta.addEventListener("input", () => {
             status.textContent = "modified";
+            markDirty(true);
             renderGutter();
           });
         }
@@ -294,6 +310,7 @@ export const editor: VoidModule = {
             ta.value = ta.value.slice(0, s) + INDENT + ta.value.slice(t);
             ta.selectionStart = ta.selectionEnd = s + INDENT.length;
             status.textContent = "modified";
+            markDirty(true);
             return;
           }
           // Keep typing out of the shell's global keybinds (space summons the
@@ -311,5 +328,7 @@ export const editor: VoidModule = {
         };
       },
     });
+
+    sid = surface.id;
   },
 };
