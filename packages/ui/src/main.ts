@@ -22,6 +22,10 @@ import { cosmos } from "./modules/cosmos";
 import { editor } from "./modules/editor";
 import { webapp } from "./modules/webapp";
 import { desktop } from "./modules/desktop";
+import { trash } from "./modules/trash";
+import { calculator } from "./modules/calculator";
+import { calendar } from "./modules/calendar";
+import { timer } from "./modules/timer";
 import { buildProjectsTree } from "./kernel/vfs";
 import { loadProjects } from "virtual:voidshell-projects";
 import { aurora } from "./modules/aurora";
@@ -106,13 +110,16 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     .register(aurora)
     .register(horizon)
     .register(shell)
-    // apps
-    // Before the editor: it claims "dir", so directories open here rather than
-    // falling through to the editor's "*" catch-all.
+    // apps. Registration order no longer decides which app opens what — see
+    // kernel/assoc.ts, where a module states its types and a priority.
     .register(workspace)
     .register(webapp)
     .register(editor)
     .register(desktop)
+    .register(trash)
+    .register(calculator)
+    .register(calendar)
+    .register(timer)
     .register(chronos)
     .register(cosmos)
     .register(settings)

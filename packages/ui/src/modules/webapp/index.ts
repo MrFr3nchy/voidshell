@@ -1,4 +1,5 @@
 import type { KernelContext, LaunchArgs, VoidModule } from "../../kernel/types";
+import { fetchHostJobs, type HostJob } from "../../runtime/hostBridge";
 
 /**
  * Hosts a running dev server as a window.
@@ -7,14 +8,22 @@ import type { KernelContext, LaunchArgs, VoidModule } from "../../kernel/types";
  * `localhost:<port>`: same-origin means the frame isn't blocked by our
  * cross-origin isolation, and the proxy stamps on the headers the nested
  * document needs to be embeddable at all.
+ *
+ * Launched without a port it used to be a rectangle reading "No port." — a
+ * launcher tile that could not do anything from the launcher, which is where
+ * most people meet it. It now asks the host what is actually running and
+ * offers those, and when there is no bridge at all it says *that* instead of
+ * describing a console command that would also fail.
  */
 export const webapp: VoidModule = {
   manifest: {
     id: "webapp",
-    name: "Web App",
+    name: "Dev Server",
     kind: "app",
     glyph: "◱",
-    version: "0.1.0",
+    blurb: "frame a running dev server",
+    singleton: false,
+    version: "0.2.0",
   },
 
   activate() {},
@@ -25,22 +34,14 @@ export const webapp: VoidModule = {
     const jobId = typeof args?.jobId === "string" ? args.jobId : null;
 
     ctx.openSurface({
-      title: port ? `:${port}` : "web app",
+      title: port ? `:${port}` : "dev server",
       width: 900,
       height: 600,
       render: (root) => {
         root.innerHTML = "";
         root.className = "wa-root";
 
-        if (!port) {
-          const msg = document.createElement("div");
-          msg.className = "wa-empty";
-          msg.textContent =
-            "No port. Start a dev server in the console (e.g. `npm run dev`) and " +
-            "this opens automatically, or use `open webapp` after one is running.";
-          root.appendChild(msg);
-          return () => root.replaceChildren();
-        }
+        if (!port) return renderPicker(root, ctx);
 
         const bar = document.createElement("div");
         bar.className = "wa-bar";
@@ -117,3 +118,86 @@ export const webapp: VoidModule = {
     });
   },
 };
+
+/**
+ * What to show when nobody said which port.
+ *
+ * Three honest states, and the difference between them matters: there is no
+ * bridge (a deployed build — nothing can run here, and that is by design), the
+ * bridge is there and nothing is serving, or these are the servers you have.
+ */
+function renderPicker(root: HTMLElement, ctx: KernelContext): () => void {
+  const head = document.createElement("div");
+  head.className = "wa-bar";
+  const title = document.createElement("span");
+  title.className = "wa-url";
+  title.textContent = "running servers";
+  const refresh = document.createElement("button");
+  refresh.className = "fm-btn";
+  refresh.textContent = "refresh";
+  head.append(title, refresh);
+
+  const list = document.createElement("div");
+  list.className = "wa-jobs";
+  root.append(head, list);
+
+  const say = (text: string, warn = false) => {
+    list.replaceChildren();
+    const msg = document.createElement("div");
+    msg.className = `wa-empty${warn ? " warn" : ""}`;
+    msg.textContent = text;
+    list.appendChild(msg);
+  };
+
+  const paint = (jobs: HostJob[]) => {
+    const serving = jobs.filter((j) => j.status === "running" && j.port);
+    if (!serving.length) {
+      say(
+        "Nothing is serving yet. Start one in the console — `npm run dev` in a " +
+          "project under /projects — and its window opens by itself."
+      );
+      return;
+    }
+    list.replaceChildren();
+    for (const job of serving) {
+      const row = document.createElement("button");
+      row.className = "wa-job";
+      const port = document.createElement("span");
+      port.className = "wa-job-port";
+      port.textContent = `:${job.port}`;
+      const cmd = document.createElement("span");
+      cmd.className = "wa-job-cmd";
+      cmd.textContent = job.cmd;
+      const where = document.createElement("span");
+      where.className = "wa-job-cwd";
+      where.textContent = job.cwd;
+      row.append(port, cmd, where);
+      row.addEventListener("click", () =>
+        ctx.launch("webapp", { path: String(job.port), jobId: job.id })
+      );
+      list.appendChild(row);
+    }
+  };
+
+  let alive = true;
+  const load = () => {
+    say("looking for running servers…");
+    fetchHostJobs()
+      .then((jobs) => alive && paint(jobs))
+      .catch((err) => {
+        if (!alive) return;
+        // The bridge only exists under `npm run dev`, and saying so is more
+        // use than a generic failure — nothing the user does in a deployed
+        // build will make this work, and it shouldn't.
+        say(err instanceof Error ? err.message : String(err), true);
+      });
+  };
+
+  refresh.addEventListener("click", load);
+  load();
+
+  return () => {
+    alive = false;
+    root.replaceChildren();
+  };
+}

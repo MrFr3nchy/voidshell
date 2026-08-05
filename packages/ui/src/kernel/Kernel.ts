@@ -1,6 +1,8 @@
 import { EventBus } from "./EventBus";
 import { Store } from "./Store";
-import { VFS } from "./vfs";
+import { VFS, basename } from "./vfs";
+import { DIR_EXT, assocKey, handlersFor } from "./assoc";
+import { extensionOf } from "./filetypes";
 import { Journal } from "./journal";
 import { KERNEL_PID, ProcTable } from "./procs";
 import {
@@ -275,6 +277,9 @@ export class Kernel {
         this.launch(id);
       },
       openPath: (p) => this.openPath(p),
+      handlersFor: (p) => this.handlersFor(p).map((m) => m.manifest),
+      openWith: (p, id) => this.openWith(p, id),
+      setDefaultApp: (p, id) => this.setDefaultApp(p, id),
       focalPoint: (dist) =>
         this.compositor.focalPoint?.(dist) ?? { x: 0, y: 0, z: -600 },
       mountAnchored: (el, anchor) =>
@@ -514,10 +519,19 @@ export class Kernel {
   }
 
   /**
-   * Route a path to the module registered for its extension. Directories
-   * always go to the file manager; unknown types fall back to whichever module
-   * declared `handles: ["*"]`.
+   * Every module that could open this path, best first.
+   *
+   * Order comes from the association rules, not from registration order — see
+   * `assoc.ts`. The user's own default, if they set one, leads the list.
    */
+  handlersFor(path: string): VoidModule[] {
+    const kind = this.fs.exists(path) && this.fs.isDir(path) ? "dir" : "file";
+    return handlersFor([...this.modules.values()], path, kind, {
+      override: (ext) => this.store.get<string>(assocKey(ext), ""),
+    });
+  }
+
+  /** Route a path to whichever module is registered for its type. */
   openPath(path: string): void {
     if (!this.fs.exists(path)) {
       console.warn(`[kernel] no such path: ${path}`);
@@ -525,21 +539,32 @@ export class Kernel {
       return;
     }
 
-    if (this.fs.isDir(path)) {
-      const browser = [...this.modules.values()].find((m) =>
-        m.handles?.includes("dir")
-      );
-      if (browser) this.launch(browser.manifest.id, { path });
+    const owner = this.handlersFor(path)[0];
+    if (owner) {
+      this.launch(owner.manifest.id, { path });
       return;
     }
 
-    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-    const mods = [...this.modules.values()];
-    const owner =
-      mods.find((m) => m.handles?.includes(ext)) ??
-      mods.find((m) => m.handles?.includes("*"));
-    if (owner) this.launch(owner.manifest.id, { path });
-    else this.notify(`nothing handles .${ext}`, "warn");
+    // Saying which type has no opener is the difference between a dead
+    // double-click and a sentence you can act on.
+    const ext = extensionOf(path);
+    this.notify(ext ? `nothing opens .${ext} files` : `nothing opens ${basename(path)}`, "warn");
+  }
+
+  /** Open a path with a named module, bypassing the association table. */
+  openWith(path: string, moduleId: string): void {
+    if (!this.fs.exists(path)) {
+      this.notify(`no such path: ${path}`, "warn");
+      return;
+    }
+    this.launch(moduleId, { path });
+  }
+
+  /** Remember which app should own this path's type from now on. */
+  setDefaultApp(path: string, moduleId: string): void {
+    const kind = this.fs.exists(path) && this.fs.isDir(path) ? "dir" : "file";
+    const ext = kind === "dir" ? DIR_EXT : extensionOf(path);
+    this.store.set(assocKey(ext), moduleId);
   }
 
   registry(): ModuleManifest[] {

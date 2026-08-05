@@ -432,7 +432,15 @@ recursive delete with nothing to preserve.
 
 Delete on the desktop and in the file manager route through the same helper.
 Dotfiles are hidden in both — `~/.Trash` and `~/.desktop-layout.json` are the
-shell's bookkeeping, not your documents — and `ls -a` still shows them.
+shell's bookkeeping, not your documents — and `ls -a` still shows them (the file
+list has a "show dotfiles" toggle in its sort menu).
+
+There is a **Trash app**, because everything above was reachable only by typing.
+It lists what you deleted, where each thing came from, and when — the manifest,
+which no plain listing of `~/.Trash` can show — with **put back** per item and a
+two-click **empty trash**. Deleting anything now raises a notice carrying an
+**undo** button, rather than a sentence telling you to go and type
+`restore note.md` in a console you may not have open.
 
 Permissions live on the *node*, not on a path prefix, so a mount carries its own
 rules wherever it's grafted in. Writing to `/projects` fails with `EROFS` the way
@@ -459,15 +467,61 @@ pinned to the directory holding the voidshell repo. Left unset it falls back to
 the parent of the Vite root, which since the workspace split is `packages/` —
 the wrong place, and empty.
 
-### The Workspace: files and shell over one directory
+### Files: browsing and typing over one directory
 
 Browsing and typing are the same activity, so they share a window and a working
 directory. Click into a folder and the prompt follows; `cd` and the list
-follows. The divider between the panes is draggable, and its position persists.
+follows; click a place in the sidebar and both go there. The divider between the
+panes is draggable, and its position persists.
+
+The app is called **Files** now. It was called "Workspace", which is also the
+name of the account state the server persists (`WorkspaceSnapshot`,
+`ApiWorkspaceHost`) — two unrelated things under one word, in a system where one
+of them is a file manager.
+
+A sidebar of **places** — Home, Desktop, Notes, Trash — sits beside a list of
+**volumes** read from the mount table, so a filesystem grafted in later appears
+without this being edited. Dropping a file onto a place moves it there; dropping
+onto Trash deletes it.
+
+The list does what a file list is expected to do: sort by kind, name, size or
+date; select more than one thing with shift and ctrl; arrow keys, Enter to open,
+Backspace to go up, Delete to trash, F2 to rename, ⌘A, ⌘I for info, and
+type-ahead. The filter box searches the whole subtree below the current
+directory, bounded so typing into it can't freeze on /projects. Every row says
+what kind of file it is, when it changed, and how big it is.
+
+The path bar is a row of clickable crumbs and a drop target — dragging a file
+onto an ancestor moves it up the tree.
 
 The console is a real shell over that FS: `cd` / `ls -la` / `cat` / `tree` /
 `find`, plus `mkdir`, `rm`, `mv`, `touch`, `df`, `mount` and `history`. It holds
 no privileges the syscall surface doesn't already grant every module.
+
+### One file menu, everywhere a file appears
+
+The desktop and the file list each grew their own right-click menu and they had
+already disagreed — different verbs, different spellings for the same operation,
+"Run" on one and not the other. `packages/ui/src/ui/fileMenu.ts` builds it once;
+callers pass only what genuinely differs (the desktop remembers icon positions,
+the list knows its working directory).
+
+It carries **Open**, **Open With ›**, **Run**, **Reveal in Files**, copy/cut/
+paste, **Rename**, **Get Info**, and **Move to Trash**. "New ›" offers a folder
+or any of the file templates in `kernel/filetypes.ts`, instead of the single
+`untitled.md` guess that taught you to create the wrong thing and rename it.
+
+**Get Info** is a panel with what `stat` has always known and nothing could
+show: kind, size, when it changed, whether it's writable, and which mount it is
+on — the fact that explains why /projects won't save.
+
+### What a file *is*, in one place
+
+`kernel/filetypes.ts` maps an extension to a glyph, a label and a family. There
+used to be three answers to "what does a .py look like": a table in the desktop,
+a bare dot in the file list, and nothing anywhere else — so the file manager drew
+every file identically. One table, four surfaces: desktop icons, file rows, the
+trash, and the editor's start pane.
 
 **The system commands.** `ps`, `kill <pid>`, `uptime`, `free` and `dmesg` read
 the process table and the journal; `whoami`, `hostname`, `env`, `export` and
@@ -561,8 +615,29 @@ named after the page it is showing.
 `launch(id, args)` is the OS's exec: modules receive `args.path` the way a
 program receives argv. A module declares what it opens via `handles`, and
 `ctx.openPath(p)` routes to whichever one claims the extension — `"dir"` goes to
-the Workspace, `"*"` is the fallback. That's the entire association table; adding
-a viewer for a new filetype is one array entry, not a change to the desktop.
+Files. Adding a viewer for a new filetype is one array entry, not a change to
+the desktop.
+
+Three rules decide the winner, in `packages/ui/src/kernel/assoc.ts`:
+
+1. **your choice** — "Open With → always open markdown here…" writes `assoc.md`
+   into the store, and that beats everything below.
+2. **whoever named the extension**, highest `priority` first.
+3. **`fallback: true`**, for unclaimed *text* only.
+
+That third rule replaced `handles: ["*"]`, which claimed PNGs and ZIPs as well
+as text — so "open with the editor" used to be offered for files it can only
+render as a screenful of replacement characters. Binary types now get no text
+fallback at all, and `openPath` says *nothing opens .png files* rather than
+opening an empty editor.
+
+Registration order no longer decides anything. It used to: `main.ts` carried a
+comment explaining that the file manager had to be registered before the editor
+or directories would open in a textarea, which is a landmine dressed as a
+comment.
+
+`ctx.handlersFor(path)` returns every candidate, best first — that's the
+"Open With" menu — and `ctx.openWith(path, id)` ignores the table entirely.
 
 Launching *with* args deliberately bypasses the singleton guard: "open this
 file" is about a specific document, so refocusing whatever the app already had
@@ -708,14 +783,63 @@ every module above renders unchanged in a 2D world. The optional methods
 (`linkSurfaces`, `lookAtSurface`, `arrange`…) degrade to no-ops, so a minimal
 backend is genuinely minimal.
 
+## The apps that come with it
+
+Beyond the world toys and the arcade, the set a desktop is expected to have:
+
+| app | what it is |
+| --- | --- |
+| **Files** | the file manager and the console, over one directory |
+| **Editor** | write, preview and run text; the fallback opener |
+| **Notes** | Markdown files in `~/notes` — nothing more |
+| **Trash** | what you deleted, where it came from, and how to get it back |
+| **Calculator** | a tape you type expressions into |
+| **Calendar** | a month, and a journal entry per day |
+| **Timer** | countdown and stopwatch |
+| **Portal** | a web browser |
+| **Dev Server** | frames a dev server the host bridge is running |
+| **Settings** | every knob, from every module |
+
+Two of those used to be windows that did nothing when opened on their own.
+**Editor** with no file said "No file. Open one from the desktop or the
+Workspace" — an app whose answer to being launched is to name two other apps.
+It opens a start pane now: what you had open recently, what's in your home
+directory, a search box, and a new-file line. **Dev Server** (which was called
+"Web App") said "No port." It now asks the host what is actually running and
+lists it, and where there is no host bridge — every deployed build — it says
+*that*, instead of describing a console command that would also fail.
+
+### Notes are files
+
+Notes used to live in the settings store under `notes.doc.<id>` keys. It worked,
+and it made the one app whose whole job is holding your text the one place in
+the shell you could not `cat`, `grep`, back up, open in the editor, or see in
+the file manager — while `~/notes` sat empty from the day the VFS created it.
+
+A note is a Markdown file in `~/notes` now, and everything follows for free: the
+desktop can hold one, the editor opens one, the trash catches one you delete by
+mistake, and the calendar writes one per day into `~/notes/journal`. Existing
+notes are migrated into files on first boot and the old keys are left alone —
+tidying up a storage model is not a reason to lose what somebody wrote.
+
+### Markdown, rendered
+
+The editor previews `.md` (⌘P, or the button), and read-only Markdown — every
+README under `/projects`, the welcome file — opens rendered. The renderer is
+~200 lines in `modules/editor/markdown.ts` rather than a dependency, and it
+builds nodes with `textContent`; it never touches `innerHTML`. That is not
+belt-and-braces: the files it renders come from a scan of whatever is on the
+machine's disk, so "the input is trusted" is not a claim anyone should make
+about it.
+
 ## What's next
 
 - A `DomCompositor` as the pragmatic fallback backend.
 - Constellation *layouts* — remembering relative positions, not just membership.
 - Multi-user: the store is already the only source of truth worth syncing.
 - Syntax highlighting in the file viewer (the language is already detected).
-- Multi-select on the desktop (marquee drag, shift-click) — everything today is
-  single-selection.
+- Multi-select on the *desktop* (marquee drag, shift-click). The file list has
+  it; desktop icons are still one at a time.
 - Undo for *edits*. Deletions are recoverable from the trash now, but a bad
   `mv` or a clobbering `>` still isn't.
 - Per-module permissions. Every module currently gets the whole syscall surface;
