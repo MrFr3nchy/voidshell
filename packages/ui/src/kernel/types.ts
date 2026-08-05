@@ -155,6 +155,11 @@ export interface SurfacePlacement {
   pinned: boolean;
   pinX: number;
   pinY: number;
+  /**
+   * Which region of the screen it fills, if it stopped floating. Optional so
+   * a session written before snapping existed still restores cleanly.
+   */
+  snap?: "full" | "left" | "right" | null;
 }
 
 /* ------------------------------------------------------------------ */

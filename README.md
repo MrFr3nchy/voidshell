@@ -41,8 +41,10 @@ two commands to run it.
 | **⌘/ctrl + shift + L** | lock the session |
 | **home** | recentre the view |
 | drag a title bar | move a window through space |
+| double-click a title bar | fill the screen / put it back |
+| drag a title bar to an edge | snap it to that half, or to the top to fill |
 | scroll a window | push it away / pull it closer |
-| drag the corner grip | resize |
+| drag any edge or corner | resize from that side |
 | drag **⁙** onto another window | bind them into a constellation |
 | drag **⁙** onto a celestial body | merge — the window rides that orbit |
 | drag **⁙** onto a singularity | the window is eaten |
@@ -82,6 +84,40 @@ ordinary DOM in an overlay whose screen position is recomputed each frame by
 projecting its 3D anchor through the camera. Clicks stay exact, text stays
 selectable, and "merging a window onto a planet" is just anchoring it to that
 planet's position.
+
+That projection is written into a single `transform` per panel per frame rather
+than into `left`/`top`. Writing those forces a layout pass per panel per frame,
+each one behind a 14px `backdrop-filter` — a transform is composited, so the
+overlay stops touching layout at all.
+
+### Windows that stop floating
+
+A panel is a rectangle projected from a point in space, which is lovely and also
+means it can never be exactly the size of your screen: there is no distance at
+which "as big as the viewport" is a stable answer, because looking around
+changes it. So a window that fills the screen **stops being projected**. It is
+laid out in screen space instead — the same trick pinning already used — while
+its 3D anchor sits untouched underneath, so putting it back is a restore rather
+than a re-placement.
+
+Double-click a title bar or hit **□** to fill the screen; drag a title bar
+against the top edge to fill, or against a side to take that half. Dragging a
+snapped window tears it off and hands it back at its old size, under the cursor.
+Only lone windows snap — a constellation travels as one object, and snapping a
+member would silently tear it out of its group.
+
+### Stacking
+
+Windows stack in **bands**: floating, then snapped, then pinned. Inside a band,
+depth decides — a near panel occludes a far one — and focus adds a bump smaller
+than the gap between bands. That bump is what makes clicking a window raise it,
+which distance alone could never express: two overlapping panels used to be
+ranked by their distance to the camera forever, and the nearer one won even when
+you were working in the other.
+
+The bands also fix pinning. Pinned panels sat at a flat `z-index: 90000` while
+floating ones scored `100000 - distance` — around 97,800 to 99,500 — so "pin to
+screen" quietly put a window *behind* the void it was meant to stick in front of.
 
 ## Settings are a registry, not a screen
 
@@ -398,14 +434,21 @@ directory it describes.
 | drag a row out of the Workspace | drop onto the void to put it on the desktop |
 | drag onto the Workspace list | move it into that directory |
 | click a window | raises it above its neighbours |
-| drag a window's right edge, bottom edge or corner | resize width, height or both |
+| drag any edge or corner | resize from that side |
 | `Delete` / `Enter` | delete or open the selected icon |
 
 Resizing accounts for the 3D projection: a drag of N screen pixels is N/scale
 *logical* pixels, since panels are drawn smaller with distance. There is a grip
-per axis — the east edge takes width, the south edge height, the corner both —
-because a panel that is the right width but the wrong height is the common case,
-and a corner-only grip makes you fight whichever dimension was already correct.
+on every edge and corner, because a panel that is the right width but the wrong
+height is the common case, and a corner-only grip makes you fight whichever
+dimension was already correct.
+
+It also has to move the window. A panel is *centred* on its anchor — drawn with
+`translate(-50%, -50%)` about a projected point — so widening it pushes both
+edges outward by half the change. Writing the new width alone therefore made the
+grip travel at half the speed of the cursor and dragged the opposite edge along
+with it. Every resize walks the anchor half a delta the other way, which pins
+the edge you aren't holding and lets the one you are holding track the pointer.
 
 Dragging *out of* `/projects` copies rather than moves — the source is a
 read-only mount, and a move would fail with `EROFS` the user can do nothing

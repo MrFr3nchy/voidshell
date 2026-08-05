@@ -28,6 +28,10 @@ interface PanelEntry {
   pinX: number;
   pinY: number;
   minimized: boolean;
+  /** Filling a region of the screen: the window has left the void entirely. */
+  snap: SnapMode | null;
+  /** Where to put it back when it unsnaps. */
+  restore: RestoreBox | null;
   width: number;
   height: number;
   /** Per-panel phase so ambient drift doesn't move everything in lockstep. */
@@ -35,7 +39,22 @@ interface PanelEntry {
   /** Last computed screen position, reused by tethers and link-dragging. */
   sx: number;
   sy: number;
+  /** Last computed projection scale. Resizing needs it to stay in step. */
+  scale: number;
   onScreen: boolean;
+}
+
+/** How a window fills the screen when it stops floating. */
+type SnapMode = "full" | "left" | "right";
+
+/** Everything needed to undo a snap. */
+interface RestoreBox {
+  anchor: THREE.Vector3;
+  width: number;
+  height: number;
+  pinned: boolean;
+  pinX: number;
+  pinY: number;
 }
 
 /** A piece of DOM pinned to a world position — desktop icons and the like. */
@@ -86,14 +105,50 @@ const FADE_RANGE = 1400;
 /** How close (in screen px) a link-drag must get to count as a hit. */
 const BODY_HIT_RADIUS = 110;
 
-/** Which edges a panel can be dragged by. */
-type ResizeAxis = "e" | "s" | "se";
-const RESIZE_AXES: ResizeAxis[] = ["e", "s", "se"];
+/**
+ * Which edges a panel can be dragged by. All eight, because a window that can
+ * only grow down-and-right forces you to move it every time you make it bigger.
+ */
+type ResizeAxis = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+const RESIZE_AXES: ResizeAxis[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 const RESIZE_TITLES: Record<ResizeAxis, string> = {
-  e: "drag to resize width",
+  n: "drag to resize height",
   s: "drag to resize height",
+  e: "drag to resize width",
+  w: "drag to resize width",
+  ne: "drag to resize",
+  nw: "drag to resize",
   se: "drag to resize",
+  sw: "drag to resize",
 };
+
+const MIN_PANEL_W = 240;
+const MIN_PANEL_H = 140;
+
+/**
+ * Stacking bands.
+ *
+ * Depth alone used to decide the whole order, which meant clicking a window
+ * could not raise it: two overlapping panels were ranked by their distance to
+ * the camera forever, and the nearer one won even when you were working in the
+ * other. Focus now adds a bump inside the band, so a click raises a window
+ * without letting it jump over a class of window that should always be above
+ * it. The bump is deliberately smaller than the gap between bands.
+ *
+ * This also fixes pinned panels: at a flat 90000 they sat *below* every
+ * floating panel (which score ~97800-99500), so "pin to screen" quietly put a
+ * window behind the void it was supposed to stick in front of.
+ */
+const Z_FLOATING = 0;
+const Z_SNAPPED = 500_000;
+const Z_PINNED = 1_000_000;
+const Z_FOCUS_BUMP = 150_000;
+
+/** Viewport insets for a snapped window: clear of the status bar, and framed. */
+const SNAP_INSET = { top: 52, right: 16, bottom: 16, left: 16 };
+
+/** How close to an edge a title-bar drag must get before it offers to snap. */
+const SNAP_EDGE = 26;
 
 /**
  * The spectacle compositor.
@@ -119,6 +174,7 @@ export class ThreeCompositor implements Compositor {
   private particles!: THREE.Points;
   private tetherSvg!: SVGSVGElement;
   private tetherNodes = new Map<string, SVGGElement>();
+  private snapGhost!: HTMLElement;
 
   private uniforms = {
     uTime: { value: 0 },
@@ -221,6 +277,10 @@ export class ThreeCompositor implements Compositor {
     this.tetherSvg.setAttribute("class", "vs-tethers");
     this.overlay.appendChild(this.tetherSvg);
 
+    this.snapGhost = document.createElement("div");
+    this.snapGhost.className = "vs-snap-ghost";
+    this.overlay.appendChild(this.snapGhost);
+
     this.compass = new Compass(mounts.hud, (kind, id) => {
       if (kind === "group") this.lookAtGroup(id);
       else this.lookAtSurface(id);
@@ -281,8 +341,9 @@ export class ThreeCompositor implements Compositor {
     tools.className = "vs-panel-tools";
     const pin = mkTool("vs-panel-pin", "\u25c8", "Pin to screen");
     const min = mkTool("vs-panel-min", "\u2013", "Collapse");
+    const max = mkTool("vs-panel-max", "\u25a1", "Fill the screen");
     const close = mkTool("vs-panel-close", "\u2715", `Dismiss ${surface.title}`);
-    tools.append(pin, min, close);
+    tools.append(pin, min, max, close);
 
     bar.append(link, title, tools);
 
@@ -300,7 +361,7 @@ export class ThreeCompositor implements Compositor {
       grips[axis] = g;
     }
 
-    panel.append(bar, body, grips.e, grips.s, grips.se);
+    panel.append(bar, body, ...RESIZE_AXES.map((a) => grips[a]));
     this.overlay.appendChild(panel);
 
     // Anchor the new panel where the user asked (drag-from-drawer) or in front
@@ -334,11 +395,14 @@ export class ThreeCompositor implements Compositor {
       pinX: 0,
       pinY: 0,
       minimized: false,
+      snap: null,
+      restore: null,
       width: surface.width,
       height: surface.height,
       phase: Math.random() * Math.PI * 2,
       sx: 0,
       sy: 0,
+      scale: 1,
       onScreen: true,
     };
     this.panels.set(surface.id, entry);
@@ -352,7 +416,14 @@ export class ThreeCompositor implements Compositor {
 
     pin.addEventListener("click", () => this.togglePin(surface.id));
     min.addEventListener("click", () => this.toggleMinimize(surface.id));
+    max.addEventListener("click", () => this.toggleSnap(surface.id, "full"));
     close.addEventListener("click", () => closeSurfaceById(surface.id));
+
+    // The gesture every windowing system has had for thirty years.
+    bar.addEventListener("dblclick", (e) => {
+      if (tools.contains(e.target as Node) || link.contains(e.target as Node)) return;
+      this.toggleSnap(surface.id, "full");
+    });
 
     requestAnimationFrame(() => panel.classList.replace("materializing", "active"));
     this.setActive(surface.id);
@@ -417,6 +488,9 @@ export class ThreeCompositor implements Compositor {
   private togglePin(id: string): void {
     const p = this.panels.get(id);
     if (!p) return;
+    // Pinning and snapping are both "stop being projected"; a window can't do
+    // both, so asking for one drops the other.
+    if (p.snap) this.unsnap(p);
     if (p.pinned) {
       p.pinned = false;
       this.anchorFromScreen(p.anchor, p.pinX, p.pinY, REST_DEPTH);
@@ -435,6 +509,97 @@ export class ThreeCompositor implements Compositor {
     p.minimized = !p.minimized;
     p.el.classList.toggle("minimized", p.minimized);
     p.el.style.height = p.minimized ? "" : `${p.height}px`;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Snapping — the way out of the void                                  */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Fill a region of the screen with a window, or put it back.
+   *
+   * A panel is normally a rectangle projected from a point in 3D, which is
+   * lovely and also means it can never be exactly the size of your screen —
+   * there is no distance at which "as big as the viewport" is a stable answer,
+   * because the projection changes it whenever you look around. So a snapped
+   * window stops being projected at all and is laid out in screen space, the
+   * same trick pinning already used. Its 3D anchor is kept untouched underneath
+   * so unsnapping is a restore rather than a re-placement.
+   */
+  private toggleSnap(id: string, mode: SnapMode): void {
+    const p = this.panels.get(id);
+    if (!p) return;
+    if (p.snap === mode) this.unsnap(p);
+    else this.setSnap(p, mode);
+  }
+
+  private setSnap(p: PanelEntry, mode: SnapMode): void {
+    // Only capture the restore box on the way *in*, so going full -> left ->
+    // full and then unsnapping still lands on the original floating window
+    // rather than on whichever snap you passed through last.
+    if (!p.snap) {
+      p.restore = {
+        anchor: p.anchor.clone(),
+        width: p.width,
+        height: p.height,
+        pinned: p.pinned,
+        pinX: p.pinX,
+        pinY: p.pinY,
+      };
+    }
+    this.freeFromBody(p);
+    p.snap = mode;
+    p.pinned = false;
+    p.minimized = false;
+    p.el.classList.remove("pinned", "minimized");
+    p.el.classList.add("snapped");
+    p.el.dataset.snap = mode;
+    this.setActive(p.id);
+  }
+
+  private unsnap(p: PanelEntry): void {
+    if (!p.snap) return;
+    p.snap = null;
+    p.el.classList.remove("snapped");
+    delete p.el.dataset.snap;
+
+    const box = p.restore;
+    p.restore = null;
+    if (!box) return;
+    p.anchor.copy(box.anchor);
+    p.width = box.width;
+    p.height = box.height;
+    p.pinned = box.pinned;
+    p.pinX = box.pinX;
+    p.pinY = box.pinY;
+    p.el.classList.toggle("pinned", p.pinned);
+    p.el.style.width = `${p.width}px`;
+    p.el.style.height = `${p.height}px`;
+  }
+
+  /** Where a snapped window sits, in screen pixels. */
+  private snapRect(mode: SnapMode): {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const { top, right, bottom, left } = SNAP_INSET;
+    const h = Math.max(MIN_PANEL_H, vh - top - bottom);
+    const full = Math.max(MIN_PANEL_W, vw - left - right);
+    if (mode === "full") return { x: left, y: top, w: full, h };
+
+    // Halves share the gutter between them so the two together look like one
+    // split rather than two windows that happen to be adjacent.
+    const half = Math.max(MIN_PANEL_W, (full - right) / 2);
+    return {
+      x: mode === "left" ? left : vw - right - half,
+      y: top,
+      w: half,
+      h,
+    };
   }
 
   /* ------------------------------------------------------------------ */
@@ -531,8 +696,10 @@ export class ThreeCompositor implements Compositor {
     const p = this.panels.get(id);
     if (!p) return;
 
-    this.freeFromBody(p);
-    if (!p.pinned) {
+    // A snapped window is already as present as it can get; hauling the camera
+    // around to "face" something that fills the screen would just spin the void.
+    if (!p.snap) this.freeFromBody(p);
+    if (!p.pinned && !p.snap) {
       const dist = p.anchor.distanceTo(this.camera.position);
       if (dist > REST_DEPTH) {
         p.anchor
@@ -559,7 +726,9 @@ export class ThreeCompositor implements Compositor {
 
   lookAtSurface(id: string): void {
     const p = this.panels.get(id);
-    if (!p || p.pinned) return;
+    // Pinned and snapped windows are stuck to the glass; there is no direction
+    // to turn towards, and aiming at their stale anchor would spin the void.
+    if (!p || p.pinned || p.snap) return;
     this.aimAt(this.worldOf(p, this.tmpWorld));
   }
 
@@ -776,7 +945,7 @@ export class ThreeCompositor implements Compositor {
     if (!g) return;
     const members = [...g.members]
       .map((m) => this.panels.get(m))
-      .filter((p): p is PanelEntry => Boolean(p) && !p!.pinned);
+      .filter((p): p is PanelEntry => Boolean(p) && !p!.pinned && !p!.snap);
     if (members.length < 2) return;
 
     const centre = this.groupCentre(g);
@@ -810,7 +979,7 @@ export class ThreeCompositor implements Compositor {
     let n = 0;
     for (const m of g.members) {
       const p = this.panels.get(m);
-      if (!p || p.pinned) continue;
+      if (!p || p.pinned || p.snap) continue;
       centre.add(this.worldOf(p, new THREE.Vector3()));
       n++;
     }
@@ -822,7 +991,9 @@ export class ThreeCompositor implements Compositor {
   /* ------------------------------------------------------------------ */
 
   arrange(mode: ArrangeMode): void {
-    const list = [...this.panels.values()].filter((p) => !p.pinned);
+    // Snapped and pinned windows aren't in the world, so a formation has
+    // nowhere to put them.
+    const list = [...this.panels.values()].filter((p) => !p.pinned && !p.snap);
     const n = list.length;
     if (!n) return;
 
@@ -890,18 +1061,28 @@ export class ThreeCompositor implements Compositor {
       p.pinY = place.pinY;
       p.el.classList.add("pinned");
     }
+    // Applied last, so the restore box it captures is the floating window we
+    // just rebuilt — restoring a maximized window and then un-maximizing it
+    // has to land on the size it had before it was maximized, not on the
+    // screen-sized box it was wearing when the session was written.
+    if (place.snap) this.setSnap(p, place.snap);
   }
 
   snapshot(): Record<string, SurfacePlacement> {
     const out: Record<string, SurfacePlacement> = {};
     for (const [id, p] of this.panels) {
+      // A snapped window's own width/height are its region's, which would
+      // become its "floating" size on the next boot. Its restore box is the
+      // one worth writing down.
+      const box = p.snap && p.restore ? p.restore : p;
       out[id] = {
-        anchor: [p.anchor.x, p.anchor.y, p.anchor.z],
-        width: p.width,
-        height: p.height,
-        pinned: p.pinned,
-        pinX: p.pinX,
-        pinY: p.pinY,
+        anchor: [box.anchor.x, box.anchor.y, box.anchor.z],
+        width: box.width,
+        height: box.height,
+        pinned: box.pinned,
+        pinX: box.pinX,
+        pinY: box.pinY,
+        snap: p.snap,
       };
     }
     return out;
@@ -978,9 +1159,12 @@ export class ThreeCompositor implements Compositor {
       this.tmpNdc.copy(a.anchor).project(this.camera);
       const dist = a.anchor.distanceTo(this.camera.position);
       const scale = Math.max(0.45, Math.min(1.35, 700 / dist));
-      a.el.style.left = `${((this.tmpNdc.x * 0.5 + 0.5) * w).toFixed(1)}px`;
-      a.el.style.top = `${((-this.tmpNdc.y * 0.5 + 0.5) * h).toFixed(1)}px`;
-      a.el.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+      const x = (this.tmpNdc.x * 0.5 + 0.5) * w;
+      const y = (-this.tmpNdc.y * 0.5 + 0.5) * h;
+      // Transform-only, for the same reason panels are — see projectPanels.
+      a.el.style.transform =
+        `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)` +
+        ` translate(-50%, -50%) scale(${scale.toFixed(3)})`;
       a.el.style.zIndex = `${Math.max(0, Math.round(50000 - dist))}`;
     }
   }
@@ -1015,22 +1199,43 @@ export class ThreeCompositor implements Compositor {
     }
   }
 
-  /** Place every panel's DOM at the screen projection of its 3D anchor. */
+  /**
+   * Place every panel's DOM at the screen projection of its 3D anchor.
+   *
+   * Position goes through `transform` rather than `left`/`top`. Writing those
+   * every frame for every panel forces a layout pass per panel per frame — with
+   * a 14px backdrop-filter behind each one, which is the expensive case. A
+   * transform is composited, so the whole overlay stops touching layout at all.
+   */
   private projectPanels(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const camPos = this.camera.position;
 
     for (const p of this.panels.values()) {
+      if (p.snap) {
+        const r = this.snapRect(p.snap);
+        p.sx = r.x + r.w / 2;
+        p.sy = r.y + r.h / 2;
+        p.scale = 1;
+        p.onScreen = true;
+        p.el.style.display = "";
+        p.el.style.width = `${r.w}px`;
+        if (!p.minimized) p.el.style.height = `${r.h}px`;
+        this.place(p, p.sx, p.sy, 1);
+        p.el.style.zIndex = `${Z_SNAPPED + this.focusBump(p)}`;
+        p.el.style.setProperty("--vs-depth-fade", "1");
+        continue;
+      }
+
       if (p.pinned) {
         p.sx = p.pinX;
         p.sy = p.pinY;
+        p.scale = 1;
         p.onScreen = true;
         p.el.style.display = "";
-        p.el.style.left = `${p.pinX.toFixed(1)}px`;
-        p.el.style.top = `${p.pinY.toFixed(1)}px`;
-        p.el.style.transform = "translate(-50%, -50%) scale(1)";
-        p.el.style.zIndex = "90000";
+        this.place(p, p.pinX, p.pinY, 1);
+        p.el.style.zIndex = `${Z_PINNED + this.focusBump(p)}`;
         p.el.style.setProperty("--vs-depth-fade", "1");
         continue;
       }
@@ -1054,22 +1259,35 @@ export class ThreeCompositor implements Compositor {
 
       p.sx = x;
       p.sy = y;
+      p.scale = scale;
       p.onScreen =
         Math.abs(this.tmpNdc.x) <= 1.08 && Math.abs(this.tmpNdc.y) <= 1.08;
 
-      p.el.style.left = `${x.toFixed(1)}px`;
-      p.el.style.top = `${y.toFixed(1)}px`;
-      p.el.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+      this.place(p, x, y, scale);
 
-      // Stack by real depth so a near panel always occludes a far one, and fade
-      // distant panels into the void so depth reads as depth, not just size.
-      p.el.style.zIndex = `${Math.max(0, Math.round(100000 - dist))}`;
+      // Stack by real depth so a near panel always occludes a far one, then let
+      // focus lift the active window inside that band — clicking a window has
+      // to be able to raise it, which distance alone could never express.
+      p.el.style.zIndex = `${
+        Z_FLOATING + Math.max(0, Math.round(100000 - dist)) + this.focusBump(p)
+      }`;
       // Set as a custom property, not inline opacity: the materialize/dissolve
       // class rules are more specific and so still win during those animations.
       const fade =
         1 - Math.min(this.cfg.fade, Math.max(0, (dist - FADE_START) / FADE_RANGE));
       p.el.style.setProperty("--vs-depth-fade", fade.toFixed(3));
     }
+  }
+
+  /** One transform write per panel per frame — no layout, no reflow. */
+  private place(p: PanelEntry, x: number, y: number, scale: number): void {
+    p.el.style.transform =
+      `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)` +
+      ` translate(-50%, -50%) scale(${scale.toFixed(3)})`;
+  }
+
+  private focusBump(p: PanelEntry): number {
+    return p.id === this.activeId ? Z_FOCUS_BUMP : 0;
   }
 
   /**
@@ -1167,7 +1385,7 @@ export class ThreeCompositor implements Compositor {
     }
 
     for (const p of this.panels.values()) {
-      if (p.pinned || claimed.has(p.id)) continue;
+      if (p.pinned || p.snap || claimed.has(p.id)) continue;
       const world = this.worldOf(p, new THREE.Vector3());
       const bearing = this.bearingOf(world);
       if (!bearing) continue;
@@ -1230,6 +1448,7 @@ export class ThreeCompositor implements Compositor {
     let dist = 0;
     let grabX = 0;
     let grabY = 0;
+    let pendingSnap: SnapMode | null = null;
     const start = new THREE.Vector3();
     const others: { p: PanelEntry; base: THREE.Vector3 }[] = [];
 
@@ -1238,6 +1457,26 @@ export class ThreeCompositor implements Compositor {
       const p = this.panels.get(id);
       if (!p) return;
       this.setActive(id);
+      pendingSnap = null;
+
+      // Tearing a snapped window off its region. It comes back to its floating
+      // size straight under the cursor, rather than leaping to wherever it used
+      // to live — you asked for it *here*.
+      if (p.snap) {
+        this.unsnap(p);
+        this.anchorFromScreen(p.anchor, e.clientX, e.clientY, REST_DEPTH);
+        dist = REST_DEPTH;
+        grabX = 0;
+        grabY = 0;
+        start.copy(p.anchor);
+        others.length = 0;
+        dragging = true;
+        bar.setPointerCapture(e.pointerId);
+        p.el.classList.add("dragging");
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
 
       if (p.pinned) {
         // Pinned panels are flat: drag them like any other floating window.
@@ -1264,7 +1503,7 @@ export class ThreeCompositor implements Compositor {
           for (const m of g.members) {
             if (m === id) continue;
             const other = this.panels.get(m);
-            if (!other || other.pinned) continue;
+            if (!other || other.pinned || other.snap) continue;
             this.freeFromBody(other);
             others.push({ p: other, base: other.anchor.clone() });
           }
@@ -1282,6 +1521,13 @@ export class ThreeCompositor implements Compositor {
       if (!dragging) return;
       const p = this.panels.get(id);
       if (!p) return;
+
+      // Shove a window against an edge of the screen and it offers to fill it.
+      // Only offered for lone windows: a constellation travels as one object,
+      // and snapping one member would silently tear it out of its group.
+      pendingSnap = p.groupId ? null : this.edgeSnapAt(e.clientX, e.clientY);
+      this.showSnapGhost(pendingSnap);
+
       if (p.pinned) {
         p.pinX = e.clientX - grabX;
         p.pinY = e.clientY - grabY;
@@ -1314,10 +1560,39 @@ export class ThreeCompositor implements Compositor {
       dragging = false;
       others.length = 0;
       bar.releasePointerCapture(e.pointerId);
-      this.panels.get(id)?.el.classList.remove("dragging");
+      const p = this.panels.get(id);
+      p?.el.classList.remove("dragging");
+      this.showSnapGhost(null);
+      if (p && pendingSnap) this.setSnap(p, pendingSnap);
+      pendingSnap = null;
     };
     bar.addEventListener("pointerup", end);
     bar.addEventListener("pointercancel", end);
+  }
+
+  /** Which region, if any, a title-bar drag ending here is asking to fill. */
+  private edgeSnapAt(x: number, y: number): SnapMode | null {
+    if (y <= SNAP_EDGE) return "full";
+    if (x <= SNAP_EDGE) return "left";
+    if (x >= window.innerWidth - SNAP_EDGE) return "right";
+    return null;
+  }
+
+  /**
+   * The outline that says where a window is about to land. Without it, snapping
+   * is a surprise that happens on release — the preview is what turns it into a
+   * thing you chose.
+   */
+  private showSnapGhost(mode: SnapMode | null): void {
+    if (!mode) {
+      this.snapGhost.classList.remove("live");
+      return;
+    }
+    const r = this.snapRect(mode);
+    this.snapGhost.style.transform = `translate3d(${r.x}px, ${r.y}px, 0)`;
+    this.snapGhost.style.width = `${r.w}px`;
+    this.snapGhost.style.height = `${r.h}px`;
+    this.snapGhost.classList.add("live");
   }
 
   /**
@@ -1426,17 +1701,32 @@ export class ThreeCompositor implements Compositor {
   /**
    * Drag-to-resize, in screen pixels corrected for the panel's distance scale.
    *
-   * `axis` picks which dimensions move: the east edge takes width only, the
-   * south edge height only, and the corner both. Splitting them matters because
-   * a panel that is the right width but the wrong height is the common case,
-   * and the corner forces you to fight whichever dimension was already correct.
+   * `axis` picks which edges move. All eight exist because a panel that is the
+   * right width but the wrong height is the common case, and a corner-only grip
+   * makes you fight whichever dimension was already correct.
+   *
+   * The subtle part is that a panel is *centred* on its anchor — it is drawn
+   * with `translate(-50%, -50%)` about a projected point. So growing it moves
+   * both edges outward by half the change, and simply writing the new width
+   * made the grip travel at half the speed of the cursor and dragged the
+   * opposite edge along with it. Every resize therefore also walks the anchor
+   * half a delta the other way, which is what pins the edge you *aren't*
+   * holding and lets the one you are holding track the pointer exactly.
    */
   private bindResize(id: string, grip: HTMLElement, axis: ResizeAxis): void {
+    const movesX = axis.includes("e") || axis.includes("w");
+    const movesY = axis.includes("n") || axis.includes("s");
+    const signX = axis.includes("w") ? -1 : 1;
+    const signY = axis.includes("n") ? -1 : 1;
+
     let active = false;
     let startX = 0;
     let startY = 0;
     let startW = 0;
     let startH = 0;
+    let startCX = 0;
+    let startCY = 0;
+    let dist = 0;
     let scale = 1;
 
     grip.addEventListener("pointerdown", (e) => {
@@ -1447,9 +1737,15 @@ export class ThreeCompositor implements Compositor {
       startY = e.clientY;
       startW = p.width;
       startH = p.height;
-      const m = /scale\(([\d.]+)\)/.exec(p.el.style.transform);
-      scale = m ? Math.max(0.2, Number(m[1])) : 1;
+      startCX = p.sx;
+      startCY = p.sy;
+      scale = Math.max(0.2, p.scale);
+      // From where the panel actually *is*, which for a merged panel is its
+      // body's position rather than its own (stale) anchor.
+      dist = this.worldOf(p, this.tmpWorld).distanceTo(this.camera.position);
+      this.setActive(id);
       grip.setPointerCapture(e.pointerId);
+      p.el.classList.add("resizing");
       e.preventDefault();
       e.stopPropagation();
     });
@@ -1458,13 +1754,41 @@ export class ThreeCompositor implements Compositor {
       if (!active) return;
       const p = this.panels.get(id);
       if (!p) return;
-      if (axis !== "s") {
-        p.width = Math.max(240, Math.round(startW + (e.clientX - startX) / scale));
+
+      // A snapped window is the size of its region by definition; resizing one
+      // is a request to go back to being a window you can size.
+      if (p.snap) this.unsnap(p);
+
+      let cx = startCX;
+      let cy = startCY;
+
+      if (movesX) {
+        const want = startW + (signX * (e.clientX - startX)) / scale;
+        p.width = Math.max(MIN_PANEL_W, Math.round(want));
         p.el.style.width = `${p.width}px`;
+        cx = startCX + (signX * (p.width - startW) * scale) / 2;
       }
-      if (axis !== "e") {
-        p.height = Math.max(140, Math.round(startH + (e.clientY - startY) / scale));
+      if (movesY) {
+        const want = startH + (signY * (e.clientY - startY)) / scale;
+        p.height = Math.max(MIN_PANEL_H, Math.round(want));
         if (!p.minimized) p.el.style.height = `${p.height}px`;
+        cy = startCY + (signY * (p.height - startH) * scale) / 2;
+      }
+
+      // Walk the panel to the new centre so the opposite edge stays put. A
+      // merged panel is positioned by its offset from a body, so that is the
+      // thing to move — writing its anchor would have no visible effect.
+      if (p.pinned) {
+        p.pinX = cx;
+        p.pinY = cy;
+      } else if (p.bodyId) {
+        const body = this.bodies.get(p.bodyId);
+        if (body) {
+          this.anchorFromScreen(this.tmpWorld, cx, cy, dist);
+          p.offset.copy(this.tmpWorld).sub(body.position);
+        }
+      } else {
+        this.anchorFromScreen(p.anchor, cx, cy, dist);
       }
     });
 
@@ -1472,6 +1796,7 @@ export class ThreeCompositor implements Compositor {
       if (!active) return;
       active = false;
       grip.releasePointerCapture(e.pointerId);
+      this.panels.get(id)?.el.classList.remove("resizing");
     };
     grip.addEventListener("pointerup", end);
     grip.addEventListener("pointercancel", end);
@@ -1487,7 +1812,8 @@ export class ThreeCompositor implements Compositor {
       "wheel",
       (e) => {
         const p = this.panels.get(id);
-        if (!p || p.pinned) return;
+        // Snapped windows have no depth to push into.
+        if (!p || p.pinned || p.snap) return;
 
         const content = (e.target as HTMLElement).closest?.(".vs-panel-content");
         if (content && content.scrollHeight > content.clientHeight) return;
