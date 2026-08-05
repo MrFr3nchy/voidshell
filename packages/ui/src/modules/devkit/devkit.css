@@ -1,0 +1,121 @@
+/* devkit — the module manager's window.
+ *
+ * Deliberately sparse: this is a system tool, and everything it shows is a
+ * filename, an id, or a verb.
+ */
+
+.dk-root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dk-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.dk-blurb {
+  opacity: 0.55;
+  letter-spacing: 0.02em;
+}
+
+.dk-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dk-empty {
+  opacity: 0.45;
+  padding: 18px 4px;
+  text-align: center;
+}
+
+.dk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.dk-row:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+/* A loaded module is the one state worth seeing at a glance. */
+.dk-row.is-live {
+  border-color: color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.dk-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dk-state {
+  opacity: 0.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dk-row.is-live .dk-state {
+  opacity: 0.8;
+}
+
+.dk-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.dk-btn {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.dk-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.dk-note {
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* An author's syntax error is the most important thing in the window. */
+.dk-note.is-bad {
+  background: color-mix(in srgb, #ff6b6b 18%, transparent);
+}
+
+/* This element is shown and hidden with the `hidden` property, and the rule
+ * above sets `display`. Any author rule setting display outranks the UA
+ * stylesheet's [hidden] { display: none }, so without this the note would
+ * never actually hide. Same failure the power veil already shipped once. */
+.dk-note[hidden] {
+  display: none;
+}
