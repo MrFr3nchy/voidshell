@@ -1,5 +1,6 @@
 import type { Surface } from "../kernel/types";
 import type { MenuItem } from "../ui/contextMenu";
+import { FORMS, PLAIN } from "./surfaceForms";
 
 export const GROUP_COLORS = ["#4fe3d0", "#c05cff", "#ff8a5c", "#7ea8ff", "#5fd6a8"];
 
@@ -102,6 +103,8 @@ export interface MenuModel {
   minimized: boolean;
   snapped: boolean;
   merged: boolean;
+  /** The silhouette it currently wears, or PLAIN for a glass panel. */
+  form: string;
   group: { color: string; rigid: boolean } | null;
 }
 
@@ -114,6 +117,7 @@ export interface MenuActions {
   snapRight(): void;
   nudge(dir: number): void;
   release(): void;
+  setForm(formId: string): void;
   setRigid(rigid: boolean): void;
   setColor(color: string): void;
   dissolve(): void;
@@ -126,30 +130,52 @@ export interface MenuActions {
  * Everything offered here is a property of *this* window, or of the
  * constellation it belongs to. That's the dividing line: things scoped to a
  * window belong on the window, and only genuinely global state should cost you
- * a trip to a settings screen.
+ * a trip to a settings screen. Window shape used to be on the wrong side of it,
+ * in Settings, assigned per module — so shaping one lava lamp shaped all of
+ * them, and the way back was a screen a shape could hide.
  *
  * It builds `MenuItem[]` rather than its own DOM so that right-clicking a title
  * bar and right-clicking a desktop icon go through one menu implementation —
  * the previous version of this file grew a second one.
  */
 export function panelMenuItems(model: MenuModel, actions: MenuActions): MenuItem[] {
+  const shaped = model.form !== PLAIN;
+
+  // First, and always present. It is the one entry that can undo a state which
+  // hides every other way of undoing it, so it does not get to be conditional
+  // and it does not get to be buried.
   const items: MenuItem[] = [
-    {
-      label: model.snapped ? "back into the void" : "fill the screen",
-      action: actions.toggleSnap,
-    },
-    { label: "fill the left half", action: actions.snapLeft },
-    { label: "fill the right half", action: actions.snapRight },
-    {
-      label: model.pinned ? "unpin from screen" : "pin to screen",
-      action: actions.togglePin,
-      separated: true,
-    },
-    {
+    { label: "window shape", submenu: shapeItems(model.form, actions.setForm) },
+  ];
+
+  // A shaped window is an object rather than a rectangle: there is no honest
+  // way for a lava lamp to fill the left half of the screen, and nothing to
+  // collapse to once the silhouette is drawn over the title bar. The compositor
+  // refuses both; offering them here would be entries that quietly do nothing.
+  if (!shaped) {
+    items.push(
+      {
+        label: model.snapped ? "back into the void" : "fill the screen",
+        action: actions.toggleSnap,
+        separated: true,
+      },
+      { label: "fill the left half", action: actions.snapLeft },
+      { label: "fill the right half", action: actions.snapRight }
+    );
+  }
+
+  items.push({
+    label: model.pinned ? "unpin from screen" : "pin to screen",
+    action: actions.togglePin,
+    separated: true,
+  });
+
+  if (!shaped) {
+    items.push({
       label: model.minimized ? "expand" : "collapse",
       action: actions.toggleMinimize,
-    },
-  ];
+    });
+  }
 
   // Depth is meaningless for a window that has left the world, so the two
   // controls that only move it through space drop out rather than sit there
@@ -184,6 +210,24 @@ export function panelMenuItems(model: MenuModel, actions: MenuActions): MenuItem
 
   items.push({ label: "close window", action: actions.close, danger: true, separated: true });
   return items;
+}
+
+/**
+ * Every shape, with a tick against the one in force.
+ *
+ * "glass panel" leads rather than trailing the list: it is the way out, and the
+ * person reaching for it is the person who just made a window they can't read.
+ */
+function shapeItems(current: string, setForm: (formId: string) => void): MenuItem[] {
+  const mark = (id: string, label: string) =>
+    `${current === id ? "\u2713 " : "\u2002 "}${label}`;
+  return [
+    { label: mark(PLAIN, "glass panel"), action: () => setForm(PLAIN) },
+    ...FORMS.map((f) => ({
+      label: mark(f.id, f.label),
+      action: () => setForm(f.id),
+    })),
+  ];
 }
 
 function tool(cls: string, glyph: string, label: string): HTMLButtonElement {

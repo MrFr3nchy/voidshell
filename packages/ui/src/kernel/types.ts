@@ -155,6 +155,18 @@ export interface Compositor {
    * the very next mountSurface — this is how drag-an-app-into-the-void works.
    */
   setSpawnHint?(x: number, y: number): void;
+  /**
+   * Give one window a silhouette instead of a rectangle, or `"plain"` to take
+   * it away.
+   *
+   * A property of the window rather than of the app that opened it, which is
+   * the difference between shaping one lava lamp and shaping every lava lamp.
+   * Optional because a flat compositor may reasonably have no notion of a
+   * window being any shape but rectangular.
+   */
+  setSurfaceForm?(id: string, formId: string): void;
+  /** What shape a window is wearing right now. */
+  surfaceForm?(id: string): string;
   /** Restore a window's exact place in space (used by session restore). */
   placeSurface?(id: string, place: SurfacePlacement): void;
   /** Snapshot every window's place in space, for persistence. */
@@ -187,6 +199,15 @@ export interface SurfacePlacement {
   snap?: "full" | "left" | "right" | null;
   /** Collapsed to just its title bar. */
   minimized?: boolean;
+  /**
+   * The silhouette it was wearing, or `"plain"` for an ordinary glass panel.
+   *
+   * Here rather than in a settings key because a shape belongs to a window, and
+   * this is where the rest of what belongs to a window is written down. Optional
+   * for the same reason `snap` is: a session saved before shapes moved off the
+   * module restores without one and picks up the module's default instead.
+   */
+  form?: string;
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,5 +1,3 @@
-import type { KernelContext } from "../kernel/types";
-
 /**
  * Windows that aren't windows.
  *
@@ -8,24 +6,25 @@ import type { KernelContext } from "../kernel/types";
  * being a picture of an object and becomes the object, which for the ambient
  * apps is the whole point of them.
  *
- * Which app wears which shape is a **setting**, not a constant. The first pass
- * at this hard-coded the mapping, which was the same mistake app shelves exist
- * to avoid: a silhouette is an opinion about your own desktop, so the table
- * here is only a starting point and every entry is reassignable in Settings.
+ * ## What lives here, and what doesn't
  *
- * ## Why this watches the DOM instead of living in the compositor
+ * This file is a catalogue and a pair of DOM verbs: the shapes themselves, and
+ * how to put one on a panel or take it off. It holds no state and reads no
+ * settings.
  *
- * `ThreeCompositor.mountSurface` builds its panel markup inline and never
- * calls `createPanelChrome` — that module is currently dead code, which is why
- * the first attempt at this appeared to do nothing at all. The honest
- * long-term fix is to unify the two and let the compositor own window shape.
+ * Which window wears which shape is the compositor's business, because a shape
+ * is a property of a *window* — see `ThreeCompositor.setSurfaceForm`. The first
+ * two passes at this both got that wrong in the same way. The first hard-coded
+ * a module-to-shape table; the second made it a setting, but still keyed on
+ * module id, so one lava lamp forced every lava lamp and the only way to change
+ * one was a picker in Settings. Both were the mistake app shelves exist to
+ * avoid, one level too high: a silhouette is an opinion about a window.
  *
- * Until then forms attach by observing the panel layer, which has one real
- * advantage over patching `ThreeCompositor`: it works for *any* compositor,
- * including the flat DOM one the architecture keeps promising. The kernel
- * registers a surface before asking the compositor to mount it, so by the time
- * a node lands in the DOM its module id is already resolvable — which is what
- * lets this work without the compositor cooperating at all.
+ * There was also a DOM observer in here watching the panel layer, which existed
+ * only because `ThreeCompositor.mountSurface` built its panel markup inline and
+ * never called `createPanelChrome`. That is fixed — the compositor calls the
+ * shared chrome now — so the observer is gone with it and there is one place
+ * that decides what a window looks like.
  */
 export interface WindowForm {
   id: string;
@@ -42,6 +41,21 @@ export interface WindowForm {
   aspect: number;
   /** Backdrop behind the content, seen through any glass. */
   vessel?: string;
+  /**
+   * How far down the object its control row sits, as a percentage.
+   *
+   * Not decoration — this is the field that keeps a shape recoverable. The
+   * clip-path clips hit-testing as well as painting, so a control parked
+   * outside the outline is not merely hidden, it cannot be clicked. The row
+   * used to sit below the panel entirely, which meant *every* shaped window
+   * had no reachable controls at all: no menu, no pin, no close. An orb-shaped
+   * Settings window was therefore unfixable from inside itself.
+   *
+   * So: pick a height where the silhouette is comfortably wider than a row of
+   * buttons. The waist of the object, usually. Anything new added to FORMS owes
+   * the same answer, and it is worth checking rather than guessing.
+   */
+  controls: number;
 }
 
 const LAMP: WindowForm = {
@@ -49,6 +63,9 @@ const LAMP: WindowForm = {
   label: "lava lamp",
   aspect: 0.52,
   vessel: "#150a1e",
+  // The glass is at its widest around 45-62% down; 58 sits inside it with room
+  // to spare on either side.
+  controls: 58,
   silhouette:
     "polygon(38% 0%, 62% 0%, 64% 5%, 72% 20%, 78% 45%, 80% 62%, 72% 70%," +
     " 88% 78%, 96% 96%, 100% 100%, 0% 100%, 4% 96%, 12% 78%, 28% 70%," +
@@ -86,6 +103,9 @@ const ORB: WindowForm = {
   label: "orb",
   aspect: 0.86,
   vessel: "#06080f",
+  // The sphere spans 0-80% vertically. At 62 it is still ~77% of the panel
+  // wide, which is the widest useful band below the middle.
+  controls: 62,
   silhouette: "ellipse(46% 40% at 50% 40%)",
   furniture: `
     <defs>
@@ -114,6 +134,9 @@ const TUBE: WindowForm = {
   label: "cathode tube",
   aspect: 1.28,
   vessel: "#04060a",
+  // Full width almost everywhere; the low bezel is where a monitor's buttons
+  // would be anyway.
+  controls: 86,
   silhouette: "inset(0% 0% 0% 0% round 12% / 15%)",
   furniture: `
     <defs>
@@ -136,6 +159,8 @@ const ARCH: WindowForm = {
   label: "arch",
   aspect: 0.72,
   vessel: "#080a12",
+  // The niche is a straight 6-94% below the curve, so anything low is safe.
+  controls: 86,
   silhouette:
     "polygon(50% 0%, 68% 4%, 82% 15%, 91% 31%, 94% 50%, 94% 100%, 6% 100%," +
     " 6% 50%, 9% 31%, 18% 15%, 32% 4%)",
@@ -152,47 +177,53 @@ export const FORMS: WindowForm[] = [LAMP, ORB, TUBE, ARCH];
 export const PLAIN = "plain";
 
 /**
- * Where each module starts. A default, not a ruling: anything absent is plain,
- * and every one of these is overridable per module in Settings.
+ * What shape a module's windows *open* as.
+ *
+ * A suggestion, and only that: the compositor copies it onto the panel at mount
+ * and the window owns it from then on. Anything absent opens plain.
  */
 const DEFAULTS: Record<string, string> = {
   lavalamp: "lamp",
 };
 
-const formKey = (moduleId: string) => `window.form.${moduleId}`;
-
-export function formIdFor(ctx: KernelContext, moduleId: string): string {
-  const chosen = ctx.state.get<string>(formKey(moduleId), "");
-  if (chosen) return chosen;
+export function defaultFormFor(moduleId: string): string {
   return DEFAULTS[moduleId] ?? PLAIN;
 }
 
-export function formFor(ctx: KernelContext, moduleId: string): WindowForm | null {
-  const id = formIdFor(ctx, moduleId);
+/** The shape with this id, or null for PLAIN and for anything unrecognised. */
+export function formById(id: string): WindowForm | null {
   return FORMS.find((f) => f.id === id) ?? null;
 }
 
-export function setForm(ctx: KernelContext, moduleId: string, formId: string): void {
-  const valid = formId === PLAIN || FORMS.some((f) => f.id === formId);
-  ctx.state.set(formKey(moduleId), valid ? formId : PLAIN);
+/** Whether a string names a shape, PLAIN included. */
+export function isFormId(id: string): boolean {
+  return id === PLAIN || FORMS.some((f) => f.id === id);
 }
 
 /* ------------------------------------------------------------------ */
 /* applying it to a live panel                                         */
 /* ------------------------------------------------------------------ */
 
-export function applyForm(el: HTMLElement, form: WindowForm): void {
+/**
+ * Dress a panel in a shape.
+ *
+ * `width` comes from the compositor rather than being measured, because the
+ * panel carries a projection scale in its transform: a measured width is the
+ * on-screen size, and the height derived from it would drift as the window
+ * moves in depth.
+ */
+export function applyForm(el: HTMLElement, form: WindowForm, width: number): void {
   el.classList.add("vs-formed");
   el.dataset.form = form.id;
   // clip-path clips hit-testing as well as painting, so the corners around the
   // silhouette stop swallowing clicks meant for the void behind it.
   el.style.clipPath = form.silhouette;
   if (form.vessel) el.style.background = form.vessel;
+  // Where the controls can live without being clipped away. The CSS reads it;
+  // see the note on WindowForm.controls for why this is load-bearing.
+  el.style.setProperty("--vs-form-controls", `${form.controls}%`);
 
-  // Read the width the compositor set inline rather than measuring: the panel
-  // carries a projection scale in its transform, so a measured width is the
-  // on-screen size and the shape would drift as the window moves in depth.
-  const w = parseFloat(el.style.width) || 320;
+  const w = width || parseFloat(el.style.width) || 320;
   el.style.height = `${Math.round(w / form.aspect)}px`;
 
   let art = el.querySelector<HTMLElement>(":scope > .vs-panel-form");
@@ -205,108 +236,16 @@ export function applyForm(el: HTMLElement, form: WindowForm): void {
     `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${form.furniture}</svg>`;
 }
 
+/**
+ * Undress it. Leaves no trace, so a window that has been shaped and unshaped is
+ * indistinguishable from one that never was — except for its height, which the
+ * caller has to restore because only the compositor knows what it should be.
+ */
 export function clearForm(el: HTMLElement): void {
   el.classList.remove("vs-formed");
   delete el.dataset.form;
   el.style.clipPath = "";
   el.style.background = "";
+  el.style.removeProperty("--vs-form-controls");
   el.querySelector(":scope > .vs-panel-form")?.remove();
-}
-
-function panelLayer(): HTMLElement | null {
-  return document.getElementById("panel-layer");
-}
-
-/** Give one panel whatever shape its module currently wears. */
-function dress(ctx: KernelContext, el: HTMLElement): void {
-  const sid = el.dataset.surface;
-  if (!sid) return;
-  const surface = ctx.openSurfaces().find((s) => s.id === sid);
-  if (!surface) return;
-  // Recorded so a later reassignment can find every panel of a given module
-  // without going back through the surface table.
-  el.dataset.module = surface.moduleId;
-  const form = formFor(ctx, surface.moduleId);
-  if (form) applyForm(el, form);
-  else clearForm(el);
-}
-
-/** Re-dress everything on screen. Called when an assignment changes. */
-export function refreshForms(ctx: KernelContext): void {
-  const layer = panelLayer();
-  if (!layer) return;
-  for (const el of layer.querySelectorAll<HTMLElement>(".vs-panel[data-surface]")) {
-    dress(ctx, el);
-  }
-}
-
-/** Watch the panel layer and shape every window as it appears. */
-export function initWindowForms(ctx: KernelContext): () => void {
-  const layer = panelLayer();
-  if (!layer) return () => {};
-
-  const obs = new MutationObserver((records) => {
-    for (const r of records) {
-      for (const node of r.addedNodes) {
-        if (!(node instanceof HTMLElement)) continue;
-        if (node.classList.contains("vs-panel")) dress(ctx, node);
-      }
-    }
-  });
-  obs.observe(layer, { childList: true });
-  refreshForms(ctx);
-
-  defineFormSettings(ctx);
-  return () => obs.disconnect();
-}
-
-/** The picker: every app, and the shape its windows take. */
-function defineFormSettings(ctx: KernelContext): void {
-  ctx.defineSetting({
-    key: "window.forms",
-    label: "window shapes",
-    kind: "custom",
-    group: "Appearance",
-    hint: "give an app the silhouette of the thing it is",
-    order: 60,
-    render: (root, c) => {
-      const wrap = document.createElement("div");
-      wrap.className = "form-picker";
-
-      for (const m of c.registry().filter((x) => x.kind === "app")) {
-        const row = document.createElement("div");
-        row.className = "form-picker-row";
-
-        const name = document.createElement("span");
-        name.className = "form-picker-name";
-        name.textContent = `${m.glyph ?? "\u00b7"}  ${m.name}`;
-
-        const pick = document.createElement("select");
-        pick.className = "form-picker-pick";
-        const options = [
-          { value: PLAIN, label: "glass panel" },
-          ...FORMS.map((f) => ({ value: f.id, label: f.label })),
-        ];
-        for (const o of options) {
-          const opt = document.createElement("option");
-          opt.value = o.value;
-          opt.textContent = o.label;
-          if (o.value === formIdFor(c, m.id)) opt.selected = true;
-          pick.appendChild(opt);
-        }
-        pick.addEventListener("change", () => {
-          setForm(c, m.id, pick.value);
-          // Live, so choosing a shape shows you the shape rather than
-          // promising it for next time.
-          refreshForms(c);
-        });
-
-        row.append(name, pick);
-        wrap.appendChild(row);
-      }
-
-      root.appendChild(wrap);
-      return () => wrap.remove();
-    },
-  });
 }

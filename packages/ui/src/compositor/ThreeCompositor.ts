@@ -21,6 +21,14 @@ import {
   panelMenuItems,
   type ResizeAxis,
 } from "./panelChrome";
+import {
+  PLAIN,
+  applyForm,
+  clearForm,
+  defaultFormFor,
+  formById,
+  isFormId,
+} from "./surfaceForms";
 import { TetherLayer } from "./tethers";
 
 interface PanelEntry {
@@ -41,6 +49,15 @@ interface PanelEntry {
   pinX: number;
   pinY: number;
   minimized: boolean;
+  /**
+   * Which silhouette this window wears, or PLAIN for an ordinary glass panel.
+   *
+   * Lives on the panel rather than on the module, which is the whole of the
+   * change: a shape is an opinion about *this* window. Two clocks can be two
+   * different objects, and the one you shaped by accident is the only one you
+   * have to put back.
+   */
+  form: string;
   /** Filling a region of the screen: the window has left the void entirely. */
   snap: SnapMode | null;
   /** Where to put it back when it unsnaps. */
@@ -364,6 +381,7 @@ export class ThreeCompositor implements Compositor {
       pinX: 0,
       pinY: 0,
       minimized: false,
+      form: PLAIN,
       snap: null,
       restore: null,
       width: surface.width,
@@ -375,6 +393,11 @@ export class ThreeCompositor implements Compositor {
       onScreen: true,
     };
     this.panels.set(surface.id, entry);
+
+    // A module can suggest the shape it looks like — a lava lamp opens as a
+    // lamp. It is only a starting point: from here the window owns it, and
+    // session restore overwrites this with whatever the user chose.
+    this.setSurfaceForm(surface.id, defaultFormFor(surface.moduleId));
 
     this.bindPanelDrag(surface.id, bar, tools, link);
     this.bindPanelDepth(surface.id, panel);
@@ -410,6 +433,22 @@ export class ThreeCompositor implements Compositor {
       this.openPanelMenu(surface.id, r.left, r.bottom + 4);
     });
     bar.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.openPanelMenu(surface.id, e.clientX, e.clientY);
+    });
+
+    // A third door, and the one that matters: a shaped window has no title bar
+    // to aim at — the silhouette is drawn over it — so right-clicking the
+    // object itself has to reach the same menu. Without it a shape you cannot
+    // see past is a window you cannot get back, which is exactly how an orb
+    // swallowed the only control that could un-orb it.
+    //
+    // Deliberately only for shaped windows: a plain panel's body belongs to
+    // whatever module rendered it, and the file manager has its own menu there.
+    panel.addEventListener("contextmenu", (e) => {
+      const p = this.panels.get(surface.id);
+      if (!p || p.form === PLAIN) return;
+      if (bar.contains(e.target as Node)) return;
       e.preventDefault();
       this.openPanelMenu(surface.id, e.clientX, e.clientY);
     });
@@ -513,9 +552,61 @@ export class ThreeCompositor implements Compositor {
   private toggleMinimize(id: string): void {
     const p = this.panels.get(id);
     if (!p) return;
+    // A shaped window has no title bar left to collapse to — the silhouette is
+    // drawn over it — so collapsing one leaves an object with its head cut off.
+    if (p.form !== PLAIN) return;
     p.minimized = !p.minimized;
     p.el.classList.toggle("minimized", p.minimized);
     p.el.style.height = p.minimized ? "" : `${p.height}px`;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Window shape                                                        */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Give one window a silhouette, or take it away.
+   *
+   * This used to live in a DOM observer watching the panel layer, keyed on
+   * module id, driven by a table in Settings — three indirections for a
+   * property of a window the compositor was already holding. The observer
+   * existed because `mountSurface` built its own markup and `createPanelChrome`
+   * was dead code; that is fixed, so this is fixed with it.
+   *
+   * Unknown ids fall back to a plain panel rather than throwing. A restored
+   * session naming a shape that no longer exists should open a window, not
+   * fail to.
+   */
+  setSurfaceForm(id: string, formId: string): void {
+    const p = this.panels.get(id);
+    if (!p) return;
+
+    p.form = isFormId(formId) ? formId : PLAIN;
+    const form = formById(p.form);
+
+    if (!form) {
+      clearForm(p.el);
+      p.el.style.width = `${p.width}px`;
+      // Restore the height the window actually has: a shape overrides it to
+      // hold its aspect, and leaving that behind would make "back to a glass
+      // panel" quietly resize the window.
+      p.el.style.height = p.minimized ? "" : `${p.height}px`;
+      return;
+    }
+
+    // A shape is a state of its own, and cannot be combined with the two that
+    // stop a window being its own size: filling a region, and being collapsed.
+    this.unsnap(p);
+    if (p.minimized) {
+      p.minimized = false;
+      p.el.classList.remove("minimized");
+    }
+    applyForm(p.el, form, p.width);
+  }
+
+  /** What shape a window is wearing right now. */
+  surfaceForm(id: string): string {
+    return this.panels.get(id)?.form ?? PLAIN;
   }
 
   /* ------------------------------------------------------------------ */
@@ -541,6 +632,10 @@ export class ThreeCompositor implements Compositor {
   }
 
   private setSnap(p: PanelEntry, mode: SnapMode): void {
+    // A shaped window is not a rectangle, so there is no honest way for it to
+    // fill a rectangular region. Refused here rather than in the menu so the
+    // title-bar double-click and the drag-to-edge gesture are covered too.
+    if (p.form !== PLAIN) return;
     // Only capture the restore box on the way *in*, so going full -> left ->
     // full and then unsnapping still lands on the original floating window
     // rather than on whichever snap you passed through last.
@@ -632,6 +727,7 @@ export class ThreeCompositor implements Compositor {
           minimized: p.minimized,
           snapped: Boolean(p.snap),
           merged: Boolean(p.bodyId),
+          form: p.form,
           group: g ? { color: g.color, rigid: g.rigid } : null,
         },
         {
@@ -642,6 +738,7 @@ export class ThreeCompositor implements Compositor {
           snapRight: () => this.toggleSnap(id, "right"),
           nudge: (dir) => this.nudgeDepth(id, dir),
           release: () => this.attachSurface(id, null),
+          setForm: (formId) => this.setSurfaceForm(id, formId),
           setRigid: (rigid) => this.setGroupRigid(p.groupId, rigid),
           setColor: (color) => this.setGroupColor(p.groupId, color),
           dissolve: () => p.groupId && this.unlinkGroup(p.groupId),
@@ -1183,6 +1280,11 @@ export class ThreeCompositor implements Compositor {
     p.height = place.height;
     p.el.style.width = `${place.width}px`;
     p.el.style.height = `${place.height}px`;
+    // Before the states below, because a shape refuses to be snapped or
+    // collapsed and the ones that survive have to be applied over it, not
+    // under it. A session that predates shapes says nothing here and gets the
+    // module's default, which is what it had.
+    if (place.form !== undefined) this.setSurfaceForm(id, place.form);
     if (place.pinned) {
       p.pinned = true;
       p.pinX = place.pinX;
@@ -1217,6 +1319,9 @@ export class ThreeCompositor implements Compositor {
         pinY: box.pinY,
         snap: p.snap,
         minimized: p.minimized,
+        // Read off the panel rather than the restore box: a shaped window can
+        // never be snapped, so there is only one place the answer lives.
+        form: p.form,
       };
     }
     return out;
@@ -1639,9 +1744,12 @@ export class ThreeCompositor implements Compositor {
       if (!p) return;
 
       // Shove a window against an edge of the screen and it offers to fill it.
-      // Only offered for lone windows: a constellation travels as one object,
-      // and snapping one member would silently tear it out of its group.
-      pendingSnap = p.groupId ? null : this.edgeSnapAt(e.clientX, e.clientY);
+      // Only offered for lone, unshaped windows: a constellation travels as one
+      // object and snapping one member would silently tear it out of its group,
+      // and a shaped window has no rectangle to fill — offering a preview of a
+      // snap that setSnap will refuse is a promise the release cannot keep.
+      pendingSnap =
+        p.groupId || p.form !== PLAIN ? null : this.edgeSnapAt(e.clientX, e.clientY);
       this.showSnapGhost(pendingSnap);
 
       if (p.pinned) {
