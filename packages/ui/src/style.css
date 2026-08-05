@@ -85,7 +85,8 @@ button {
   left: 0;
   top: 0;
   transform-origin: center center;
-  will-change: left, top, transform;
+  /* Position rides in the transform, so nothing here touches layout. */
+  will-change: transform;
   display: flex;
   flex-direction: column;
   background: var(--glass);
@@ -106,6 +107,11 @@ button {
   transition: opacity 0.42s ease, scale 0.42s cubic-bezier(0.2, 0.9, 0.2, 1),
     filter 0.42s ease, border-color 0.25s ease;
 }
+/* The focused window gets a brighter edge, so "which one has focus" reads even
+   when the stacking order alone doesn't make it obvious. Themed through
+   --cyan rather than a literal, because Aurora owns every colour in the build.
+   (There was a second, hardcoded copy of this rule further down that silently
+   won and took the theme out of it.) */
 .vs-panel.focused {
   border-color: color-mix(in srgb, var(--cyan) 55%, transparent);
 }
@@ -125,6 +131,17 @@ button {
 .vs-panel.pinned {
   border-style: dashed;
 }
+/* A window filling a region of the screen has left the void, so it drops the
+   depth cues that only make sense out there — it is flat glass on flat glass. */
+.vs-panel.snapped {
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 40px 90px -30px rgba(0, 0, 0, 0.85);
+}
+.vs-panel.snapped .vs-panel-max {
+  color: var(--cyan);
+}
 .vs-panel.minimized {
   height: auto !important;
 }
@@ -136,67 +153,134 @@ button {
   cursor: grabbing;
 }
 
-/* ---------- Resize grips ---------- */
-.vs-grip-e {
-  top: 0;
-  right: 0;
-  width: 7px;
-  height: 100%;
-  cursor: ew-resize;
-}
+/* ---------- Resize grips ----------
+   All eight, so a window can grow in the direction you actually want it to.
+   The edges are 7px bands; the corners are 18px squares layered above them so
+   an overlap always resolves to the corner, which is the harder target. */
+.vs-grip-n,
 .vs-grip-s {
   left: 0;
-  bottom: 0;
   width: 100%;
   height: 7px;
   cursor: ns-resize;
 }
-/* The corner sits above both edges so it wins the overlap. */
-.vs-grip-se {
-  right: 0;
+.vs-grip-n {
+  top: 0;
+}
+.vs-grip-s {
   bottom: 0;
+}
+.vs-grip-e,
+.vs-grip-w {
+  top: 0;
+  width: 7px;
+  height: 100%;
+  cursor: ew-resize;
+}
+.vs-grip-e {
+  right: 0;
+}
+.vs-grip-w {
+  left: 0;
+}
+.vs-grip-ne,
+.vs-grip-nw,
+.vs-grip-se,
+.vs-grip-sw {
   width: 18px;
   height: 18px;
   z-index: 6;
+}
+.vs-grip-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.vs-grip-nw {
+  top: 0;
+  left: 0;
   cursor: nwse-resize;
+}
+.vs-grip-se {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+.vs-grip-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+/* The north band overlaps the title bar's 7px of top padding and stops exactly
+   where the tool buttons start, so the top edge resizes without ever stealing
+   a click from close or collapse. */
+.vs-grip-n {
+  z-index: 5;
 }
 /* The edges stay invisible until hovered — a hairline on every panel edge
    would read as a border and clutter the void. The corner keeps its hatch. */
+.vs-grip-n::after,
+.vs-grip-s::after,
 .vs-grip-e::after,
-.vs-grip-s::after {
+.vs-grip-w::after {
   content: "";
   position: absolute;
-  inset: auto 0 0 auto;
   background: var(--cyan);
   opacity: 0;
+  border-radius: 2px;
   transition: opacity 0.18s ease;
 }
-.vs-grip-e::after {
+.vs-grip-e::after,
+.vs-grip-w::after {
   top: 12%;
   bottom: 12%;
-  right: 1px;
   width: 2px;
-  border-radius: 2px;
 }
+.vs-grip-e::after {
+  right: 1px;
+}
+.vs-grip-w::after {
+  left: 1px;
+}
+.vs-grip-n::after,
 .vs-grip-s::after {
   left: 12%;
   right: 12%;
-  bottom: 1px;
   height: 2px;
-  border-radius: 2px;
 }
+.vs-grip-n::after {
+  top: 1px;
+}
+.vs-grip-s::after {
+  bottom: 1px;
+}
+.vs-grip-n:hover::after,
+.vs-grip-s:hover::after,
 .vs-grip-e:hover::after,
-.vs-grip-s:hover::after {
+.vs-grip-w:hover::after {
   opacity: 0.75;
 }
 /* Suppress the transition while resizing, or the panel lags the cursor. */
 .vs-panel.resizing {
   transition: none;
 }
-/* Focused window gets a brighter edge, so "which one has focus" is visible
-   even when the stacking order alone doesn't make it obvious. */
-.vs-panel.focused {
-  border-color: rgba(79, 227, 208, 0.4);
+
+/* The outline a window is about to snap into. Drawn under every panel so the
+   window you're dragging stays on top of its own preview. */
+.vs-snap-ghost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--cyan) 60%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--cyan) 8%, transparent);
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+.vs-snap-ghost.live {
+  opacity: 1;
 }
 .vs-panel.materializing {
   opacity: 0;
@@ -505,7 +589,7 @@ button {
   cursor: grab;
   user-select: none;
   touch-action: none;
-  will-change: left, top, transform;
+  will-change: transform;
 }
 .vs-icon:hover {
   background: rgba(150, 180, 255, 0.06);
