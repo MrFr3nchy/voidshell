@@ -198,6 +198,8 @@ export class ThreeCompositor implements Compositor {
   private groupCounter = 0;
   private activeId: string | null = null;
   private spawnHint: { x: number; y: number } | null = null;
+  /** Anchors held while the overview is up, so leaving it restores them. */
+  private exposed: Map<string, THREE.Vector3> | null = null;
 
   // Tunables, all reachable from Settings via applyWorldPatch.
   private cfg = {
@@ -379,7 +381,15 @@ export class ThreeCompositor implements Compositor {
     this.bindLinkDrag(surface.id, link);
     for (const axis of RESIZE_AXES) this.bindResize(surface.id, grips[axis], axis);
 
-    panel.addEventListener("pointerdown", () => this.setActive(surface.id));
+    panel.addEventListener("pointerdown", () => {
+      this.setActive(surface.id);
+      // Picking a window out of the overview is what you came to do, so it
+      // dismisses the overview rather than making you press escape as well.
+      if (this.exposed) {
+        this.expose(false);
+        this.lookAtSurface(surface.id);
+      }
+    });
 
     pin.addEventListener("click", () => this.togglePin(surface.id));
     min.addEventListener("click", () => this.toggleMinimize(surface.id));
@@ -470,6 +480,10 @@ export class ThreeCompositor implements Compositor {
     const v = new THREE.Vector3();
     this.anchorFromScreen(v, x, y, dist);
     return { x: v.x, y: v.y, z: v.z };
+  }
+
+  activeSurface(): string | null {
+    return this.activeId;
   }
 
   private setActive(id: string): void {
@@ -1037,6 +1051,67 @@ export class ThreeCompositor implements Compositor {
       n++;
     }
     return n ? centre.multiplyScalar(1 / n) : null;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Overview                                                            */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Every window at once, in a grid facing you — and then back exactly as it
+   * was.
+   *
+   * `arrange` already fans windows into formations, but it is a permanent
+   * re-layout: using it to *find* something costs you the arrangement you had,
+   * which is why nobody uses it to find things. The difference here is the
+   * whole feature — every anchor is remembered on the way in and restored on
+   * the way out, so an overview is a look rather than a decision.
+   *
+   * Snapped and pinned windows are left alone. They are already on the glass,
+   * fully visible, and dragging them into the world to show them to you would
+   * be undoing the thing you asked them to do.
+   */
+  expose(on?: boolean): boolean {
+    const wasUp = Boolean(this.exposed);
+    const want = on ?? !wasUp;
+    if (want === wasUp) return wasUp;
+
+    if (!want) {
+      for (const [id, anchor] of this.exposed!) {
+        this.panels.get(id)?.anchor.copy(anchor);
+      }
+      this.exposed = null;
+      document.body.classList.remove("vs-exposed");
+      return false;
+    }
+
+    const list = [...this.panels.values()].filter((p) => !p.pinned && !p.snap);
+    if (!list.length) return false;
+
+    this.exposed = new Map(list.map((p) => [p.id, p.anchor.clone()]));
+    document.body.classList.add("vs-exposed");
+
+    // A square-ish grid on the plane the camera is facing, far enough back
+    // that a full one fits inside the field of view.
+    const cols = Math.ceil(Math.sqrt(list.length));
+    const rows = Math.ceil(list.length / cols);
+    const euler = new THREE.Euler(this.targetPitch, this.targetYaw, 0, "YXZ");
+    const fwd = new THREE.Vector3(0, 0, -1).applyEuler(euler);
+    const right = new THREE.Vector3(1, 0, 0).applyEuler(euler);
+    const up = new THREE.Vector3(0, 1, 0).applyEuler(euler);
+    const depth = 700 + Math.max(cols, rows) * 120;
+
+    list.forEach((p, i) => {
+      this.freeFromBody(p);
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      p.anchor
+        .copy(this.camera.position)
+        .addScaledVector(fwd, depth)
+        .addScaledVector(right, (col - (cols - 1) / 2) * 330)
+        .addScaledVector(up, ((rows - 1) / 2 - row) * 260);
+    });
+    return true;
   }
 
   /* ------------------------------------------------------------------ */

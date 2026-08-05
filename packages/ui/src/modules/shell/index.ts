@@ -33,6 +33,8 @@ const KEYBINDS: [string, string][] = [
   ["\u2318 / ctrl + shift + u", "dissolve every constellation"],
   ["\u2318 / ctrl + shift + k", "close every window"],
   ["\u2318 / ctrl + shift + t", "reopen the last closed window"],
+  ["\u2318 / ctrl + `", "step through the open windows"],
+  ["\u2318 / ctrl + shift + e", "see every window at once"],
   ["drag the void", "look around"],
   ["double-click a title bar", "fill the screen / put it back"],
   ["drag a title bar to an edge", "snap it to that half, or the top to fill"],
@@ -302,6 +304,13 @@ export const shell: VoidModule = {
       hint: "brings it back where it was, holding what it held",
       glyph: "\u21ba",
       run: (c) => c.emit("shell.reopenWindow"),
+    });
+    ctx.defineCommand({
+      id: "shell.expose",
+      label: "see every window at once",
+      hint: "a look, not a re-layout \u2014 escape puts them all back",
+      glyph: "\u25a6",
+      run: (c) => void c.expose(),
     });
     ctx.defineCommand({
       id: "shell.closeAll",

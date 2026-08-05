@@ -253,6 +253,8 @@ export class Kernel {
           moduleId: s.moduleId,
         })),
       focusSurface: (id) => this.compositor.focusSurface?.(id),
+      activeSurface: () => this.compositor.activeSurface?.() ?? null,
+      expose: (on) => this.compositor.expose?.(on) ?? false,
       lookAt: (id) => this.compositor.lookAtSurface?.(id),
       lookAtGroup: (id) => this.compositor.lookAtGroup?.(id),
       resetView: () => this.compositor.resetView?.(),

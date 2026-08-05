@@ -244,6 +244,24 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     t instanceof HTMLTextAreaElement ||
     t instanceof HTMLSelectElement;
 
+  /**
+   * Step focus through the open windows and turn the void to face each one.
+   *
+   * Deliberately not "the most recently used first": in a place where windows
+   * have positions, a stable order you can walk in both directions is easier to
+   * predict than a stack that reshuffles itself every time you look at
+   * something.
+   */
+  const cycleWindows = (dir: number) => {
+    const open = ctx.openSurfaces();
+    if (!open.length) return;
+    const active = ctx.activeSurface();
+    const at = open.findIndex((s) => s.id === active);
+    const next = open[(at + dir + open.length) % open.length];
+    ctx.focusSurface(next.id);
+    ctx.lookAt(next.id);
+  };
+
   window.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
 
@@ -295,10 +313,24 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
       kernel.launch("settings");
       return;
     }
+    // Cycling and the overview both work while typing: they are about which
+    // window you are in, and needing to leave a text field to change windows
+    // is exactly the friction they exist to remove.
+    if (mod && (e.key === "`" || e.key === "~")) {
+      e.preventDefault();
+      cycleWindows(e.shiftKey ? -1 : 1);
+      return;
+    }
+    if (mod && e.shiftKey && e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      ctx.expose();
+      return;
+    }
     if (e.key === "Escape") {
       palette.toggle(false);
       drawer.toggle(false);
       spawner.toggle(false);
+      ctx.expose(false);
       return;
     }
     if (typing(e.target)) return;
