@@ -1502,6 +1502,12 @@ body.vs-dropping #void::after {
   z-index: 70;
 }
 .toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* The stack ignores pointer events so it never eats a click on the void;
+     each notice takes them back, because they are interactive now. */
+  pointer-events: auto;
   padding: 9px 14px;
   border-radius: 10px;
   border: 1px solid var(--edge);
@@ -1522,6 +1528,46 @@ body.vs-dropping #void::after {
 .toast.is-good {
   border-color: color-mix(in srgb, var(--cyan) 55%, transparent);
   color: var(--cyan);
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+}
+.toast-action {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--cyan) 40%, transparent);
+  border-radius: 999px;
+  background: none;
+  padding: 3px 10px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.toast-action:hover {
+  background: color-mix(in srgb, var(--cyan) 16%, transparent);
+}
+.toast-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+.toast-close:hover {
+  opacity: 1;
+  color: var(--ember);
+}
+.toast-action:focus-visible,
+.toast-close:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
 }
 .toast.is-warn {
   border-color: color-mix(in srgb, var(--ember) 55%, transparent);

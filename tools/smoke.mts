@@ -423,6 +423,39 @@ const palette = createPalette(hud, ctx);
 palette.toggle(true);
 createToasts(hud, ctx);
 
+/* ---------------- notices ---------------- */
+
+check("a warning stays until it is dismissed", (() => {
+  ctx.notify("something went wrong", "warn");
+  const el = hud.querySelector(".toast.is-warn") as HTMLElement | null;
+  return el?.dataset.sticky === "1";
+})());
+
+check("routine chatter does not stick", (() => {
+  ctx.notify("just so you know");
+  const els = [...hud.querySelectorAll(".toast.is-info")] as HTMLElement[];
+  return els.length > 0 && els.every((e) => e.dataset.sticky !== "1");
+})());
+
+check("a notice can carry an offer", (() => {
+  let ran = false;
+  ctx.notify("window limit reached", {
+    action: { label: "see every window", run: () => void (ran = true) },
+  });
+  const el = [...hud.querySelectorAll(".toast")].pop() as HTMLElement;
+  const btn = el?.querySelector(".toast-action") as HTMLButtonElement | null;
+  btn?.click();
+  // An action implies the notice is worth keeping, so it sticks without asking.
+  return Boolean(btn) && ran && el.dataset.sticky === "1";
+})());
+
+check("a notice can be dismissed", (() => {
+  ctx.notify("dismiss me", "warn");
+  const el = [...hud.querySelectorAll(".toast")].pop() as HTMLElement;
+  (el.querySelector(".toast-close") as HTMLButtonElement).click();
+  return !el.classList.contains("live");
+})());
+
 check("launcher slots resolve", resolveSlots(ctx).length === 6);
 check("ring rendered nodes", hud.querySelectorAll(".spawner-node").length === 7);
 check(

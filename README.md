@@ -360,6 +360,34 @@ where it floated. **⌘/ctrl + shift + T** brings back the last one, in its plac
 holding what it held. The ring is twelve deep and lives in memory — this is an
 undo for the last few seconds, not a second session file.
 
+## Notices
+
+`ctx.notify()` is how anything in the system says something, and for a while it
+could only say it *once, briefly*: every notice expired after 2.6 seconds
+whatever it was, nothing could be dismissed early, and nothing could be acted
+on. Warnings were the worst case — the system told you something was wrong, gave
+you no way to do anything about it, and then took the message away.
+
+A notice can now carry a single offer:
+
+```ts
+ctx.notify(`window limit reached (${MAX_SURFACES})`, {
+  kind: "warn",
+  action: { label: "see every window", run: (c) => c.expose(true) },
+});
+```
+
+Warnings and anything carrying an offer stay until dismissed; routine chatter
+still expires. Hovering pauses the countdown, because reading a notice should
+not be a race against it. The stack cap that stops a chatty module wallpapering
+the screen only evicts the expiring ones — a notice somebody asked to keep isn't
+chatter.
+
+Two places use it so far: the window limit, which used to be a dead end (a
+warning, and no route from there to the window you would have closed), and being
+signed out elsewhere, which is the one save failure retrying cannot fix and so
+the one that has to offer a way back in.
+
 ## The status bar
 
 voidshell deliberately has no taskbar. But "no taskbar" had quietly become "no

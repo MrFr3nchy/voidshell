@@ -203,7 +203,7 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
   createToasts(hud, ctx);
   createStatusBar(hud, ctx);
 
-  host.setNotifier((message, kind) => ctx.notify(message, kind));
+  host.setNotifier((message, opts) => ctx.notify(message, opts));
 
   // Power owns the veil, so it needs the two things a module can't do for
   // itself: write the session down, and close windows it doesn't own.
