@@ -41,6 +41,7 @@ const KEYBINDS: [string, string][] = [
   ["drag \u2059 onto a body", "merge \u2014 the window rides its orbit"],
   ["drag \u2059 onto a singularity", "let it be eaten"],
   ["click a thread", "harden or loosen that constellation"],
+  ["right-click a title bar", "that window's menu"],
 ];
 
 /**

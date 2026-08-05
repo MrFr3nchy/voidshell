@@ -154,6 +154,18 @@ them once, by name. Bind them with the **⁙** handle or from the Dashboards app
 and save the arrangement — a saved dashboard is just a name and a list of apps,
 so it survives a reload and re-assembles itself on demand.
 
+**The thread is a control.** Click one to harden or loosen that bond, or use the
+window menu. A hard bond *translates*: every member moves by the same vector, so
+the formation keeps its shape and members nearer the camera grow as it travels.
+A loose one *rotates* the formation about the camera instead, holding every
+member's distance — and so its size — exactly constant. A loose thread is drawn
+dashed and says so on its label, because that difference is worth seeing without
+having to drag the thing to find out.
+
+Firmness is per-constellation. It used to be one global setting, which made it a
+property of the whole void rather than of a particular group; the setting now
+seeds the default for new constellations and a bond you hardened stays hardened.
+
 ## Writing a module
 
 A module is an object with a manifest and an `activate`. If it's an app, it also

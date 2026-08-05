@@ -1,18 +1,35 @@
 import type { Surface } from "../kernel/types";
+import type { MenuItem } from "../ui/contextMenu";
 
 export const GROUP_COLORS = ["#4fe3d0", "#c05cff", "#ff8a5c", "#7ea8ff", "#5fd6a8"];
 
 /**
- * NOTE: `createPanelChrome` is currently unused.
+ * The glass shell around a module's DOM.
  *
- * `ThreeCompositor.mountSurface` builds its own panel markup inline — similar
- * to this, but not identical: it has three resize grips instead of one and no
- * overflow menu. Window shapes were briefly implemented here and did nothing
- * at all as a result, which is the sort of thing worth a warning label.
+ * This used to be dead code. `ThreeCompositor.mountSurface` built its own panel
+ * markup inline — similar to this, but not identical — and nothing called this
+ * file at all, which is why window *shapes* were briefly implemented here and
+ * did nothing whatsoever. Two functions that both look like they build the
+ * panel, only one of which does, is a trap; the compositor calls this one now
+ * and there is one place where a window's parts are decided.
  *
- * Either delete this file or make the compositor call it. Two functions that
- * both look like they build the panel, only one of which does, is a trap.
+ * It stays purely structural — no state, no listeners beyond what the markup
+ * needs — so the compositor stays about space and this stays about widgets.
  */
+
+/** Which edges a panel can be dragged by. */
+export type ResizeAxis = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+export const RESIZE_AXES: ResizeAxis[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+const RESIZE_TITLES: Record<ResizeAxis, string> = {
+  n: "drag to resize height",
+  s: "drag to resize height",
+  e: "drag to resize width",
+  w: "drag to resize width",
+  ne: "drag to resize",
+  nw: "drag to resize",
+  se: "drag to resize",
+  sw: "drag to resize",
+};
 
 /** Every part of a mounted panel the compositor needs to wire behaviour to. */
 export interface PanelChrome {
@@ -20,19 +37,14 @@ export interface PanelChrome {
   bar: HTMLElement;
   tools: HTMLElement;
   link: HTMLElement;
-  grip: HTMLElement;
-  menu: HTMLElement;
+  grips: Record<ResizeAxis, HTMLElement>;
   more: HTMLButtonElement;
   pin: HTMLButtonElement;
   min: HTMLButtonElement;
+  max: HTMLButtonElement;
   close: HTMLButtonElement;
 }
 
-/**
- * Build the glass shell around a module's DOM. Purely structural — no state,
- * no listeners beyond what the markup needs — so the compositor stays about
- * space and this stays about widgets.
- */
 export function createPanelChrome(surface: Surface): PanelChrome {
   const panel = document.createElement("div");
   panel.className = "vs-panel materializing";
@@ -45,9 +57,9 @@ export function createPanelChrome(surface: Surface): PanelChrome {
 
   const link = document.createElement("button");
   link.className = "vs-panel-link";
-  link.title = "drag onto another window to link \u00b7 onto a body to merge";
+  link.title = "drag onto another window to link · onto a body to merge";
   link.setAttribute("aria-label", "Link this window");
-  link.textContent = "\u2059";
+  link.textContent = "⁙";
 
   const title = document.createElement("span");
   title.className = "vs-panel-title";
@@ -55,11 +67,12 @@ export function createPanelChrome(surface: Surface): PanelChrome {
 
   const tools = document.createElement("div");
   tools.className = "vs-panel-tools";
-  const more = tool("vs-panel-more", "\u22ef", "Window options");
-  const pin = tool("vs-panel-pin", "\u25c8", "Pin to screen");
-  const min = tool("vs-panel-min", "\u2013", "Collapse");
-  const close = tool("vs-panel-close", "\u2715", `Dismiss ${surface.title}`);
-  tools.append(more, pin, min, close);
+  const more = tool("vs-panel-more", "⋯", "Window options");
+  const pin = tool("vs-panel-pin", "◈", "Pin to screen");
+  const min = tool("vs-panel-min", "–", "Collapse");
+  const max = tool("vs-panel-max", "□", "Fill the screen");
+  const close = tool("vs-panel-close", "✕", `Dismiss ${surface.title}`);
+  tools.append(more, pin, min, max, close);
 
   bar.append(link, title, tools);
 
@@ -67,21 +80,25 @@ export function createPanelChrome(surface: Surface): PanelChrome {
   body.className = "vs-panel-content";
   body.appendChild(surface.element);
 
-  const grip = document.createElement("div");
-  grip.className = "vs-panel-grip";
-  grip.title = "drag to resize";
+  // One grip per resize axis. Appended after the content so they stack above it
+  // and stay grabbable no matter what the module rendered.
+  const grips = {} as Record<ResizeAxis, HTMLElement>;
+  for (const axis of RESIZE_AXES) {
+    const g = document.createElement("div");
+    g.className = `vs-panel-grip vs-grip-${axis}`;
+    g.title = RESIZE_TITLES[axis];
+    grips[axis] = g;
+  }
 
-  const menu = document.createElement("div");
-  menu.className = "vs-menu";
-
-  panel.append(bar, body, grip, menu);
-  return { panel, bar, tools, link, grip, menu, more, pin, min, close };
+  panel.append(bar, body, ...RESIZE_AXES.map((a) => grips[a]));
+  return { panel, bar, tools, link, grips, more, pin, min, max, close };
 }
 
 /** What the menu needs to know about the window it belongs to. */
 export interface MenuModel {
   pinned: boolean;
   minimized: boolean;
+  snapped: boolean;
   merged: boolean;
   group: { color: string; rigid: boolean } | null;
 }
@@ -90,99 +107,81 @@ export interface MenuModel {
 export interface MenuActions {
   togglePin(): void;
   toggleMinimize(): void;
+  toggleSnap(): void;
+  snapLeft(): void;
+  snapRight(): void;
   nudge(dir: number): void;
   release(): void;
   setRigid(rigid: boolean): void;
   setColor(color: string): void;
   dissolve(): void;
   close(): void;
-  /** Re-render in place, for controls that change the model as you use them. */
-  refresh(): void;
-  /** Dismiss after an action that isn't a live adjustment. */
-  dismiss(): void;
 }
 
 /**
- * The per-window menu.
+ * The per-window menu, as items for the shared context menu.
  *
  * Everything offered here is a property of *this* window, or of the
  * constellation it belongs to. That's the dividing line: things scoped to a
  * window belong on the window, and only genuinely global state should cost you
  * a trip to a settings screen.
+ *
+ * It builds `MenuItem[]` rather than its own DOM so that right-clicking a title
+ * bar and right-clicking a desktop icon go through one menu implementation —
+ * the previous version of this file grew a second one.
  */
-export function buildPanelMenu(
-  menu: HTMLElement,
-  model: MenuModel,
-  actions: MenuActions
-): void {
-  menu.replaceChildren();
+export function panelMenuItems(model: MenuModel, actions: MenuActions): MenuItem[] {
+  const items: MenuItem[] = [
+    {
+      label: model.snapped ? "back into the void" : "fill the screen",
+      action: actions.toggleSnap,
+    },
+    { label: "fill the left half", action: actions.snapLeft },
+    { label: "fill the right half", action: actions.snapRight },
+    {
+      label: model.pinned ? "unpin from screen" : "pin to screen",
+      action: actions.togglePin,
+      separated: true,
+    },
+    {
+      label: model.minimized ? "expand" : "collapse",
+      action: actions.toggleMinimize,
+    },
+  ];
 
-  const item = (label: string, run: () => void, cls = "") => {
-    const b = document.createElement("button");
-    b.className = `vs-menu-item ${cls}`;
-    b.textContent = label;
-    b.addEventListener("click", (e) => {
-      e.stopPropagation();
-      run();
-      actions.dismiss();
-    });
-    menu.appendChild(b);
-  };
-  const rule = () => {
-    const d = document.createElement("div");
-    d.className = "vs-menu-rule";
-    menu.appendChild(d);
-  };
-
-  item(model.pinned ? "unpin from screen" : "pin to screen", actions.togglePin);
-  item(model.minimized ? "expand" : "collapse", actions.toggleMinimize);
-  item("pull closer", () => actions.nudge(-1));
-  item("push away", () => actions.nudge(1));
-  if (model.merged) item("release from orbit", actions.release);
+  // Depth is meaningless for a window that has left the world, so the two
+  // controls that only move it through space drop out rather than sit there
+  // doing nothing.
+  if (!model.snapped && !model.pinned) {
+    items.push(
+      { label: "pull closer", action: () => actions.nudge(-1) },
+      { label: "push away", action: () => actions.nudge(1) }
+    );
+  }
+  if (model.merged) items.push({ label: "release from orbit", action: actions.release });
 
   const g = model.group;
   if (g) {
-    rule();
-    item(g.rigid ? "loosen the link" : "harden the link", () =>
-      actions.setRigid(!g.rigid)
+    items.push(
+      {
+        label: g.rigid ? "loosen the link" : "harden the link",
+        action: () => actions.setRigid(!g.rigid),
+        separated: true,
+      },
+      {
+        label: "constellation colour",
+        swatches: {
+          colors: GROUP_COLORS,
+          current: g.color,
+          onPick: actions.setColor,
+        },
+      },
+      { label: "dissolve constellation", action: actions.dissolve }
     );
-    menu.appendChild(colorRow(g.color, actions));
-    item("dissolve constellation", actions.dissolve);
   }
 
-  rule();
-  item("close window", actions.close, "danger");
-}
-
-function colorRow(current: string, actions: MenuActions): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "vs-menu-colors";
-
-  for (const c of GROUP_COLORS) {
-    const sw = document.createElement("button");
-    sw.className = "vs-swatch";
-    sw.style.background = c;
-    sw.classList.toggle("on", c.toLowerCase() === current.toLowerCase());
-    sw.title = c;
-    sw.addEventListener("click", (e) => {
-      e.stopPropagation();
-      actions.setColor(c);
-      actions.refresh();
-    });
-    row.appendChild(sw);
-  }
-
-  const custom = document.createElement("input");
-  custom.type = "color";
-  custom.className = "vs-swatch-custom";
-  custom.value = current;
-  custom.title = "any colour you like";
-  // Live-dragging the picker shouldn't close the menu out from under you.
-  custom.addEventListener("click", (e) => e.stopPropagation());
-  custom.addEventListener("input", () => actions.setColor(custom.value));
-  row.appendChild(custom);
-
-  return row;
+  items.push({ label: "close window", action: actions.close, danger: true, separated: true });
+  return items;
 }
 
 function tool(cls: string, glyph: string, label: string): HTMLButtonElement {
