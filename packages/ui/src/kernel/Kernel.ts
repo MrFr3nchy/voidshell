@@ -40,9 +40,70 @@ const MAX_SURFACES = 24;
 
 const SESSION_KEY = "system.session";
 
+/** How many closed windows can be brought back. */
+const REOPEN_DEPTH = 12;
+
 interface SessionEntry {
   moduleId: string;
   place: SurfacePlacement;
+  /** What the window was called, so a renamed one comes back renamed. */
+  title?: string;
+  /**
+   * What the module was launched with — `{ path }`, usually.
+   *
+   * Without this a restored editor came back *empty*: the session recorded
+   * which module had been running and not which document it was holding, so
+   * "restore my windows" reopened the app and dropped the file on the floor.
+   * Two editors on two files were worse — the second launch hit the singleton
+   * guard and simply refocused the first, losing a window outright.
+   */
+  args?: LaunchArgs;
+  /** Index into the session's `groups`, when this window was in one. */
+  group?: number;
+}
+
+/** A constellation, as written down. */
+interface SessionGroup {
+  name: string;
+  color?: string;
+  rigid?: boolean;
+}
+
+/**
+ * The session file.
+ *
+ * Older sessions are a bare array of windows, from before constellations were
+ * written down. Restore accepts both rather than discarding a layout on the
+ * first boot after an upgrade.
+ */
+interface SavedSession {
+  windows: SessionEntry[];
+  groups: SessionGroup[];
+}
+
+/** A window that was closed and could be brought back. */
+interface ClosedWindow {
+  moduleId: string;
+  title: string;
+  place: SurfacePlacement | null;
+  args?: LaunchArgs;
+}
+
+/**
+ * Launch arguments as they can be written to the session, or undefined.
+ *
+ * Args reach the kernel from modules and are usually `{ path }`, but nothing
+ * stops one carrying a DOM node or a cycle. The workspace snapshot is
+ * `JSON.stringify`d wholesale, so one unserialisable argument would break
+ * saving *everything* — this drops the argument instead.
+ */
+function jsonSafe(args: LaunchArgs | undefined): LaunchArgs | undefined {
+  if (!args) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(args)) as LaunchArgs;
+  } catch {
+    return undefined;
+  }
 }
 
 let surfaceCounter = 0;
@@ -74,8 +135,21 @@ export class Kernel {
   private activeModuleId: string | null = null;
   /** The process that owns whatever surfaces the current launch() opens. */
   private activePid: number | null = null;
+  /** What the current launch() was called with, tagged onto its surfaces. */
+  private activeArgs: LaunchArgs | undefined;
+  /** Launch arguments per surface, so a window can be reopened as it was. */
+  private surfaceArgs = new Map<string, LaunchArgs>();
   /** Placement waiting to be applied to the next surface a module opens. */
   private pendingPlacement: SurfacePlacement | null = null;
+  /**
+   * Recently closed windows, newest last.
+   *
+   * Deleting a file has been recoverable for a while; closing a window was
+   * final, even though the kernel knows exactly which module owned it and
+   * exactly where it floated. In memory only — this is an undo for the last
+   * few seconds of a session, not a second session file.
+   */
+  private closed: ClosedWindow[] = [];
 
   /**
    * Where this dashboard is persisted.
@@ -377,6 +451,7 @@ export class Kernel {
     const proc = this.procs.spawnApp(moduleId, mod.manifest.name, args);
     this.activeModuleId = moduleId;
     this.activePid = proc.pid;
+    this.activeArgs = args;
     try {
       mod.launch?.(this.context(moduleId), args);
     } catch (err) {
@@ -386,6 +461,7 @@ export class Kernel {
     } finally {
       this.activeModuleId = null;
       this.activePid = null;
+      this.activeArgs = undefined;
     }
 
     // A module with no launch(), or one that threw before opening anything,
@@ -514,6 +590,7 @@ export class Kernel {
 
     const cleanup = req.render(element, this.context(surface.moduleId));
     this.surfaces.set(id, surface);
+    if (this.activeArgs) this.surfaceArgs.set(id, this.activeArgs);
     if (this.activePid !== null) this.procs.attachSurface(this.activePid, id);
     const dispose = this.compositor.mountSurface(surface);
 
@@ -546,9 +623,23 @@ export class Kernel {
   }
 
   closeSurface(id: string): void {
+    // Recorded before the disposer runs: once the compositor has unmounted the
+    // panel there is no placement left to ask it for.
+    const surface = this.surfaces.get(id);
+    if (surface) {
+      this.closed.push({
+        moduleId: surface.moduleId,
+        title: surface.title,
+        place: this.compositor.snapshot?.()[id] ?? null,
+        args: this.surfaceArgs.get(id),
+      });
+      if (this.closed.length > REOPEN_DEPTH) this.closed.shift();
+    }
+
     this.surfaceDisposers.get(id)?.();
     this.surfaceDisposers.delete(id);
     this.surfaces.delete(id);
+    this.surfaceArgs.delete(id);
 
     // Closing the last window a process owns is how that process exits. Deriving
     // it from surface ownership rather than tracking it separately is what keeps
@@ -571,24 +662,115 @@ export class Kernel {
    */
   saveSession(): void {
     const places = this.compositor.snapshot?.() ?? {};
-    const entries: SessionEntry[] = [];
+
+    // Constellations are recorded by index rather than by id: compositor group
+    // ids are minted per session and mean nothing on the next boot.
+    const live = this.compositor.listGroups?.() ?? [];
+    const groups: SessionGroup[] = live.map((g) => ({
+      name: g.name,
+      color: g.color,
+      rigid: g.rigid,
+    }));
+    const groupOf = new Map<string, number>();
+    live.forEach((g, i) => {
+      for (const m of g.members) groupOf.set(m, i);
+    });
+
+    const windows: SessionEntry[] = [];
     for (const s of this.surfaces.values()) {
       const place = places[s.id];
-      if (place) entries.push({ moduleId: s.moduleId, place });
+      if (!place) continue;
+      windows.push({
+        moduleId: s.moduleId,
+        place,
+        title: s.title,
+        args: jsonSafe(this.surfaceArgs.get(s.id)),
+        group: groupOf.get(s.id),
+      });
     }
-    this.store.set(SESSION_KEY, entries);
+    this.store.set(SESSION_KEY, { windows, groups } satisfies SavedSession);
   }
 
-  /** Re-open last session's apps, each one dropped back into its old spot. */
+  /**
+   * Re-open last session's apps, each one dropped back into its old spot — and
+   * re-tie the constellations they were part of.
+   *
+   * Without the second half, a saved layout came back as loose windows sitting
+   * where a dashboard used to be: the shape survived and the thing that made it
+   * one object did not.
+   */
   restoreSession(): void {
-    const entries = this.store.get<SessionEntry[]>(SESSION_KEY, []);
-    if (!Array.isArray(entries) || entries.length === 0) return;
-    for (const entry of entries) {
+    const saved = this.store.get<SavedSession | SessionEntry[]>(SESSION_KEY, {
+      windows: [],
+      groups: [],
+    });
+    // Sessions written before constellations were recorded are a bare array.
+    const { windows, groups } = Array.isArray(saved)
+      ? { windows: saved, groups: [] as SessionGroup[] }
+      : saved;
+    if (!Array.isArray(windows) || windows.length === 0) return;
+
+    const members = new Map<number, string[]>();
+
+    for (const entry of windows) {
       if (!this.modules.has(entry.moduleId)) continue;
       this.pendingPlacement = entry.place;
-      this.launch(entry.moduleId);
+      const before = new Set(this.surfaces.keys());
+      this.launch(entry.moduleId, entry.args);
       this.pendingPlacement = null;
+
+      // Whatever that launch opened is what this entry restored. A module may
+      // open more than one surface, so this takes them all rather than
+      // assuming a single window.
+      const opened = [...this.surfaces.keys()].filter((id) => !before.has(id));
+      if (entry.title) for (const id of opened) this.setTitle(id, entry.title);
+      if (entry.group === undefined) continue;
+      const bucket = members.get(entry.group) ?? [];
+      bucket.push(...opened);
+      members.set(entry.group, bucket);
     }
+
+    for (const [index, ids] of members) {
+      if (ids.length < 2) continue;
+      const g = groups[index];
+      this.compositor.linkSurfaces?.(ids, g?.name, {
+        color: g?.color,
+        rigid: g?.rigid,
+      });
+    }
+  }
+
+  /* ---------------- reopening ---------------- */
+
+  /**
+   * Bring back the most recently closed window, in the place it was closed
+   * from. Returns false when there is nothing left to bring back.
+   */
+  reopenLast(): boolean {
+    const last = this.closed.pop();
+    if (!last) {
+      this.notify("no recently closed window", "warn");
+      return false;
+    }
+    if (!this.modules.has(last.moduleId)) return this.reopenLast();
+
+    this.pendingPlacement = last.place;
+    const before = new Set(this.surfaces.keys());
+    // Always launched *with* arguments, which is also what bypasses the
+    // singleton guard: "bring that window back" is about a specific window,
+    // and refocusing some other instance would quietly drop the request.
+    this.launch(last.moduleId, { ...last.args, reopen: true });
+    this.pendingPlacement = null;
+
+    for (const id of [...this.surfaces.keys()].filter((i) => !before.has(i))) {
+      this.setTitle(id, last.title);
+    }
+    return true;
+  }
+
+  /** How many windows could still be brought back. For the palette's hint. */
+  reopenDepth(): number {
+    return this.closed.length;
   }
 
   /**

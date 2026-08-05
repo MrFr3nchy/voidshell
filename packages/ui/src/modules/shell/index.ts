@@ -32,6 +32,7 @@ const KEYBINDS: [string, string][] = [
   ["escape", "close whatever is open"],
   ["\u2318 / ctrl + shift + u", "dissolve every constellation"],
   ["\u2318 / ctrl + shift + k", "close every window"],
+  ["\u2318 / ctrl + shift + t", "reopen the last closed window"],
   ["drag the void", "look around"],
   ["double-click a title bar", "fill the screen / put it back"],
   ["drag a title bar to an edge", "snap it to that half, or the top to fill"],
@@ -294,6 +295,13 @@ export const shell: VoidModule = {
         for (const g of groups) c.unlinkGroup(g.id);
         c.notify(`dissolved ${groups.length} constellation${groups.length === 1 ? "" : "s"}`, "good");
       },
+    });
+    ctx.defineCommand({
+      id: "shell.reopen",
+      label: "reopen the last closed window",
+      hint: "brings it back where it was, holding what it held",
+      glyph: "\u21ba",
+      run: (c) => c.emit("shell.reopenWindow"),
     });
     ctx.defineCommand({
       id: "shell.closeAll",

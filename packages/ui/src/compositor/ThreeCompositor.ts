@@ -6,6 +6,7 @@ import type {
   Compositor,
   CompositorStats,
   GroupInfo,
+  GroupStyle,
   Surface,
   SurfacePlacement,
   Vec3,
@@ -920,7 +921,7 @@ export class ThreeCompositor implements Compositor {
   /* Constellations (dashboards)                                         */
   /* ------------------------------------------------------------------ */
 
-  linkSurfaces(ids: string[], name?: string): string {
+  linkSurfaces(ids: string[], name?: string, style?: GroupStyle): string {
     const live = ids.filter((id) => this.panels.has(id));
     if (live.length < 2) return "";
 
@@ -945,10 +946,12 @@ export class ThreeCompositor implements Compositor {
       id,
       name: name?.trim() || `constellation ${this.groupCounter}`,
       members,
-      color: GROUP_COLORS[(this.groupCounter - 1) % GROUP_COLORS.length],
+      color: style?.color ?? GROUP_COLORS[(this.groupCounter - 1) % GROUP_COLORS.length],
       // The world setting is the default for new constellations, not a law
-      // over the live ones — a bond you hardened stays hardened.
-      rigid: !this.cfg.linkOrbit,
+      // over the live ones — a bond you hardened stays hardened. Session
+      // restore passes the style it wrote down, so a rebuilt constellation
+      // comes back the colour and firmness you left it.
+      rigid: style?.rigid ?? !this.cfg.linkOrbit,
     };
     this.groups.set(id, entry);
     for (const m of members) {
@@ -981,6 +984,8 @@ export class ThreeCompositor implements Compositor {
       id: g.id,
       name: g.name,
       members: [...g.members],
+      color: g.color,
+      rigid: g.rigid,
     }));
   }
 
@@ -1109,6 +1114,11 @@ export class ThreeCompositor implements Compositor {
       p.pinY = place.pinY;
       p.el.classList.add("pinned");
     }
+    if (place.minimized) {
+      p.minimized = true;
+      p.el.classList.add("minimized");
+      p.el.style.height = "";
+    }
     // Applied last, so the restore box it captures is the floating window we
     // just rebuilt — restoring a maximized window and then un-maximizing it
     // has to land on the size it had before it was maximized, not on the
@@ -1131,6 +1141,7 @@ export class ThreeCompositor implements Compositor {
         pinX: box.pinX,
         pinY: box.pinY,
         snap: p.snap,
+        minimized: p.minimized,
       };
     }
     return out;
