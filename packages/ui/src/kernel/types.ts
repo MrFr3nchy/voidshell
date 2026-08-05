@@ -59,6 +59,16 @@ export interface GroupInfo {
   id: string;
   name: string;
   members: string[];
+  /** Thread colour. Optional so a minimal compositor need not have the idea. */
+  color?: string;
+  /** Whether the bond translates (hard) or rotates about the camera (loose). */
+  rigid?: boolean;
+}
+
+/** Enough about a constellation to rebuild the same one. */
+export interface GroupStyle {
+  color?: string;
+  rigid?: boolean;
 }
 
 /** A saved constellation: which apps, under what name. Survives reloads. */
@@ -121,7 +131,7 @@ export interface Compositor {
   /** Convert a screen point to a world position at a given distance. */
   screenToWorld?(x: number, y: number, dist: number): Vec3;
   /** Tie windows together so they drag, focus and travel as one. */
-  linkSurfaces?(ids: string[], name?: string): string;
+  linkSurfaces?(ids: string[], name?: string, style?: GroupStyle): string;
   /** Cut a constellation loose; its windows go back to being individuals. */
   unlinkGroup?(id: string): void;
   listGroups?(): GroupInfo[];
@@ -162,6 +172,8 @@ export interface SurfacePlacement {
    * a session written before snapping existed still restores cleanly.
    */
   snap?: "full" | "left" | "right" | null;
+  /** Collapsed to just its title bar. */
+  minimized?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -358,7 +370,7 @@ export interface KernelContext {
   /** The bodies currently in the sky. */
   listBodies(): { id: string; kind: BodyKind }[];
   /** Constellations: windows that move and travel as one. */
-  linkSurfaces(ids: string[], name?: string): string;
+  linkSurfaces(ids: string[], name?: string, style?: GroupStyle): string;
   unlinkGroup(id: string): void;
   listGroups(): GroupInfo[];
   /** Re-lay-out every open window into a formation. */

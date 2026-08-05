@@ -39,6 +39,7 @@ two commands to run it.
 | **⌘/ctrl + shift + A** | all apps |
 | **⌘/ctrl + ,** | settings |
 | **⌘/ctrl + shift + L** | lock the session |
+| **⌘/ctrl + shift + T** | reopen the last closed window |
 | **home** | recentre the view |
 | drag a title bar | move a window through space |
 | double-click a title bar | fill the screen / put it back |
@@ -312,6 +313,29 @@ account key, and that one is checked on the server.
 Autostart runs on every boot, restored session or not — that's what makes it
 autostart rather than a second session file. The singleton guard means anything
 the restore already re-opened gets refocused, not cloned.
+
+### What a session actually remembers
+
+A layout used to come back as the right *apps* in the right *places*, which is
+less than it sounds. It recorded which module had been running and not what that
+module was holding, so a restored editor reopened **empty** — and two editors on
+two files were worse, because the second launch hit the singleton guard and
+simply refocused the first, losing a window outright. Constellations vanished
+too: the shape survived and the thing that made it one object did not.
+
+A session now writes down each window's launch arguments, its title, whether it
+was collapsed, and which constellation it belonged to — by index, since group
+ids are minted per session and mean nothing on the next boot. Sessions written
+in the old shape are a bare array and still restore, because dropping a layout
+on the first boot after an upgrade is a worse bug than the one being fixed.
+
+### Closing a window is undoable
+
+`rm` has been recoverable for a while; closing a window was final, even though
+the kernel knows exactly which module owned it, what it was launched with, and
+where it floated. **⌘/ctrl + shift + T** brings back the last one, in its place,
+holding what it held. The ring is twelve deep and lives in memory — this is an
+undo for the last few seconds, not a second session file.
 
 ## The status bar
 

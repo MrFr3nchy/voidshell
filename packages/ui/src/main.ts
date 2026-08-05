@@ -227,6 +227,7 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
   ctx.on("shell.openDrawer", () => drawer.toggle(true));
   ctx.on("shell.openPalette", () => palette.toggle(true));
   ctx.on("shell.saveSession", () => kernel.saveSession());
+  ctx.on("shell.reopenWindow", () => kernel.reopenLast());
   ctx.on("shell.signOut", () => void signOut());
 
   ctx.on("shell.factoryReset", () => {
@@ -279,6 +280,14 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
       const open = ctx.openSurfaces();
       for (const s of open) kernel.closeSurface(s.id);
       ctx.notify(`closed ${open.length} window${open.length === 1 ? "" : "s"}`, "good");
+      return;
+    }
+    // The counterpart to closing one. Deliberately above the typing guard: it
+    // is the browser's own reopen-tab shortcut, and muscle memory doesn't stop
+    // at the edge of a text field.
+    if (mod && e.shiftKey && e.key.toLowerCase() === "t") {
+      e.preventDefault();
+      kernel.reopenLast();
       return;
     }
     if (mod && e.key === ",") {

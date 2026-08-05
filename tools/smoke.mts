@@ -279,6 +279,86 @@ for (const m of ctx.registry().filter((x) => x.kind === "app")) {
   for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }
 
+/* ---------------- reopening a closed window ---------------- */
+
+check("a closed window comes back", (() => {
+  kernel.launch("chronos");
+  const id = ctx.openSurfaces()[0]?.id;
+  kernel.closeSurface(id);
+  const gone = ctx.openSurfaces().length === 0;
+  const back = kernel.reopenLast();
+  const open = ctx.openSurfaces().length === 1;
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  return gone && back && open;
+})());
+
+check("a reopened window keeps what it held", (() => {
+  // The editor is the case that mattered: reopening it without its argument
+  // brought back an *empty* editor, which is not the window you closed.
+  kernel.launch("editor", { path: "/home/void/welcome.md" });
+  const id = ctx.openSurfaces()[0]?.id;
+  kernel.closeSurface(id);
+  kernel.reopenLast();
+  const titled = ctx.openSurfaces()[0]?.title === "welcome.md";
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  return titled;
+})());
+
+check("the reopen ring is capped", (() => {
+  // The ring cannot be drained by reopening from it — bringing a window back
+  // and closing it again puts it straight back on. So the property worth
+  // asserting is the cap, which is what stops a long session from holding on
+  // to every window it ever had.
+  for (let i = 0; i < 16; i++) {
+    kernel.launch("chronos");
+    for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  }
+  return kernel.reopenDepth() === 12;
+})());
+
+/* ---------------- session fidelity ---------------- */
+
+check("a saved session carries its constellations", (() => {
+  kernel.launch("chronos");
+  kernel.launch("notes");
+  const ids = ctx.openSurfaces().map((s) => s.id);
+  ctx.linkSurfaces(ids, "test group");
+  kernel.saveSession();
+
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  for (const g of ctx.listGroups()) ctx.unlinkGroup(g.id);
+
+  kernel.restoreSession();
+  const groups = ctx.listGroups();
+  const rebuilt = groups.length === 1 && groups[0].members.length === 2;
+  const named = groups[0]?.name === "test group";
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  for (const g of ctx.listGroups()) ctx.unlinkGroup(g.id);
+  return rebuilt && named;
+})());
+
+check("a restored editor still holds its file", (() => {
+  kernel.launch("editor", { path: "/home/void/welcome.md" });
+  kernel.saveSession();
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  kernel.restoreSession();
+  const held = ctx.openSurfaces()[0]?.title === "welcome.md";
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  return held;
+})());
+
+check("a session written before constellations still restores", (() => {
+  // The old shape was a bare array of windows. Dropping a layout on the first
+  // boot after an upgrade would be a worse bug than the one being fixed.
+  ctx.state.set("system.session", [
+    { moduleId: "chronos", place: { anchor: [0, 0, -600], width: 420, height: 300, pinned: false, pinX: 0, pinY: 0 } },
+  ]);
+  kernel.restoreSession();
+  const opened = ctx.openSurfaces().length === 1;
+  for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+  return opened;
+})());
+
 /* ---------------- live window titles ---------------- */
 
 check("a window can be renamed", (() => {
