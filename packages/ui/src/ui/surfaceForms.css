@@ -26,15 +26,32 @@
 
 /* The bar survives as the drag handle — the compositor binds dragging to it —
    but it is transparent and pulled over the top of the object rather than
-   sitting above it in the layout. Removing it would silently break dragging. */
+   sitting above it in the layout. Removing it would silently break dragging.
+
+   It spans the whole object rather than a strip at the top, so that the control
+   row (absolutely positioned against it) can be placed anywhere inside the
+   silhouette. Only the top sixth of it actually catches the pointer, via the
+   ::before below — the rest is transparent to clicks so the module's own DOM
+   underneath stays interactive. */
 .vs-panel.vs-formed .vs-panel-bar {
   position: absolute;
-  inset: 0 0 auto 0;
+  inset: 0;
   z-index: 3;
-  height: 16%;
+  height: auto;
   border: none;
   background: transparent;
   padding: 0;
+  pointer-events: none;
+}
+.vs-panel.vs-formed .vs-panel-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 84% 0;
+  pointer-events: auto;
+  cursor: grab;
+}
+.vs-panel.vs-formed.dragging .vs-panel-bar::before {
+  cursor: grabbing;
 }
 .vs-panel.vs-formed .vs-panel-title,
 .vs-panel.vs-formed .vs-panel-link {
@@ -48,24 +65,45 @@
   display: none;
 }
 
+/* Neither of these can happen to a shaped window — the compositor refuses both
+   in setSnap and toggleMinimize — so the buttons go rather than sitting there
+   doing nothing. It also keeps the row narrow enough to fit inside the
+   narrowest silhouette. */
+.vs-panel.vs-formed .vs-panel-min,
+.vs-panel.vs-formed .vs-panel-max {
+  display: none;
+}
+
 /* Controls stay out of the way until wanted. An ambient object with a row of
-   buttons welded to it is just a window again. */
+   buttons welded to it is just a window again.
+
+   `top` is the load-bearing line. This used to be `top: 100%`, which parks the
+   row directly *below* the panel — outside the clip-path, and clip-path clips
+   hit-testing as well as painting. So on every shaped window the entire row was
+   invisible AND unclickable: no menu, no pin, no close. Each form now says
+   where inside its own outline the row belongs; see WindowForm.controls.
+
+   pointer-events matter for the same reason in reverse: an opacity:0 element
+   still takes clicks, so once the row is inside the silhouette it would eat
+   them while invisible. */
 .vs-panel.vs-formed .vs-panel-tools {
   position: absolute;
-  top: 100%;
+  top: var(--vs-form-controls, 62%);
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   gap: 2px;
   padding: 2px 5px;
   border-radius: 999px;
   background: rgba(6, 8, 16, 0.82);
   border: 1px solid var(--edge);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.16s;
 }
 .vs-panel.vs-formed:hover .vs-panel-tools,
 .vs-panel.vs-formed:focus-within .vs-panel-tools {
   opacity: 1;
+  pointer-events: auto;
 }
 
 /* The object's own furniture: base, cap, glass, bezel. Painted over the
@@ -81,49 +119,6 @@
   display: block;
   width: 100%;
   height: 100%;
-}
-
-/* ---------- the shape picker in Settings ---------- */
-
-.form-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.form-picker-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 3px 0;
-}
-.form-picker-name {
-  font-size: 12px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.form-picker-pick {
-  flex: none;
-  appearance: none;
-  border: 1px solid var(--edge);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-dim);
-  padding: 3px 9px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-}
-.form-picker-pick:hover,
-.form-picker-pick:focus {
-  color: var(--text);
-  border-color: var(--cyan);
-  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
