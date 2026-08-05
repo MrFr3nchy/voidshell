@@ -40,6 +40,8 @@ two commands to run it.
 | **⌘/ctrl + ,** | settings |
 | **⌘/ctrl + shift + L** | lock the session |
 | **⌘/ctrl + shift + T** | reopen the last closed window |
+| **⌘/ctrl + `** | step through the open windows |
+| **⌘/ctrl + shift + E** | see every window at once |
 | **home** | recentre the view |
 | drag a title bar | move a window through space |
 | double-click a title bar | fill the screen / put it back |
@@ -106,6 +108,27 @@ against the top edge to fill, or against a side to take that half. Dragging a
 snapped window tears it off and hands it back at its old size, under the cursor.
 Only lone windows snap — a constellation travels as one object, and snapping a
 member would silently tear it out of its group.
+
+### Reaching a window without the mouse
+
+Two ways, because "where is that thing" has two shapes.
+
+**⌘/ctrl + `** steps through the open windows and turns the void to face each
+one; shift walks back. Deliberately a stable order rather than most-recently-
+used: in a place where windows have *positions*, an order you can walk in both
+directions is easier to predict than a stack that reshuffles itself every time
+you look at something.
+
+**⌘/ctrl + shift + E** is the overview — every window flies into a grid facing
+you, and clicking one takes you there. `arrange` has fanned windows into
+formations for a while, but it is a permanent re-layout, which is why nobody
+used it to *find* anything: looking cost you the arrangement you had. Every
+anchor is remembered on the way in and restored on the way out, so this is a
+look rather than a decision. Escape puts everything back.
+
+Snapped and pinned windows sit the overview out. They are already on the glass
+and fully visible, and dragging them into the world to show them to you would be
+undoing the thing you asked them to do.
 
 ### Stacking
 

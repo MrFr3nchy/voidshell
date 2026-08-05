@@ -153,6 +153,30 @@ button {
   cursor: grabbing;
 }
 
+/* While the overview is up, every window reads as a card to be picked rather
+   than a thing to be worked in. */
+body.vs-exposed .vs-panel {
+  cursor: pointer;
+}
+body.vs-exposed .vs-panel-content {
+  pointer-events: none;
+}
+body.vs-exposed .vs-panel:hover {
+  border-color: var(--cyan);
+}
+
+/* Keyboard focus. The stylesheet was a long run of `outline: 0` with nothing
+   put back, which makes every control in the void invisible to tab. Scoped to
+   :focus-visible so it appears for keyboard users and not on every click. */
+.vs-panel-tool:focus-visible,
+.vs-panel-link:focus-visible,
+.vs-menu-item:focus-visible,
+.vs-swatch:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
 /* ---------- Resize grips ----------
    All eight, so a window can grow in the direction you actually want it to.
    The edges are 7px bands; the corners are 18px squares layered above them so

@@ -98,6 +98,8 @@ let n = 0;
 const mounted = new Map<string, unknown>();
 /** Every rename the kernel asked the compositor to draw. */
 const retitles = new Map<string, string>();
+let activeSurfaceId: string | null = null;
+let exposeOn = false;
 
 const stub = {
   name: "stub",
@@ -113,7 +115,12 @@ const stub = {
     };
   },
   retitleSurface: (id: string, title: string) => void retitles.set(id, title),
-  focusSurface: () => {},
+  focusSurface: (id: string) => void (activeSurfaceId = id),
+  activeSurface: () => activeSurfaceId,
+  expose: (on?: boolean) => {
+    exposeOn = on ?? !exposeOn;
+    return exposeOn;
+  },
   lookAtSurface: () => {},
   lookAtGroup: () => {},
   resetView: () => {},
@@ -278,6 +285,16 @@ for (const m of ctx.registry().filter((x) => x.kind === "app")) {
   check(`launch ${m.id}`, opened);
   for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }
+
+/* ---------------- the overview ---------------- */
+
+check("the overview toggles and reports its own state", (() => {
+  // The caller must not keep a flag of its own: the compositor dismisses the
+  // overview itself when a window is picked, so a local copy would drift.
+  const on = ctx.expose();
+  const off = ctx.expose();
+  return on === true && off === false;
+})());
 
 /* ---------------- reopening a closed window ---------------- */
 

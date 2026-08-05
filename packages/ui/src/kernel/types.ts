@@ -105,6 +105,19 @@ export interface Compositor {
   retitleSurface?(id: string, title: string): void;
   /** Bring an existing surface back to the user and focus it (singleton re-launch). */
   focusSurface?(id: string): void;
+  /** Which window currently has focus, if the backend has such a notion. */
+  activeSurface?(): string | null;
+  /**
+   * Show every window at once in a readable formation, and put them back.
+   *
+   * Distinct from `arrange`, which is a permanent re-layout: an overview has to
+   * be *reversible*, or looking at everything costs you the arrangement you had.
+   *
+   * Omit `on` to toggle. Returns whether the overview is now up — the
+   * compositor dismisses it itself when a window is picked, so the caller
+   * cannot keep a flag of its own without it drifting.
+   */
+  expose?(on?: boolean): boolean;
   /** Swing the camera until the given surface is dead ahead. */
   lookAtSurface?(id: string): void;
   /** Swing the camera to the centre of a linked constellation. */
@@ -356,6 +369,13 @@ export interface KernelContext {
   openSurfaces(): { id: string; title: string; moduleId: string }[];
   /** Bring a window back to the front of your attention. */
   focusSurface(id: string): void;
+  /** Which window has focus right now, or null when nothing does. */
+  activeSurface(): string | null;
+  /**
+   * Fan every window into a facing grid, or put them back where they were.
+   * Omit `on` to toggle; returns whether the overview is now up.
+   */
+  expose(on?: boolean): boolean;
   /** Swing the camera until a window (or constellation) is dead ahead. */
   lookAt(id: string): void;
   lookAtGroup(id: string): void;
