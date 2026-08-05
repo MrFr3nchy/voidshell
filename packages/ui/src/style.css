@@ -445,8 +445,39 @@ button {
   z-index: 1;
   overflow: visible;
 }
+/* A thread is four layers, so it reads as starlight rather than as a line on a
+   chart: a wide blurred halo, a bright thin core, a star where it meets each
+   window, and an invisible fat stroke that is the actual click target. */
+.vs-tether-halo,
+.vs-tether-core,
+.vs-tether-hit,
 .vs-tether-line {
   fill: none;
+}
+.vs-tether-halo {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.vs-tether-core {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* A one-pixel line is impossible to hit; a sixteen-pixel one under it is
+   effortless. Clicking is how a bond is hardened or loosened, so it needs to
+   be clickable — the layer itself is pointer-events: none. */
+.vs-tether-hit {
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.vs-tether:hover .vs-tether-core {
+  stroke-opacity: 1;
+}
+.vs-tether-star {
+  pointer-events: none;
+}
+.vs-tether-line {
   stroke-width: 1.2;
   stroke-opacity: 0.5;
   stroke-dasharray: 3 6;
@@ -456,6 +487,7 @@ button {
   stroke: var(--cyan);
   stroke-opacity: 0.9;
   stroke-dasharray: 5 5;
+  pointer-events: none;
 }
 .vs-tether-label {
   font-family: var(--font-mono);
@@ -687,6 +719,53 @@ body.vs-dropping #void::after {
 .vs-menu-accel {
   color: var(--text-dim);
   font-size: 10px;
+}
+.vs-menu-swatches {
+  padding: 6px 12px 8px;
+}
+.vs-menu-swatch-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.vs-menu-colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vs-swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.vs-swatch:hover {
+  transform: scale(1.18);
+}
+.vs-swatch.on {
+  box-shadow: 0 0 0 2px var(--void-0), 0 0 0 3px currentColor;
+}
+.vs-swatch-custom {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px dashed var(--edge);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+.vs-swatch-custom::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.vs-swatch-custom::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
 }
 .vs-menu-sep {
   height: 1px;

@@ -12,6 +12,15 @@ import type {
 } from "../kernel/types";
 import { nebulaFragment, nebulaVertex } from "../world/nebulaShader";
 import { Compass, type CompassItem } from "../ui/compass";
+import { showContextMenu } from "../ui/contextMenu";
+import {
+  GROUP_COLORS,
+  RESIZE_AXES,
+  createPanelChrome,
+  panelMenuItems,
+  type ResizeAxis,
+} from "./panelChrome";
+import { TetherLayer } from "./tethers";
 
 interface PanelEntry {
   id: string;
@@ -83,11 +92,20 @@ interface GroupEntry {
   name: string;
   members: Set<string>;
   color: string;
+  /**
+   * A hard bond translates: every member moves by the same vector, so the
+   * formation keeps its shape and members nearer the camera grow as it
+   * travels. A loose one rotates the formation about the camera instead,
+   * which holds every member's distance — and so its size — exactly constant.
+   *
+   * This used to be one global setting, which meant it was a property of the
+   * whole void rather than of a particular constellation. It is per-group now,
+   * and the setting seeds the default for new ones.
+   */
+  rigid: boolean;
 }
 
 const PLANET_COLORS = [0x6ec6ff, 0xb98cff, 0x5fd6a8, 0xff9d6e];
-const GROUP_COLORS = ["#4fe3d0", "#c05cff", "#ff8a5c", "#7ea8ff", "#5fd6a8"];
-const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Depth range a panel can be scrolled through. Chosen to line up with the
 // on-screen scale clamp in projectPanels, so every notch of the wheel produces
@@ -104,23 +122,6 @@ const FADE_RANGE = 1400;
 
 /** How close (in screen px) a link-drag must get to count as a hit. */
 const BODY_HIT_RADIUS = 110;
-
-/**
- * Which edges a panel can be dragged by. All eight, because a window that can
- * only grow down-and-right forces you to move it every time you make it bigger.
- */
-type ResizeAxis = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
-const RESIZE_AXES: ResizeAxis[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
-const RESIZE_TITLES: Record<ResizeAxis, string> = {
-  n: "drag to resize height",
-  s: "drag to resize height",
-  e: "drag to resize width",
-  w: "drag to resize width",
-  ne: "drag to resize",
-  nw: "drag to resize",
-  se: "drag to resize",
-  sw: "drag to resize",
-};
 
 const MIN_PANEL_W = 240;
 const MIN_PANEL_H = 140;
@@ -172,8 +173,7 @@ export class ThreeCompositor implements Compositor {
 
   private nebula!: THREE.Mesh;
   private particles!: THREE.Points;
-  private tetherSvg!: SVGSVGElement;
-  private tetherNodes = new Map<string, SVGGElement>();
+  private tethers!: TetherLayer;
   private snapGhost!: HTMLElement;
 
   private uniforms = {
@@ -214,7 +214,6 @@ export class ThreeCompositor implements Compositor {
     linkOpacity: 0.5,
     linkWidth: 1.2,
     linkGlow: 6,
-    linkDashed: true,
     linkLabels: true,
     /** Rotate a constellation about the camera rather than translating it. */
     linkOrbit: true,
@@ -272,10 +271,12 @@ export class ThreeCompositor implements Compositor {
     this.particles = this.makeParticles(this.cfg.dust);
     this.scene.add(this.particles);
 
-    // Tethers live under the panels so a link line never eats a click.
-    this.tetherSvg = document.createElementNS(SVG_NS, "svg");
-    this.tetherSvg.setAttribute("class", "vs-tethers");
-    this.overlay.appendChild(this.tetherSvg);
+    // Tethers live under the panels so a link line never eats a click. The
+    // threads are also controls: clicking one hardens or loosens that bond.
+    this.tethers = new TetherLayer(this.overlay, (gid) => {
+      const g = this.groups.get(gid);
+      if (g) this.setGroupRigid(gid, !g.rigid);
+    });
 
     this.snapGhost = document.createElement("div");
     this.snapGhost.className = "vs-snap-ghost";
@@ -318,50 +319,10 @@ export class ThreeCompositor implements Compositor {
   /* ------------------------------------------------------------------ */
 
   mountSurface(surface: Surface): () => void {
-    const panel = document.createElement("div");
-    panel.className = "vs-panel materializing";
-    panel.style.width = `${surface.width}px`;
-    panel.style.height = `${surface.height}px`;
-    panel.dataset.surface = surface.id;
-
-    const bar = document.createElement("div");
-    bar.className = "vs-panel-bar";
-
-    const link = document.createElement("button");
-    link.className = "vs-panel-link";
-    link.title = "drag onto another window to link \u00b7 onto a body to merge";
-    link.setAttribute("aria-label", "Link this window");
-    link.textContent = "\u2059";
-
-    const title = document.createElement("span");
-    title.className = "vs-panel-title";
-    title.textContent = surface.title;
-
-    const tools = document.createElement("div");
-    tools.className = "vs-panel-tools";
-    const pin = mkTool("vs-panel-pin", "\u25c8", "Pin to screen");
-    const min = mkTool("vs-panel-min", "\u2013", "Collapse");
-    const max = mkTool("vs-panel-max", "\u25a1", "Fill the screen");
-    const close = mkTool("vs-panel-close", "\u2715", `Dismiss ${surface.title}`);
-    tools.append(pin, min, max, close);
-
-    bar.append(link, title, tools);
-
-    const body = document.createElement("div");
-    body.className = "vs-panel-content";
-    body.appendChild(surface.element);
-
-    // One grip per resize axis. Appended after the content so they stack above
-    // it and stay grabbable no matter what the module rendered.
-    const grips = {} as Record<ResizeAxis, HTMLElement>;
-    for (const axis of RESIZE_AXES) {
-      const g = document.createElement("div");
-      g.className = `vs-panel-grip vs-grip-${axis}`;
-      g.title = RESIZE_TITLES[axis];
-      grips[axis] = g;
-    }
-
-    panel.append(bar, body, ...RESIZE_AXES.map((a) => grips[a]));
+    // One place decides what a window is made of. The compositor used to build
+    // this inline while `createPanelChrome` sat unused next to it.
+    const { panel, bar, tools, link, grips, more, pin, min, max, close } =
+      createPanelChrome(surface);
     this.overlay.appendChild(panel);
 
     // Anchor the new panel where the user asked (drag-from-drawer) or in front
@@ -423,6 +384,18 @@ export class ThreeCompositor implements Compositor {
     bar.addEventListener("dblclick", (e) => {
       if (tools.contains(e.target as Node) || link.contains(e.target as Node)) return;
       this.toggleSnap(surface.id, "full");
+    });
+
+    // Two doors onto the same menu: the ⋯ button for people who look, and
+    // right-clicking the title bar for people who already know.
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const r = more.getBoundingClientRect();
+      this.openPanelMenu(surface.id, r.left, r.bottom + 4);
+    });
+    bar.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.openPanelMenu(surface.id, e.clientX, e.clientY);
     });
 
     requestAnimationFrame(() => panel.classList.replace("materializing", "active"));
@@ -602,6 +575,62 @@ export class ThreeCompositor implements Compositor {
     };
   }
 
+  /**
+   * The per-window menu.
+   *
+   * Everything here is scoped to this window or to the constellation it belongs
+   * to — global state should cost a trip to Settings, and window state
+   * shouldn't. Built as items for the shared context menu so that a title bar
+   * and a desktop icon open the same kind of menu, drawn by the same code.
+   */
+  private openPanelMenu(id: string, x: number, y: number): void {
+    const p = this.panels.get(id);
+    if (!p) return;
+    this.setActive(id);
+    const g = p.groupId ? this.groups.get(p.groupId) : null;
+
+    showContextMenu(
+      x,
+      y,
+      panelMenuItems(
+        {
+          pinned: p.pinned,
+          minimized: p.minimized,
+          snapped: Boolean(p.snap),
+          merged: Boolean(p.bodyId),
+          group: g ? { color: g.color, rigid: g.rigid } : null,
+        },
+        {
+          togglePin: () => this.togglePin(id),
+          toggleMinimize: () => this.toggleMinimize(id),
+          toggleSnap: () => this.toggleSnap(id, "full"),
+          snapLeft: () => this.toggleSnap(id, "left"),
+          snapRight: () => this.toggleSnap(id, "right"),
+          nudge: (dir) => this.nudgeDepth(id, dir),
+          release: () => this.attachSurface(id, null),
+          setRigid: (rigid) => this.setGroupRigid(p.groupId, rigid),
+          setColor: (color) => this.setGroupColor(p.groupId, color),
+          dissolve: () => p.groupId && this.unlinkGroup(p.groupId),
+          close: () => closeSurfaceById(id),
+        }
+      )
+    );
+  }
+
+  /** Push a window one comfortable step further away, or pull it back. */
+  private nudgeDepth(id: string, dir: number): void {
+    const p = this.panels.get(id);
+    if (!p || p.pinned || p.snap) return;
+    this.freeFromBody(p);
+    const dist = p.anchor.distanceTo(this.camera.position);
+    const next = Math.max(MIN_DEPTH, Math.min(MAX_DEPTH, dist * (dir > 0 ? 1.25 : 0.8)));
+    p.anchor
+      .sub(this.camera.position)
+      .normalize()
+      .multiplyScalar(next)
+      .add(this.camera.position);
+  }
+
   /* ------------------------------------------------------------------ */
   /* World tuning                                                        */
   /* ------------------------------------------------------------------ */
@@ -661,7 +690,6 @@ export class ThreeCompositor implements Compositor {
       "storms",
       "compass",
       "tethers",
-      "linkDashed",
       "linkLabels",
       "linkOrbit",
       "linkAutoTidy",
@@ -679,7 +707,7 @@ export class ThreeCompositor implements Compositor {
     }
 
     this.compass?.setEnabled(this.cfg.compass);
-    if (!this.cfg.tethers) this.clearTethers();
+    if (!this.cfg.tethers) this.tethers.clear();
   }
 
   /* ------------------------------------------------------------------ */
@@ -890,8 +918,7 @@ export class ThreeCompositor implements Compositor {
       if (!g) continue;
       for (const m of g.members) members.add(m);
       this.groups.delete(gid);
-      this.tetherNodes.get(gid)?.remove();
-      this.tetherNodes.delete(gid);
+      this.tethers.remove(gid);
     }
 
     const id = `group-${++this.groupCounter}`;
@@ -900,6 +927,9 @@ export class ThreeCompositor implements Compositor {
       name: name?.trim() || `constellation ${this.groupCounter}`,
       members,
       color: GROUP_COLORS[(this.groupCounter - 1) % GROUP_COLORS.length],
+      // The world setting is the default for new constellations, not a law
+      // over the live ones — a bond you hardened stays hardened.
+      rigid: !this.cfg.linkOrbit,
     };
     this.groups.set(id, entry);
     for (const m of members) {
@@ -924,8 +954,7 @@ export class ThreeCompositor implements Compositor {
       p.el.style.removeProperty("--vs-group");
     }
     this.groups.delete(id);
-    this.tetherNodes.get(id)?.remove();
-    this.tetherNodes.delete(id);
+    this.tethers.remove(id);
   }
 
   listGroups(): GroupInfo[] {
@@ -1293,70 +1322,52 @@ export class ThreeCompositor implements Compositor {
   /**
    * Draw the light-threads between linked windows. This is what makes a
    * dashboard legible as one object instead of four coincidental windows.
+   *
+   * The drawing itself lives in `TetherLayer`, which knows nothing about 3D —
+   * it takes screen positions and group state. All this does is reduce the
+   * world to that. The compositor grew its own thinner copy of this while the
+   * real layer sat unimported, which is why the threads had no click target
+   * and no loose/hard distinction despite both being written and documented.
    */
   private drawTethers(): void {
     if (!this.cfg.tethers) return;
-    const seen = new Set<string>();
 
-    for (const g of this.groups.values()) {
-      const pts: PanelEntry[] = [];
-      for (const m of g.members) {
-        const p = this.panels.get(m);
-        if (p && p.el.style.display !== "none") pts.push(p);
+    this.tethers.draw(
+      [...this.groups.values()].map((g) => ({
+        id: g.id,
+        name: g.name,
+        color: g.color,
+        rigid: g.rigid,
+        points: [...g.members]
+          .map((m) => this.panels.get(m))
+          .filter((p): p is PanelEntry => Boolean(p) && p!.el.style.display !== "none")
+          .map((p) => ({ sx: p.sx, sy: p.sy })),
+      })),
+      {
+        opacity: this.cfg.linkOpacity,
+        width: this.cfg.linkWidth,
+        glow: this.cfg.linkGlow,
+        labels: this.cfg.linkLabels,
       }
-      if (pts.length < 2) continue;
-      seen.add(g.id);
+    );
+  }
 
-      let node = this.tetherNodes.get(g.id);
-      if (!node) {
-        node = document.createElementNS(SVG_NS, "g");
-        node.setAttribute("class", "vs-tether");
-        const line = document.createElementNS(SVG_NS, "polyline");
-        line.setAttribute("class", "vs-tether-line");
-        const label = document.createElementNS(SVG_NS, "text");
-        label.setAttribute("class", "vs-tether-label");
-        node.append(line, label);
-        this.tetherSvg.appendChild(node);
-        this.tetherNodes.set(g.id, node);
-      }
-
-      // Star-shape from the centroid: reads as a constellation, not a snake.
-      const cx = pts.reduce((s, p) => s + p.sx, 0) / pts.length;
-      const cy = pts.reduce((s, p) => s + p.sy, 0) / pts.length;
-      const path = pts
-        .map((p) => `${cx.toFixed(0)},${cy.toFixed(0)} ${p.sx.toFixed(0)},${p.sy.toFixed(0)}`)
-        .join(" ");
-
-      // Styled inline rather than by attribute: the stylesheet's class rules
-      // out-rank presentation attributes, so only inline style can be tuned.
-      const line = node.querySelector(".vs-tether-line") as SVGPolylineElement;
-      line.setAttribute("points", path);
-      line.style.stroke = g.color;
-      line.style.strokeWidth = String(this.cfg.linkWidth);
-      line.style.strokeOpacity = String(this.cfg.linkOpacity);
-      line.style.strokeDasharray = this.cfg.linkDashed ? "3 6" : "none";
-      line.style.filter =
-        this.cfg.linkGlow > 0 ? `drop-shadow(0 0 ${this.cfg.linkGlow}px ${g.color})` : "none";
-
-      const label = node.querySelector(".vs-tether-label") as SVGTextElement;
-      label.style.display = this.cfg.linkLabels ? "" : "none";
-      label.setAttribute("x", cx.toFixed(0));
-      label.setAttribute("y", (cy - 10).toFixed(0));
-      label.setAttribute("fill", g.color);
-      if (label.textContent !== g.name) label.textContent = g.name;
-    }
-
-    for (const [id, node] of this.tetherNodes) {
-      if (seen.has(id)) continue;
-      node.remove();
-      this.tetherNodes.delete(id);
+  /** Colour and firmness are properties of the bond, so they live on the group. */
+  private setGroupColor(groupId: string | null, color: string): void {
+    const g = groupId ? this.groups.get(groupId) : null;
+    if (!g) return;
+    g.color = color;
+    for (const m of g.members) {
+      this.panels.get(m)?.el.style.setProperty("--vs-group", color);
     }
   }
 
-  private clearTethers(): void {
-    for (const node of this.tetherNodes.values()) node.remove();
-    this.tetherNodes.clear();
+  private setGroupRigid(groupId: string | null, rigid: boolean): void {
+    const g = groupId ? this.groups.get(groupId) : null;
+    if (!g) return;
+    g.rigid = rigid;
   }
+
 
   /**
    * Work out what's off-screen and in which direction, then hand it to the
@@ -1536,7 +1547,8 @@ export class ThreeCompositor implements Compositor {
       this.anchorFromScreen(p.anchor, e.clientX - grabX, e.clientY - grabY, dist);
       if (!others.length) return;
 
-      if (this.cfg.linkOrbit) {
+      // Per-constellation now: `linkOrbit` only seeds the default for new ones.
+      if (!this.groups.get(p.groupId!)?.rigid) {
         // Panel scale is 760/distance, so translating a constellation rigidly
         // would push one member towards the camera and the other away, and the
         // group would visibly grow at one end. Rotating the whole formation
@@ -1602,7 +1614,6 @@ export class ThreeCompositor implements Compositor {
    */
   private bindLinkDrag(id: string, handle: HTMLElement): void {
     let active = false;
-    let temp: SVGPolylineElement | null = null;
     let hover: { kind: "panel" | "body"; id: string } | null = null;
 
     const clearHover = () => {
@@ -1615,22 +1626,17 @@ export class ThreeCompositor implements Compositor {
       if (!p) return;
       active = true;
       handle.setPointerCapture(e.pointerId);
-      temp = document.createElementNS(SVG_NS, "polyline");
-      temp.setAttribute("class", "vs-tether-line vs-tether-live");
-      this.tetherSvg.appendChild(temp);
+      this.tethers.beginLive();
       document.body.classList.add("vs-linking");
       e.preventDefault();
       e.stopPropagation();
     });
 
     handle.addEventListener("pointermove", (e) => {
-      if (!active || !temp) return;
+      if (!active) return;
       const p = this.panels.get(id);
       if (!p) return;
-      temp.setAttribute(
-        "points",
-        `${p.sx.toFixed(0)},${p.sy.toFixed(0)} ${e.clientX},${e.clientY}`
-      );
+      this.tethers.updateLive(p.sx, p.sy, e.clientX, e.clientY);
 
       clearHover();
       const target = this.hitTest(e.clientX, e.clientY, id);
@@ -1645,8 +1651,7 @@ export class ThreeCompositor implements Compositor {
       if (!active) return;
       active = false;
       handle.releasePointerCapture(e.pointerId);
-      temp?.remove();
-      temp = null;
+      this.tethers.endLive();
       document.body.classList.remove("vs-linking");
 
       const target = hover;
@@ -1921,15 +1926,6 @@ function closeSurfaceById(id: string): void {
   window.dispatchEvent(
     new CustomEvent("voidshell:close-surface", { detail: { id } })
   );
-}
-
-function mkTool(cls: string, glyph: string, label: string): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.className = `vs-panel-tool ${cls}`;
-  b.textContent = glyph;
-  b.title = label;
-  b.setAttribute("aria-label", label);
-  return b;
 }
 
 /** Unit vector for a yaw/pitch pair, matching the camera's YXZ convention. */

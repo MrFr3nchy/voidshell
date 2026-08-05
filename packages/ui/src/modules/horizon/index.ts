@@ -110,8 +110,8 @@ const LINK_TOGGLES: {
   {
     key: "links.orbit",
     patch: "linkOrbit",
-    label: "hold sizes steady while dragging",
-    hint: "swings a hardened formation around you instead of sliding it sideways, so no member creeps closer than another",
+    label: "new constellations start loose",
+    hint: "a loose bond swings the formation around you instead of sliding it sideways, so no member creeps closer than another \u2014 click a thread, or use a window's menu, to harden or loosen one",
     def: true,
     order: 21,
   },

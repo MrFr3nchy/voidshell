@@ -13,6 +13,21 @@ export interface MenuItem {
   separated?: boolean;
   danger?: boolean;
   accel?: string;
+  /**
+   * A row of colour swatches under the label, plus a free picker.
+   *
+   * The one control a list of verbs can't express. It exists because the window
+   * menu needs to set a constellation's colour, and the alternative was a
+   * second menu implementation living next to this one — which is exactly what
+   * used to be in `panelChrome.ts`. Picking a colour deliberately leaves the
+   * menu open: it is a live adjustment, and closing on the first swatch would
+   * make comparing two of them a chore.
+   */
+  swatches?: {
+    colors: string[];
+    current: string;
+    onPick: (color: string) => void;
+  };
 }
 
 let open: HTMLElement | null = null;
@@ -39,6 +54,11 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
       hr.className = "vs-menu-sep";
       menu.appendChild(hr);
     }
+    if (item.swatches) {
+      menu.appendChild(swatchRow(item));
+      continue;
+    }
+
     const btn = document.createElement("button");
     btn.className = `vs-menu-item${item.danger ? " danger" : ""}`;
     btn.disabled = !item.action;
@@ -97,6 +117,58 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("wheel", dismiss, true);
   }, 0);
+}
+
+function swatchRow(item: MenuItem): HTMLElement {
+  const { colors, current, onPick } = item.swatches!;
+
+  const wrap = document.createElement("div");
+  wrap.className = "vs-menu-swatches";
+
+  const label = document.createElement("span");
+  label.className = "vs-menu-swatch-label";
+  label.textContent = item.label;
+  wrap.appendChild(label);
+
+  const row = document.createElement("div");
+  row.className = "vs-menu-colors";
+
+  const marks: { el: HTMLElement; color: string }[] = [];
+  const mark = (color: string) => {
+    for (const m of marks) m.el.classList.toggle("on", m.color === color.toLowerCase());
+  };
+
+  for (const c of colors) {
+    const sw = document.createElement("button");
+    sw.className = "vs-swatch";
+    sw.style.background = c;
+    sw.title = c;
+    sw.addEventListener("click", (e) => {
+      // Live adjustment: change the colour, keep the menu up.
+      e.stopPropagation();
+      onPick(c);
+      mark(c);
+    });
+    marks.push({ el: sw, color: c.toLowerCase() });
+    row.appendChild(sw);
+  }
+  mark(current);
+
+  const custom = document.createElement("input");
+  custom.type = "color";
+  custom.className = "vs-swatch-custom";
+  custom.value = current;
+  custom.title = "any colour you like";
+  // Dragging the picker must not close the menu out from under it.
+  custom.addEventListener("click", (e) => e.stopPropagation());
+  custom.addEventListener("input", () => {
+    onPick(custom.value);
+    mark(custom.value);
+  });
+  row.appendChild(custom);
+
+  wrap.appendChild(row);
+  return wrap;
 }
 
 /**
