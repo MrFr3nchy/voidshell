@@ -288,6 +288,25 @@ export interface KernelEvent<T = unknown> {
 
 export type NotifyKind = "info" | "good" | "warn";
 
+/**
+ * A notice that can be acted on.
+ *
+ * Every notice used to be a sentence that expired after 2.6 seconds whatever it
+ * said, which made warnings the worst case: the system told you something was
+ * wrong, gave you no way to do anything about it, and then took the message
+ * away. An offer to fix it belongs on the thing that reported it.
+ */
+export interface NotifyOptions {
+  kind?: NotifyKind;
+  /** A single offer — "undo", "open it", "see every window". */
+  action?: { label: string; run: (ctx: KernelContext) => void };
+  /**
+   * Stay until dismissed. Defaults to true for `warn` and for anything
+   * carrying an action, since both are worth more than two seconds.
+   */
+  sticky?: boolean;
+}
+
 /** A single entry in the command palette. */
 export interface Command {
   id: string;
@@ -423,8 +442,11 @@ export interface KernelContext {
   /** Publish a verb into the command palette. */
   defineCommand(cmd: Command): void;
   commands(): Command[];
-  /** Say something in the corner of the void. */
-  notify(text: string, kind?: NotifyKind): void;
+  /**
+   * Say something in the corner of the void. Pass options instead of a kind to
+   * attach an offer to act on it.
+   */
+  notify(text: string, kind?: NotifyKind | NotifyOptions): void;
   /** Live render telemetry, for the Vitals app. */
   stats(): CompositorStats;
 

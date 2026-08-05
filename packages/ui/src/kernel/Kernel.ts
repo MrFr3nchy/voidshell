@@ -28,6 +28,7 @@ import type {
   LaunchArgs,
   ModuleManifest,
   NotifyKind,
+  NotifyOptions,
   SettingDef,
   Surface,
   SurfacePlacement,
@@ -289,7 +290,7 @@ export class Kernel {
       settings: () => this.settings(),
       defineCommand: (cmd) => this.defineCommand(cmd),
       commands: () => this.commands(),
-      notify: (text, kind) => this.notify(text, kind),
+      notify: (text, opts) => this.notify(text, opts),
       stats: (): CompositorStats =>
         this.compositor.stats?.() ?? {
           fps: 0,
@@ -443,7 +444,13 @@ export class Kernel {
     // Hard backstop against runaway spawning (stuck Enter, loops, etc.).
     if (this.surfaces.size >= MAX_SURFACES) {
       console.warn(`[kernel] surface limit (${MAX_SURFACES}) reached`);
-      this.notify(`window limit reached (${MAX_SURFACES})`, "warn");
+      // The limit is a backstop against runaway spawning, but hitting it used
+      // to be a dead end: a warning, and no way from there to the window you
+      // would have closed. The overview is that way.
+      this.notify(`window limit reached (${MAX_SURFACES})`, {
+        kind: "warn",
+        action: { label: "see every window", run: (c) => void c.expose(true) },
+      });
       this.bus.emit("kernel.limit", { max: MAX_SURFACES });
       return;
     }
@@ -565,8 +572,16 @@ export class Kernel {
     return [...this.commandDefs.values()];
   }
 
-  notify(text: string, kind: NotifyKind = "info"): void {
-    this.bus.emit("system.notify", { text, kind });
+  notify(text: string, opts: NotifyKind | NotifyOptions = "info"): void {
+    const o: NotifyOptions = typeof opts === "string" ? { kind: opts } : opts;
+    this.bus.emit("system.notify", {
+      text,
+      kind: o.kind ?? "info",
+      action: o.action,
+      // A warning, or anything offering to do something about itself, is worth
+      // more than the two seconds routine chatter gets.
+      sticky: o.sticky ?? (o.kind === "warn" || Boolean(o.action)),
+    });
   }
 
   /* ---------------- surfaces ---------------- */

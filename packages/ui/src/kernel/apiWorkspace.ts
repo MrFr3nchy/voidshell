@@ -1,4 +1,5 @@
 import type { WorkspaceHost, WorkspaceSnapshot } from "./persistence";
+import type { NotifyOptions } from "./types";
 
 /**
  * The client half of the workspace API.
@@ -114,10 +115,14 @@ export class ApiWorkspaceHost implements WorkspaceHost {
   /** So a flapping connection doesn't produce a toast per retry. */
   private warned = false;
 
-  constructor(private notify: (message: string, kind: "warn" | "good") => void = () => {}) {}
+  constructor(
+    private notify: (message: string, opts: "warn" | "good" | NotifyOptions) => void = () => {}
+  ) {}
 
   /** Swapped in once the kernel exists and there is a toast system to use. */
-  setNotifier(notify: (message: string, kind: "warn" | "good") => void): void {
+  setNotifier(
+    notify: (message: string, opts: "warn" | "good" | NotifyOptions) => void
+  ): void {
     this.notify = notify;
   }
 
@@ -195,11 +200,23 @@ export class ApiWorkspaceHost implements WorkspaceHost {
 
           if (!this.warned) {
             this.warned = true;
+            const gone = err instanceof ApiError && err.status === 401;
+            // Being signed out elsewhere is the one failure retrying cannot
+            // fix, so it is the one that has to offer a way out. Everything
+            // else is a blip the backoff below is already handling.
             this.notify(
-              err instanceof ApiError && err.status === 401
+              gone
                 ? "signed out elsewhere \u2014 your layout is not being saved"
                 : "can't reach the server \u2014 your layout is safe here but not saved",
-              "warn"
+              gone
+                ? {
+                    kind: "warn",
+                    action: {
+                      label: "sign in again",
+                      run: (c) => c.emit("shell.signOut"),
+                    },
+                  }
+                : "warn"
             );
           }
 
