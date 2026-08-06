@@ -1,0 +1,179 @@
+/* ---------- copilot ---------- */
+
+.cp-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.cp-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-right: 2px;
+}
+
+.cp-msg {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 7px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+/* The user's own words sit right and tinted, so a long transcript is
+ * skimmable by shape without reading any of it. */
+.cp-user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: color-mix(in srgb, var(--cyan) 16%, transparent);
+}
+
+.cp-assistant {
+  align-self: flex-start;
+}
+
+.cp-note {
+  align-self: stretch;
+  background: transparent;
+  opacity: 0.55;
+  font-size: 10.5px;
+  padding: 2px 0;
+}
+
+/* A tool call is an event, not a message — a thin rule rather than a bubble. */
+.cp-tool {
+  align-self: flex-start;
+  background: transparent;
+  border-left: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 0;
+  padding: 0 0 0 8px;
+  opacity: 0.6;
+  font-size: 10.5px;
+}
+
+.cp-toolerr {
+  align-self: stretch;
+  background: color-mix(in srgb, var(--ember) 16%, transparent);
+  font-size: 10.5px;
+}
+
+/* ---------- asking permission ---------- */
+
+/* Deliberately the loudest thing in the window. It is the one moment the user
+ * is being asked to take responsibility for running code. */
+.cp-confirm {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--ember) 55%, transparent);
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+}
+
+.cp-confirm-head {
+  font-size: 11px;
+}
+
+.cp-confirm-detail {
+  margin: 0;
+  max-height: 11em;
+  overflow: auto;
+  padding: 6px 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.cp-confirm-row {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.cp-allow {
+  border-color: var(--ember);
+  color: var(--ember);
+}
+
+/* ---------- the key ---------- */
+
+.cp-keyask {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.cp-keyrow {
+  display: flex;
+  gap: 7px;
+}
+
+.cp-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--glass-hi);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: 0;
+}
+.cp-key:focus {
+  border-color: var(--cyan);
+}
+
+.cp-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+/* ---------- composing ---------- */
+
+.cp-form {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 7px;
+  align-items: flex-end;
+}
+
+.cp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-hi);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  outline: 0;
+}
+.cp-input:focus {
+  border-color: var(--cyan);
+}

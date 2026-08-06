@@ -354,6 +354,39 @@ opens.** Nothing listens to `module.installed`, and nothing needs to. The
 launcher *ring* is the exception, and correctly so — its nodes are bound slots,
 not a listing, so a new module shows up there once you bind it to one.
 
+### The assistant, and what it may do
+
+`packages/ui/src/modules/copilot/` is an in-shell Claude panel. The chat plumbing
+is ordinary; **`copilot/tools.ts` is the part that matters**, because a model with
+a tool surface is exactly as dangerous as that surface allows and no more.
+
+| Tool | Approval |
+|---|---|
+| `list_directory`, `read_file`, `read_system_log`, `last_build_error` | automatic |
+| `write_file` **inside `~/modules`** | automatic |
+| `write_file` anywhere else under `/home/void` | asks, and shows the content |
+| `load_module` | **always** asks, and shows the source |
+
+Three rules, in the order they matter:
+
+1. **Some verbs are absent, not gated.** There is no delete, move, uninstall or
+   exec. A confirmation dialog is a thing people click through; the only reliable
+   way not to delete somebody's home directory is to have no tool that can.
+2. **Writing is inert; loading is execution.** A file on disk does nothing; a
+   loaded module gets the full `KernelContext`. That is the real line — and the
+   load prompt renders the file's source, because writes inside `~/modules` are
+   automatic and the approval would otherwise be a rubber stamp on code the user
+   has never seen.
+3. **Writes are confined to `/home/void`**, checked after `normalize` so `..`
+   cannot escape. Not decoration: `/etc/autostart` is a writable file that decides
+   what launches at boot.
+
+The key is user-supplied, kept in `ctx.state`, and the request goes from the tab
+to `api.anthropic.com` — so it lives in the page, and by default in the persisted
+workspace. Turning "remember" off moves it to a `tmp.` key that is never written
+to the server. It is not reachable through the VFS: `/etc` and `/proc` surface
+named store keys, not the store.
+
 ### What uninstall withdraws
 
 Windows (via the normal close path, so their cleanup runs), the deactivator, every setting and command the module defined, and its daemon process. Setting **values** stay in the store, so re-installing finds your toggles as you left them.
@@ -405,6 +438,7 @@ binary and the harness dies on the first transform.
 | `packages/ui/src/runtime/transform.ts` | The compiler's main-thread client. |
 | `packages/ui/src/runtime/sourcemap.ts` | Generated position → the line that was written. |
 | `packages/ui/src/modules/devkit/protocol.ts` | The editor ↔ devkit reload conversation. |
+| `packages/ui/src/modules/copilot/tools.ts` | What the assistant may do, and what it must ask about. |
 | `packages/ui/src/runtime/program.ts` | Headless killable JS/Python runner with streaming output. |
 | `packages/ui/src/modules/devkit/` | Load, reload, unload modules at runtime. |
 | `packages/ui/src/ui/blip.ts` | Shared AudioContext. Do not create your own. |
