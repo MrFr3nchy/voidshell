@@ -44,7 +44,12 @@ export interface ReloadResult {
   column?: number;
 }
 
-const EXTENSIONS = [".js", ".mjs"];
+/**
+ * Everything the loader can take. `.ts` and `.mts` go through esbuild first —
+ * see `needsTransform` in `runtime/transformProtocol.ts`, which owns the
+ * narrower question of which of these have to be compiled.
+ */
+const EXTENSIONS = [".js", ".mjs", ".ts", ".mts"];
 
 /** Does this filename look like something the loader could take? */
 export const isModuleFile = (name: string): boolean =>

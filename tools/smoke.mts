@@ -75,6 +75,7 @@ const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
 const { arcadeChecks } = await import("./arcade-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { devkitChecks } = await import("./devkit-checks.mts");
+const { typescriptChecks } = await import("./ts-checks.mts");
 const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
@@ -1201,6 +1202,7 @@ check("writable file opens editable", Boolean(edRw?.querySelector(".ed-area")));
 // every count above. It puts back what it takes out.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 await devkitChecks(check, kernel, ctx);
+await typescriptChecks(check, kernel, ctx);
 check("the registry is back where it started", ctx.registry().length === MODULE_COUNT);
 
 // Closing everything must not throw.

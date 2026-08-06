@@ -271,7 +271,8 @@ export default {
 
 ### Rules
 
-- **Plain JavaScript only.** No TypeScript, no JSX. There is no compile step yet.
+- **JavaScript or TypeScript** — `.js`, `.mjs`, `.ts`, `.mts`. No JSX: it needs a
+  factory to compile against, and modules render DOM directly.
 - **`export default`.** Named exports are ignored.
 - **Import nothing.** No bare specifiers resolve. Everything comes through `ctx`.
 - **`kind: "app"` must have `launch()`.** The loader refuses an app with none — it would sit in the launcher doing nothing.
@@ -291,6 +292,32 @@ interface ModuleHost {
 ```
 
 Installing modules is not a capability every module should have. Same reasoning as `createPower` receiving `closeAll` from the shell.
+
+### TypeScript
+
+A `.ts` module is compiled by **esbuild-wasm in a worker** (`runtime/tsWorker.ts`),
+transform-only — never bundle. There is no graph to walk: a module imports
+nothing, which is the property the whole loader rests on. The wasm is ~11MB and
+is fetched on the *first* compile, so a session that never opens a `.ts` module
+never pays for it.
+
+There is no server-side compile endpoint, and there should not be one. "POST
+arbitrary source and we run the compiler on the droplet" is remote code
+execution offered as a feature; it would need its own auth design first.
+
+**Types are stripped, not checked.** `const n: number = "no"` compiles clean.
+esbuild does no type analysis at all, and the UI says so — in devkit's header and
+in the editor's hint — rather than implying a safety that isn't there. Getting
+real checking means shipping `typescript` itself, which is a much larger decision
+than this was.
+
+**Compiled modules carry a source map, and it is load-bearing.** Stripping types
+is *not* line-preserving: seven lines of interfaces above a `throw` move it from
+line 16 to line 5. Without the map, every runtime error in a `.ts` module would
+be reported against a line the author never wrote — the exact failure
+`locateError` exists to prevent. `runtime/sourcemap.ts` translates positions back,
+and when it can't answer, the location is **dropped** rather than reported in the
+wrong coordinate system.
 
 ### Editing one
 
@@ -345,7 +372,20 @@ These are not style preferences. Each one is here because breaking it has alread
 
 **Never push directly to `main`.** Every change is a PR. Branch is tested before merge.
 
-**Verify before pushing.** Typecheck and build (or smoke) must pass locally. Numbers get checked against reality — physics against energy conservation, astronomy against published values, chess against perft.
+**Verify before pushing.** Typecheck and build (or smoke) must pass locally. The
+client harness needs two externals, and the second is easy to miss:
+
+```
+npm i --no-save jsdom @types/jsdom
+npx esbuild tools/smoke.mts --bundle --platform=node --format=esm \
+  --outfile=smoke.mjs --external:jsdom --external:esbuild \
+  && node smoke.mjs && rm smoke.mjs
+```
+
+`--external:esbuild` because the TypeScript checks compile with the real
+compiler; bundled, its `main.js` loses the `__dirname` it uses to find its own
+binary and the harness dies on the first transform.
+ Numbers get checked against reality — physics against energy conservation, astronomy against published values, chess against perft.
 
 **Read the current branch state before designing a solution.** Two rounds of silent no-ops have happened because a handler was implemented without confirming the call site existed.
 
@@ -361,6 +401,9 @@ These are not style preferences. Each one is here because breaking it has alread
 | `packages/ui/src/kernel/Kernel.ts` | Registry, surfaces, settings, commands, session, install/uninstall. |
 | `packages/ui/src/main.ts` | Registration, CSS imports, keybinds, session lifecycle. |
 | `packages/ui/src/runtime/loadModule.ts` | Source text → live module, and error → line. |
+| `packages/ui/src/runtime/tsWorker.ts` | esbuild-wasm, transform-only, off the main thread. |
+| `packages/ui/src/runtime/transform.ts` | The compiler's main-thread client. |
+| `packages/ui/src/runtime/sourcemap.ts` | Generated position → the line that was written. |
 | `packages/ui/src/modules/devkit/protocol.ts` | The editor ↔ devkit reload conversation. |
 | `packages/ui/src/runtime/program.ts` | Headless killable JS/Python runner with streaming output. |
 | `packages/ui/src/modules/devkit/` | Load, reload, unload modules at runtime. |

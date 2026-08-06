@@ -1,6 +1,12 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
 import { ModuleLoadError, loadModuleSource } from "../../runtime/loadModule";
-import { EXAMPLE_SOURCE } from "./example";
+import { createMapping } from "../../runtime/sourcemap";
+import {
+  TYPES_ARE_NOT_CHECKED,
+  needsTransform,
+  transformModule,
+} from "../../runtime/transform";
+import { EXAMPLE_SOURCE, EXAMPLE_TS_SOURCE } from "./example";
 import {
   CHANGED,
   MODULE_DIR as DIR,
@@ -53,7 +59,19 @@ export function createDevkit(host: ModuleHost): VoidModule {
    */
   async function loadPath(ctx: KernelContext, path: string): Promise<string> {
     const source = ctx.fs.read(path);
-    const mod = await loadModuleSource(source);
+
+    // TypeScript is compiled here rather than inside the loader, so the loader
+    // stays what it is: source text in, live module out. It gains a map, not a
+    // compiler.
+    let code = source;
+    let origin = null as ReturnType<typeof createMapping>;
+    if (needsTransform(path)) {
+      const compiled = await transformModule(source, path);
+      code = compiled.code;
+      origin = createMapping(compiled.map);
+    }
+
+    const mod = await loadModuleSource(code, { origin });
     const id = mod.manifest.id;
 
     const previous = installed.get(path);
@@ -91,6 +109,9 @@ export function createDevkit(host: ModuleHost): VoidModule {
       if (!ctx.fs.exists(DIR)) {
         ctx.fs.mkdirp(DIR);
         ctx.fs.write(`${DIR}/hello.js`, EXAMPLE_SOURCE);
+        // Seeded alongside it because the compile path is otherwise invisible
+        // until somebody thinks to try it.
+        ctx.fs.write(`${DIR}/hello.ts`, EXAMPLE_TS_SOURCE);
       }
 
       ctx.defineSetting({
@@ -175,7 +196,14 @@ export function createDevkit(host: ModuleHost): VoidModule {
           const blurb = document.createElement("div");
           blurb.className = "dk-blurb";
           blurb.textContent = `modules in ${DIR}`;
-          head.append(blurb);
+          // A `.ts` file here compiles and loads, which invites the assumption
+          // that it was checked on the way through. It wasn't — esbuild strips
+          // types without verifying them — and the place to say so is next to
+          // the button, not in a document nobody opens.
+          const caveat = document.createElement("div");
+          caveat.className = "dk-caveat";
+          caveat.textContent = `.js and .ts · ${TYPES_ARE_NOT_CHECKED}`;
+          head.append(blurb, caveat);
 
           const list = document.createElement("div");
           list.className = "dk-list";

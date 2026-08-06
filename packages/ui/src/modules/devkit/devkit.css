@@ -27,6 +27,20 @@
   letter-spacing: 0.02em;
 }
 
+/* "types stripped, not checked" — a caveat nobody asked for, which is exactly
+ * why it has to be legible rather than decorative. Dimmer than the heading,
+ * brighter than the disabled text it would otherwise be mistaken for. */
+.dk-caveat {
+  flex: 0 1 auto;
+  min-width: 0;
+  opacity: 0.45;
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dk-list {
   flex: 1 1 auto;
   overflow-y: auto;
