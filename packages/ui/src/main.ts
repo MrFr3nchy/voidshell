@@ -35,6 +35,7 @@ import { vitals } from "./modules/vitals";
 import { arcade } from "./modules/arcade";
 import { createDevkit } from "./modules/devkit";
 import { copilot } from "./modules/copilot";
+import { whenReady } from "./modules/devkit/protocol";
 
 /**
  * Get a dashboard, one way or another.
@@ -331,6 +332,13 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
 
   // A wipe must not be undone by the unload handler writing the session back.
   let resetting = false;
+
+  // Everything below opens windows *by module id*, and most of the apps are no
+  // longer compiled in — devkit is still evaluating them when boot() returns.
+  // Restoring a session, running autostart, or opening the default clock before
+  // that finishes asks the kernel for a module it does not have yet, and the
+  // user's first sight of the shell is `no module "chronos"`.
+  await whenReady(ctx);
 
   const restore = ctx.state.get<boolean>(RESTORE_KEY, true);
   let restored = false;
