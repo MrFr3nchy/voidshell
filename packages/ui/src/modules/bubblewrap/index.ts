@@ -1,12 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
-import { tone } from "../../ui/blip";
 
 const TARGET = 26; // preferred bubble diameter in CSS pixels
 const SOUND_KEY = "bubblewrap.sound";
@@ -58,6 +50,8 @@ export const bubblewrap: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
+    const { tone } = ctx.audio;
     ctx.openSurface({
       title: "bubblewrap",
       width: 360,

@@ -1,11 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
 
 const D2R = Math.PI / 180;
 const J2000 = 2451545.0;
@@ -158,6 +151,7 @@ export const orrery: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
     ctx.openSurface({
       title: "orrery",
       width: 380,

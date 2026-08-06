@@ -1,11 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  rgbOf,
-  toolbar,
-  toolButton,
-} from "../../ui/canvasStage";
 
 const SCALE = 3; // CSS pixels per simulation cell
 const MAX_DIM = 220;
@@ -41,6 +34,7 @@ export const ripple: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, rgbOf, toolbar, toolButton } = ctx.stage;
     ctx.openSurface({
       title: "ripple",
       width: 380,

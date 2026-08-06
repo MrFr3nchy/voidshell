@@ -1,5 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import { mountStage, palette, toolbar, toolButton } from "../../ui/canvasStage";
 
 const T_MAX = 68; // pendulum-seconds before a figure is considered finished
 const STEP = 0.002;
@@ -41,6 +40,7 @@ export const harmonograph: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton } = ctx.stage;
     ctx.openSurface({
       title: "harmonograph",
       width: 360,

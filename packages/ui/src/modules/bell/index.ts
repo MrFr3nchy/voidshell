@@ -1,5 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import { mountStage, palette, toolbar, toolButton, withAlpha } from "../../ui/canvasStage";
 
 /**
  * A Bell test you can turn the dials on.
@@ -114,6 +113,7 @@ export const bell: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
     ctx.openSurface({
       title: "bell test",
       width: 600,

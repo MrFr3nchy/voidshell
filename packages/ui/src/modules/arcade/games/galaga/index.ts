@@ -32,8 +32,8 @@
  */
 
 import type { Game, GameDef, GameHost, Pad } from "../../types";
-import { burst, tone } from "../../../../ui/blip";
-import { palette } from "../../../../ui/canvasStage";
+import { burst, tone } from "../../../../kernel/audio";
+import { palette } from "../../../../kernel/stage";
 import { text, textCentered, textRight } from "../shared/pixel";
 import { boom, enemy as drawEnemy, fighter, stars, ENEMY_H, ENEMY_W } from "./sprites";
 import type { Kind, Point, Slot } from "./rules";

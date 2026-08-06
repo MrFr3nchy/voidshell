@@ -33,8 +33,8 @@
  */
 
 import type { Game, GameDef, GameHost, Pad } from "../../types";
-import { burst, tone } from "../../../../ui/blip";
-import { palette } from "../../../../ui/canvasStage";
+import { burst, tone } from "../../../../kernel/audio";
+import { palette } from "../../../../kernel/stage";
 import { text, textCentered, textRight } from "../shared/pixel";
 import {
   fruit as drawFruit,

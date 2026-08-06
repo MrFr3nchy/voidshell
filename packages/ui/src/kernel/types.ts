@@ -519,4 +519,106 @@ export interface KernelContext {
   journal(): LogEntry[];
   /** Milliseconds since the kernel booted. */
   uptime(): number;
+
+  /**
+   * A canvas that fills its panel and a frame loop that stops when it closes.
+   *
+   * On the context rather than in a helper module because of what a module is:
+   * a module imports nothing, so anything it cannot reach through `ctx` it
+   * cannot use at all. Fourteen of the ambient apps wanted exactly this and
+   * nothing else, which made a shell-local helper the single thing standing
+   * between them and being ordinary loadable modules.
+   */
+  stage: StageApi;
+
+  /**
+   * Short synthesised sounds, on one shared AudioContext.
+   *
+   * Here for the same reason as `stage`, plus one of its own: browsers allow a
+   * page exactly one AudioContext before they start refusing, so "every module
+   * makes its own" is not a style preference that can be left to taste.
+   */
+  audio: AudioApi;
+}
+
+/** Live theme colours, read from Aurora's CSS variables. Never hardcode these. */
+export interface Palette {
+  cyan: string;
+  magenta: string;
+  ember: string;
+  text: string;
+  dim: string;
+}
+
+export interface Stage {
+  canvas: HTMLCanvasElement;
+  g: CanvasRenderingContext2D;
+  /** Logical size in CSS pixels. The context is pre-scaled, so draw in these. */
+  w: number;
+  h: number;
+  dpr: number;
+}
+
+export interface StageOptions {
+  className?: string;
+  /** Called on mount and after every resize, before the next frame. */
+  layout?: (stage: Stage) => void;
+  /** Called once per animation frame with the seconds elapsed, clamped. */
+  frame?: (stage: Stage, dt: number) => void;
+}
+
+export interface StageApi {
+  /** Mount a live canvas into `host`. Returns a disposer that kills the loop. */
+  mount(host: HTMLElement, opts: StageOptions): () => void;
+  palette(): Palette;
+  /** Tint a theme colour, whatever colour space Aurora handed us. */
+  withAlpha(color: string, alpha: number): string;
+  /** A theme colour as raw channels, for apps writing into an ImageData buffer. */
+  rgbOf(color: string): [number, number, number];
+  /** A row of pill buttons — the common chrome under an ambient canvas. */
+  toolbar(host: HTMLElement): HTMLElement;
+  toolButton(
+    bar: HTMLElement,
+    label: string,
+    onClick: (btn: HTMLButtonElement) => void
+  ): HTMLButtonElement;
+}
+
+export interface BurstSpec {
+  /** Centre frequency of the bandpass, Hz. */
+  freq: number;
+  /** Filter sharpness. Higher is more pitched, lower is more "thud". */
+  q?: number;
+  /** Peak gain, 0–1. Clamped to something civilised. */
+  gain?: number;
+  /** Seconds to silence. */
+  decay?: number;
+}
+
+export interface ToneSpec {
+  freq: number;
+  /** Slide to this frequency over the decay. Gives a pop its "thoop". */
+  toFreq?: number;
+  gain?: number;
+  decay?: number;
+  wave?: OscillatorType;
+}
+
+export interface AudioApi {
+  /** A filtered noise burst — impacts, clicks, pops, anything percussive. */
+  burst(spec: BurstSpec): void;
+  /** A short pitched blip, optionally swept. */
+  tone(spec: ToneSpec): void;
+  /**
+   * Whether the user has system sound switched on.
+   *
+   * Reported rather than enforced, deliberately. `burst` and `tone` do not
+   * consult it, because today three apps ignore the system setting entirely
+   * and keep their own per-app mute — silently gating everything through here
+   * would quietly change what four modules sound like, which is a product
+   * decision and not something a refactor gets to make. This exists so a
+   * module can respect the setting without importing another module's
+   * constant to find out what it is called.
+   */
+  enabled(): boolean;
 }

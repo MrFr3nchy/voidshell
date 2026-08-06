@@ -1,3 +1,5 @@
+import type { BurstSpec, ToneSpec } from "./types";
+
 /**
  * One AudioContext for the whole void.
  *
@@ -47,17 +49,6 @@ function noise(a: AudioContext): AudioBuffer {
   return noiseBuf;
 }
 
-export interface BurstSpec {
-  /** Centre frequency of the bandpass, Hz. */
-  freq: number;
-  /** Filter sharpness. Higher is more pitched, lower is more "thud". */
-  q?: number;
-  /** Peak gain, 0–1. Clamped to something civilised. */
-  gain?: number;
-  /** Seconds to silence. */
-  decay?: number;
-}
-
 /** A filtered noise burst — impacts, clicks, pops, anything percussive. */
 export function burst(spec: BurstSpec): void {
   const a = audio();
@@ -80,15 +71,6 @@ export function burst(spec: BurstSpec): void {
   } catch {
     /* silence is an acceptable outcome */
   }
-}
-
-export interface ToneSpec {
-  freq: number;
-  /** Slide to this frequency over the decay. Gives a pop its "thoop". */
-  toFreq?: number;
-  gain?: number;
-  decay?: number;
-  wave?: OscillatorType;
 }
 
 /** A short pitched blip, optionally swept. */

@@ -1,5 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import { tone } from "../../ui/blip";
 
 /**
  * A countdown and a stopwatch.
@@ -39,6 +38,7 @@ export const timer: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { tone } = ctx.audio;
     ctx.openSurface({
       title: "timer",
       width: 340,

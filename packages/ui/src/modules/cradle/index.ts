@@ -1,12 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
-import { burst } from "../../ui/blip";
 
 const BALLS = 5;
 const G = 9.81;
@@ -51,6 +43,8 @@ export const cradle: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
+    const { burst } = ctx.audio;
     ctx.openSurface({
       title: "cradle",
       width: 380,

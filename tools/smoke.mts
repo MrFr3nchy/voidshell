@@ -82,6 +82,7 @@ const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { devkitChecks } = await import("./devkit-checks.mts");
 const { typescriptChecks } = await import("./ts-checks.mts");
 const { copilotChecks } = await import("./copilot-checks.mts");
+const { contractChecks } = await import("./contract-checks.mts");
 const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
@@ -1211,6 +1212,7 @@ for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 await devkitChecks(check, kernel, ctx);
 await typescriptChecks(check, kernel, ctx);
 await copilotChecks(check, kernel, ctx);
+contractChecks(check);
 check("the registry is back where it started", ctx.registry().length === MODULE_COUNT);
 
 // Closing everything must not throw.

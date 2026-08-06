@@ -5,24 +5,13 @@
  * fills its panel, survives the resize grip, draws at device resolution, and
  * runs a frame loop that stops dead when the window closes. That's this. It is
  * deliberately not a framework — you get a context and a delta, you draw.
+ *
+ * Reached by modules as `ctx.stage`, which is why it lives in the kernel: a
+ * module imports nothing, so a helper it cannot get off the context is a
+ * helper it cannot use.
  */
 
-export interface Stage {
-  canvas: HTMLCanvasElement;
-  g: CanvasRenderingContext2D;
-  /** Logical size in CSS pixels. The context is pre-scaled, so draw in these. */
-  w: number;
-  h: number;
-  dpr: number;
-}
-
-export interface StageOptions {
-  className?: string;
-  /** Called on mount and after every resize, before the next frame. */
-  layout?: (stage: Stage) => void;
-  /** Called once per animation frame with the seconds elapsed, clamped. */
-  frame?: (stage: Stage, dt: number) => void;
-}
+import type { Palette, Stage, StageOptions } from "./types";
 
 /** Mount a live canvas into `host`. Returns a disposer that kills the loop. */
 export function mountStage(host: HTMLElement, opts: StageOptions): () => void {
@@ -76,13 +65,7 @@ export function mountStage(host: HTMLElement, opts: StageOptions): () => void {
 }
 
 /** The live theme, straight from Aurora's CSS variables. Never hardcode these. */
-export function palette(): {
-  cyan: string;
-  magenta: string;
-  ember: string;
-  text: string;
-  dim: string;
-} {
+export function palette(): Palette {
   const s = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) =>
     s.getPropertyValue(name).trim() || fallback;

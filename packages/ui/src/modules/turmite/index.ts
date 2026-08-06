@@ -1,12 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  rgbOf,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
 
 const CELL = 3;
 
@@ -53,6 +45,7 @@ export const turmite: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, rgbOf, toolbar, toolButton, withAlpha } = ctx.stage;
     ctx.openSurface({
       title: "turmite",
       width: 400,
