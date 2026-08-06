@@ -2,6 +2,7 @@ import "./style.css";
 import "./ui/canvasStage.css";
 import "./ui/appShelves.css";
 import "./ui/surfaceForms.css";
+import "./modules/devkit/devkit.css";
 import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { WorkspaceSnapshot } from "./kernel/persistence";
@@ -50,6 +51,7 @@ import { chaos } from "./modules/chaos";
 import { sunclock } from "./modules/sunclock";
 import { bell } from "./modules/bell";
 import { arcade } from "./modules/arcade";
+import { createDevkit } from "./modules/devkit";
 
 /**
  * Get a dashboard, one way or another.
@@ -105,6 +107,12 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
   let signedOut: () => void = () => {};
   const untilSignout = new Promise<void>((r) => (signedOut = r));
 
+  // The one module that installs other modules, so it is handed the kernel
+  // itself rather than finding that capability on the ordinary context. Same
+  // arrangement as createPower below, which receives the two things a module
+  // is not allowed to do for itself.
+  const devkit = createDevkit(kernel);
+
   kernel
     // services and world modules first — they publish settings the apps read
     .register(aurora)
@@ -129,6 +137,7 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     .register(monitor)
     .register(portal)
     .register(arcade)
+    .register(devkit)
     // ambient apps — things to leave open and look at
     .register(cradle)
     .register(driftfield)

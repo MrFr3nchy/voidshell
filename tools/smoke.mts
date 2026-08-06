@@ -73,6 +73,8 @@ const { bell } = await import("../packages/ui/src/modules/bell");
 const { arcade } = await import("../packages/ui/src/modules/arcade");
 const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
 const { arcadeChecks } = await import("./arcade-checks.mts");
+const { createDevkit } = await import("../packages/ui/src/modules/devkit");
+const { devkitChecks } = await import("./devkit-checks.mts");
 const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
@@ -184,6 +186,11 @@ const check = (label: string, ok: boolean) => {
 // have sent to the server.
 const host = new MemoryWorkspaceHost();
 const kernel = new Kernel(stub as never, host);
+
+// Handed the kernel rather than the context: installing modules is privileged,
+// and main.ts wires it the same way.
+const devkit = createDevkit(kernel);
+
 kernel
   .register(aurora)
   .register(horizon)
@@ -205,6 +212,7 @@ kernel
   .register(monitor)
   .register(portal)
   .register(arcade)
+  .register(devkit)
   .register(cradle)
   .register(driftfield)
   .register(sandbox)
@@ -220,7 +228,7 @@ kernel
   .register(sunclock)
   .register(bell);
 
-const MODULE_COUNT = 34;
+const MODULE_COUNT = 35;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -1144,6 +1152,14 @@ ctx.fs.write("/home/void/ro.md", "# ro");
 kernel.launch("editor", { path: "/home/void/ro.md" });
 const edRw = hud.ownerDocument.querySelector(".ed-root");
 check("writable file opens editable", Boolean(edRw?.querySelector(".ed-area")));
+
+/* ---------------- modules loaded at runtime ---------------- */
+
+// Last, because installing and uninstalling moves the registry underneath
+// every count above. It puts back what it takes out.
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+await devkitChecks(check, kernel, ctx);
+check("the registry is back where it started", ctx.registry().length === MODULE_COUNT);
 
 // Closing everything must not throw.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
