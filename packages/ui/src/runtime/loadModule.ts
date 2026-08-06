@@ -18,6 +18,85 @@ import type { ModuleManifest, VoidModule } from "../kernel/types";
 
 const KINDS: ModuleManifest["kind"][] = ["app", "world", "service"];
 
+/** Where in the author's own source something went wrong. 1-based, like a gutter. */
+export interface SourceLocation {
+  line: number;
+  column: number;
+}
+
+/**
+ * A load that failed, with the author's line attached when that is knowable.
+ *
+ * Knowable is doing real work in that sentence — see `locateError`. The
+ * location is absent far more often than you would hope, and callers must
+ * render the message perfectly well without one.
+ */
+export class ModuleLoadError extends Error {
+  readonly line?: number;
+  readonly column?: number;
+
+  constructor(message: string, at?: SourceLocation | null) {
+    super(message);
+    this.name = "ModuleLoadError";
+    if (at) {
+      this.line = at.line;
+      this.column = at.column;
+    }
+  }
+}
+
+/** The `:line:column` tail of a stack frame, with V8's optional closing paren. */
+const FRAME_TAIL = /:(\d+):(\d+)\)?\s*$/;
+
+/**
+ * Find where in the author's source an error came from, or admit that we can't.
+ *
+ * Two facts make this less obvious than it looks.
+ *
+ * The first is that **a parse error has no stack of its own**, because nothing
+ * ever ran. Firefox and Safari hang `lineNumber` on the error object, which is
+ * the only reason a syntax error is ever locatable at all. V8 does not, so in
+ * Chrome and in Node a module that doesn't parse simply has no location to
+ * report, and saying so is the honest outcome.
+ *
+ * The second is the trap that makes the first one dangerous. Node *does* give
+ * a syntax error a stack — one made entirely of its own loader internals:
+ *
+ *     at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+ *
+ * Read the topmost frame and you will confidently report "line 318", underline
+ * it in the gutter, and send the author to inspect a file they did not write.
+ * A wrong location is materially worse than no location, so a frame only
+ * counts if it names *our* module URL. Everything else is discarded.
+ *
+ * `lines` is the source's line count: it rejects a location past the end of
+ * the file, including the uniquifying comment the loader appends.
+ */
+export function locateError(err: unknown, url: string, lines: number): SourceLocation | null {
+  if (!err || typeof err !== "object") return null;
+  const e = err as { lineNumber?: unknown; columnNumber?: unknown; stack?: unknown };
+
+  const at = (line: unknown, column: unknown): SourceLocation | null => {
+    const l = Number(line);
+    if (!Number.isInteger(l) || l < 1 || l > lines) return null;
+    const c = Number(column);
+    return { line: l, column: Number.isInteger(c) && c >= 1 ? c : 1 };
+  };
+
+  // SpiderMonkey and JavaScriptCore, and the only path that locates a parse error.
+  const own = at(e.lineNumber, e.columnNumber);
+  if (own) return own;
+
+  if (typeof e.stack !== "string") return null;
+  for (const frame of e.stack.split("\n")) {
+    if (!frame.includes(url)) continue;
+    const m = FRAME_TAIL.exec(frame);
+    const found = m && at(m[1], m[2]);
+    if (found) return found;
+  }
+  return null;
+}
+
 /** Base64 of a UTF-8 string, assuming neither Node's Buffer nor the DOM. */
 function toBase64(text: string): string {
   const bytes = new TextEncoder().encode(text);
@@ -103,35 +182,35 @@ export function asVoidModule(candidate: unknown): VoidModule {
       : candidate;
 
   if (!source || typeof source !== "object") {
-    throw new Error("module exported nothing — expected `export default { manifest, activate }`");
+    throw new ModuleLoadError("module exported nothing — expected `export default { manifest, activate }`");
   }
 
   const mod = source as Partial<VoidModule>;
   const manifest = mod.manifest as Partial<ModuleManifest> | undefined;
 
   if (!manifest || typeof manifest !== "object") {
-    throw new Error("module has no manifest");
+    throw new ModuleLoadError("module has no manifest");
   }
   if (typeof manifest.id !== "string" || !manifest.id.trim()) {
-    throw new Error("manifest.id must be a non-empty string");
+    throw new ModuleLoadError("manifest.id must be a non-empty string");
   }
   const at = manifest.id;
   if (typeof manifest.name !== "string" || !manifest.name.trim()) {
-    throw new Error(`${at}: manifest.name must be a non-empty string`);
+    throw new ModuleLoadError(`${at}: manifest.name must be a non-empty string`);
   }
   if (!KINDS.includes(manifest.kind as ModuleManifest["kind"])) {
-    throw new Error(`${at}: manifest.kind must be one of ${KINDS.join(", ")}`);
+    throw new ModuleLoadError(`${at}: manifest.kind must be one of ${KINDS.join(", ")}`);
   }
   if (typeof mod.activate !== "function") {
-    throw new Error(`${at}: activate(ctx) is required`);
+    throw new ModuleLoadError(`${at}: activate(ctx) is required`);
   }
   if (mod.launch !== undefined && typeof mod.launch !== "function") {
-    throw new Error(`${at}: launch must be a function`);
+    throw new ModuleLoadError(`${at}: launch must be a function`);
   }
   // An app with no launch() registers cleanly, appears in the launcher, and
   // then does nothing at all when it is clicked. Refuse it here instead.
   if (manifest.kind === "app" && typeof mod.launch !== "function") {
-    throw new Error(`${at}: an "app" module needs a launch(ctx) — nothing would open it`);
+    throw new ModuleLoadError(`${at}: an "app" module needs a launch(ctx) — nothing would open it`);
   }
 
   return mod as VoidModule;
@@ -142,15 +221,24 @@ export function asVoidModule(candidate: unknown): VoidModule {
  *
  * Throws with the author's own syntax error if the source doesn't parse, and
  * with a description of what's missing if it parses into something that isn't
- * a module.
+ * a module. Always a `ModuleLoadError`, carrying `line`/`column` when the
+ * runtime gave us enough to place the blame — see `locateError`.
  */
 export async function loadModuleSource(source: string): Promise<VoidModule> {
   const { url, release } = await sourceUrl(source);
+  const lines = source.split("\n").length;
   try {
     // The specifier is a runtime value on purpose — bundlers must leave it
     // alone rather than try to resolve it at build time.
     const namespace: unknown = await import(/* @vite-ignore */ /* webpackIgnore: true */ url);
     return asVoidModule(namespace);
+  } catch (err) {
+    // `asVoidModule` already phrased its own complaints for the author, and
+    // none of them happened anywhere in particular. Anything else came out of
+    // the source itself and is worth trying to place.
+    if (err instanceof ModuleLoadError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ModuleLoadError(message, locateError(err, url, lines));
   } finally {
     // Safe the moment the import settles: the module has been evaluated and
     // is held by the module map, so the URL has nothing left to point at.
