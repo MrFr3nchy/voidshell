@@ -70,6 +70,14 @@ jobs:
 
       - run: npm run build
 
+      # A stale generated file ships a module's old behaviour while the source
+      # next to it says otherwise, and nothing else goes red.
+      - name: stock modules are up to date
+        run: |
+          npx esbuild tools/emit-modules.mts --bundle --platform=node --format=esm \
+            --outfile=emit.mjs --external:esbuild --log-level=error
+          node emit.mjs --check
+
       - name: install harness deps
         run: npm i --no-save jsdom @types/jsdom
 

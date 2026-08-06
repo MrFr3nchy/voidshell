@@ -35,6 +35,50 @@ export const RELOAD_RESULT = "devkit.reload.result";
 /** Raised whenever the installed set changes, so open windows redraw. */
 export const CHANGED = "devkit.changed";
 
+/** Raised once, when the modules devkit loads at boot have all settled. */
+export const READY = "devkit.ready";
+/** Mirrors {@link READY} in state, so a late listener can still find out. */
+export const READY_KEY = "tmp.devkit.ready";
+
+export interface ReadyReport {
+  /** Module ids that came up. */
+  loaded: string[];
+  /** Paths that did not — already logged, and visible in devkit. */
+  failed: string[];
+}
+
+/**
+ * Wait for devkit's boot-time loading to finish.
+ *
+ * Needed because `activate()` is synchronous and loading a module is not, so
+ * the registry keeps growing for a moment after `boot()` returns. Anything
+ * that counts modules — the harness, most obviously — is otherwise reading a
+ * number that is still going up.
+ *
+ * Resolves immediately if it already happened, because a listener registered
+ * after the fact would otherwise wait for an event that has been and gone.
+ */
+export function whenReady(
+  ctx: Pick<KernelContext, "on" | "state">,
+  timeoutMs = 15000
+): Promise<ReadyReport> {
+  const done = ctx.state.get<ReadyReport | null>(READY_KEY, null);
+  if (done) return Promise.resolve(done);
+
+  return new Promise<ReadyReport>((resolve) => {
+    let settled = false;
+    const finish = (report: ReadyReport) => {
+      if (settled) return;
+      settled = true;
+      off();
+      clearTimeout(timer);
+      resolve(report);
+    };
+    const off = ctx.on(READY, (e) => finish((e.payload ?? { loaded: [], failed: [] }) as ReadyReport));
+    const timer = setTimeout(() => finish({ loaded: [], failed: [] }), timeoutMs);
+  });
+}
+
 export interface ReloadRequest {
   path: string;
   /**

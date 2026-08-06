@@ -79,6 +79,8 @@ const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
 const { arcadeChecks } = await import("./arcade-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { copilot } = await import("../packages/ui/src/modules/copilot");
+const { STOCK_MODULES } = await import("../packages/ui/src/modules/stock.generated");
+const { whenReady } = await import("../packages/ui/src/modules/devkit/protocol");
 const { devkitChecks } = await import("./devkit-checks.mts");
 const { typescriptChecks } = await import("./ts-checks.mts");
 const { copilotChecks } = await import("./copilot-checks.mts");
@@ -208,43 +210,37 @@ kernel
   .register(webapp)
   .register(editor)
   .register(trashApp)
-  .register(calculator)
   .register(calendar)
-  .register(timer)
-  .register(chronos)
-  .register(cosmos)
   .register(settings)
-  .register(dashboards)
   .register(notes)
   .register(vitals)
   .register(monitor)
   .register(portal)
   .register(arcade)
   .register(devkit)
-  .register(copilot)
-  .register(cradle)
-  .register(driftfield)
-  .register(sandbox)
-  .register(harmonograph)
-  .register(lunaria)
-  .register(bubblewrap)
-  .register(ripple)
-  .register(flock)
-  .register(orrery)
-  .register(lavalamp)
-  .register(turmite)
-  .register(chaos)
-  .register(sunclock)
-  .register(bell);
+  .register(copilot);
 
-const MODULE_COUNT = 36;
+/** Modules the shell is built with. The rest ship as source and are loaded. */
+const BUILTIN_COUNT = 17;
+/** Built-ins plus everything devkit plants in ~/modules and loads at boot. */
+const MODULE_COUNT = BUILTIN_COUNT + STOCK_MODULES.length;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
 await kernel.boot({ gl, overlay: hud, hud });
 const ctx = kernel.context();
 
-check("modules registered", ctx.registry().length === MODULE_COUNT);
+check("built-ins registered", ctx.registry().length === BUILTIN_COUNT);
+
+// Boot is not finished when boot() returns: devkit is still evaluating the
+// stock modules, and every count below would otherwise be reading a number
+// that is still going up.
+const ready = await whenReady(ctx);
+check(
+  `all ${STOCK_MODULES.length} stock modules loaded (${ready.failed.length} failed)`,
+  ready.failed.length === 0 && ready.loaded.length === STOCK_MODULES.length
+);
+check("and they are in the registry", ctx.registry().length === MODULE_COUNT);
 
 /**
  * The harness registers its own module list, so it stays self-consistent even
@@ -285,8 +281,8 @@ const mainSrc = readFileSync("packages/ui/src/main.ts", "utf8");
 }
 const registeredInMain = [...mainSrc.matchAll(/\.register\((\w+)\)/g)].map((m) => m[1]);
 check(
-  `main.ts registers ${MODULE_COUNT} modules (found ${registeredInMain.length})`,
-  registeredInMain.length === MODULE_COUNT
+  `main.ts registers ${BUILTIN_COUNT} built-ins (found ${registeredInMain.length})`,
+  registeredInMain.length === BUILTIN_COUNT
 );
 check("world patches flushed at boot", patches.length > 0);
 check("settings registry populated", ctx.settings().length >= 20);
