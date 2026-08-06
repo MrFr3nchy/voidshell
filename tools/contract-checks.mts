@@ -12,8 +12,9 @@
  * module just quietly stops being convertible — which is exactly the kind of
  * thing that needs a test rather than a habit.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { STOCK_IDS } from "./emit-modules.mts";
 
 type Check = (label: string, ok: boolean) => void;
 
@@ -26,7 +27,8 @@ const MODULES = "packages/ui/src/modules";
  */
 const PORTABLE = [
   "aurora", "bell", "bubblewrap", "chaos", "chronos", "cosmos", "cradle",
-  "dashboards", "driftfield", "flock", "harmonograph", "horizon", "lavalamp",
+  "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
+  "lavalamp",
   "lunaria", "orrery", "portal", "ripple", "sandbox", "settings", "sunclock",
   "timer", "turmite",
 ];
@@ -102,7 +104,13 @@ export function contractChecks(check: Check): void {
         // reaches the platform, and is a different question entirely.
         if (!target.startsWith(`${root}${sep}`)) continue;
         const other = relative(root, target).split(sep)[0];
-        if (other && other !== name) crossModule.push(`${name} -> ${other} (${spec})`);
+        if (!other || other === name) continue;
+        // A file sitting directly under modules/ — stock.generated.ts — is
+        // shared build output, not another module's insides.
+        if (!existsSync(join(MODULES, other)) || !statSync(join(MODULES, other)).isDirectory()) {
+          continue;
+        }
+        crossModule.push(`${name} -> ${other} (${spec})`);
       }
     }
   }
@@ -112,4 +120,44 @@ export function contractChecks(check: Check): void {
   const unexpected = crossModule.filter((line) => !line.includes("devkit/protocol"));
   check("no module reaches into another module's source", unexpected.length === 0);
   if (unexpected.length) for (const line of unexpected) console.log(`      ${line}`);
+
+  /* ---------------- the generated sources ---------------- */
+
+  // A stale generated file is the failure mode of this whole approach: the
+  // module keeps shipping its old behaviour while the TypeScript next to it
+  // says otherwise, and nothing anywhere goes red. The emitter's own --check
+  // is what CI runs; this is the same guarantee inside the harness, so a local
+  // run catches it too.
+  const generated = readFileSync(join(MODULES, "stock.generated.ts"), "utf8");
+  const shipped = [...generated.matchAll(/\{ id: "([^"]+)"/g)].map((m) => m[1]);
+
+  check(
+    `${shipped.length} stock modules are generated from their TypeScript`,
+    shipped.length === STOCK_IDS.length && shipped.every((id, i) => id === STOCK_IDS[i])
+  );
+
+  const stale = STOCK_IDS.filter((id) => {
+    const source = readFileSync(join(MODULES, id, "index.ts"), "utf8");
+    // Cheap staleness proxy: every manifest id in the TypeScript must appear
+    // in the emitted text. A full re-transform is the emitter's job.
+    const declared = /manifest:\s*\{[\s\S]*?id:\s*"([^"]+)"/.exec(source)?.[1];
+    return !declared || !generated.includes(`"${declared}"`);
+  });
+  check("and each one's manifest survived the trip", stale.length === 0);
+  if (stale.length) for (const id of stale) console.log(`      stale: ${id}`);
+
+  // Nothing that ships as source may import anything, for the same reason as
+  // above — but this is the emitted text rather than the TypeScript, so it
+  // catches a compiler that stopped erasing something as well as an author who
+  // added an import.
+  const withImports = shipped.filter((id) => {
+    const entry = new RegExp(`\\{ id: "${id}"[\\s\\S]*?source: ("(?:[^"\\\\]|\\\\.)*")`).exec(
+      generated
+    );
+    if (!entry) return true;
+    const code = JSON.parse(entry[1]) as string;
+    return /^\s*import\s/m.test(code) || !/export\s+default/.test(code);
+  });
+  check("every emitted module imports nothing and exports a default", withImports.length === 0);
+  if (withImports.length) for (const id of withImports) console.log(`      ${id}`);
 }

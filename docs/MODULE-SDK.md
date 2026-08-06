@@ -384,6 +384,36 @@ opens.** Nothing listens to `module.installed`, and nothing needs to. The
 launcher *ring* is the exception, and correctly so — its nodes are bound slots,
 not a listing, so a new module shows up there once you bind it to one.
 
+### The stock modules
+
+Nineteen modules — the ambient apps and the accessories — **ship as source, not
+as code.** `tools/emit-modules.mts` compiles each one's `.ts` to plain JavaScript
+at build time into `modules/stock.generated.ts`; devkit writes them into
+`~/modules` on first run and loads them like anything the user wrote.
+
+From then on nothing distinguishes them: edit, reload, unload, delete. Deleting
+one makes it stay deleted — `devkit.seeded` records what has ever been planted,
+so seeding never keys off "is the file there?".
+
+```
+lavalamp/index.ts  --emit-->  stock.generated.ts  --devkit-->  ~/modules/lavalamp.js
+   (typechecked)                (plain JS text)                  (yours now)
+```
+
+- **The `.ts` stays under `src/` and stays typechecked** — tsconfig includes by
+  directory, not by import graph — so these keep full build-time type safety
+  while shipping as loadable source.
+- **The emitted source is not minified.** It is what you open in the editor when
+  you want to change how the lava lamp behaves; minifying it would save ~100KB
+  and destroy the entire point.
+- **The emitter refuses** anything that still needs an `import` after compiling,
+  or that has no `export const <name>: VoidModule` to make a default from.
+- **Regenerate after editing any of them**, or CI fails: `node emit.mjs --check`.
+
+Built-ins are what's left: the OS furniture, plus `aurora` and `horizon` (world
+modules the kernel already refuses to uninstall) and `arcade` (seventeen files,
+and no multi-file story yet).
+
 ### The assistant, and what it may do
 
 `packages/ui/src/modules/copilot/` is an in-shell Claude panel. The chat plumbing
@@ -485,3 +515,5 @@ binary and the harness dies on the first transform.
 | `packages/ui/src/kernel/stage.ts` | The canvas behind `ctx.stage`. |
 | `packages/ui/src/kernel/audio.ts` | The one AudioContext, behind `ctx.audio`. |
 | `tools/smoke.mts` | Headless harness — boots the real kernel in jsdom. |
+| `tools/emit-modules.mts` | Portable module `.ts` → shippable source. |
+| `tools/contract-checks.mts` | Enforces import-freedom and generated-file freshness. |

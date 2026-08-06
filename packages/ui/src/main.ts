@@ -19,41 +19,23 @@ import { runLockScreen } from "./ui/lockScreen";
 import { monitor } from "./modules/monitor";
 import { portal } from "./modules/portal";
 import { workspace } from "./modules/workspace";
-import { chronos } from "./modules/chronos";
-import { cosmos } from "./modules/cosmos";
 import { editor } from "./modules/editor";
 import { webapp } from "./modules/webapp";
 import { desktop } from "./modules/desktop";
 import { trash } from "./modules/trash";
-import { calculator } from "./modules/calculator";
 import { calendar } from "./modules/calendar";
-import { timer } from "./modules/timer";
 import { buildProjectsTree } from "./kernel/vfs";
 import { loadProjects } from "virtual:voidshell-projects";
 import { aurora } from "./modules/aurora";
 import { horizon } from "./modules/horizon";
 import { shell, RESTORE_KEY } from "./modules/shell";
 import { settings } from "./modules/settings";
-import { dashboards } from "./modules/dashboards";
 import { notes } from "./modules/notes";
 import { vitals } from "./modules/vitals";
-import { cradle } from "./modules/cradle";
-import { driftfield } from "./modules/driftfield";
-import { sandbox } from "./modules/sandbox";
-import { harmonograph } from "./modules/harmonograph";
-import { lunaria } from "./modules/lunaria";
-import { bubblewrap } from "./modules/bubblewrap";
-import { ripple } from "./modules/ripple";
-import { flock } from "./modules/flock";
-import { orrery } from "./modules/orrery";
-import { lavalamp } from "./modules/lavalamp";
-import { turmite } from "./modules/turmite";
-import { chaos } from "./modules/chaos";
-import { sunclock } from "./modules/sunclock";
-import { bell } from "./modules/bell";
 import { arcade } from "./modules/arcade";
 import { createDevkit } from "./modules/devkit";
 import { copilot } from "./modules/copilot";
+import { whenReady } from "./modules/devkit/protocol";
 
 /**
  * Get a dashboard, one way or another.
@@ -127,35 +109,18 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     .register(editor)
     .register(desktop)
     .register(trash)
-    .register(calculator)
     .register(calendar)
-    .register(timer)
-    .register(chronos)
-    .register(cosmos)
     .register(settings)
-    .register(dashboards)
     .register(notes)
     .register(vitals)
     .register(monitor)
     .register(portal)
     .register(arcade)
     .register(devkit)
-    .register(copilot)
-    // ambient apps — things to leave open and look at
-    .register(cradle)
-    .register(driftfield)
-    .register(sandbox)
-    .register(harmonograph)
-    .register(lunaria)
-    .register(bubblewrap)
-    .register(ripple)
-    .register(flock)
-    .register(orrery)
-    .register(lavalamp)
-    .register(turmite)
-    .register(chaos)
-    .register(sunclock)
-    .register(bell);
+    // The ambient apps used to be registered here. They now ship as source in
+    // stock.generated.ts, are planted in ~/modules on first run, and are loaded
+    // by devkit like anything else the user wrote — see tools/emit-modules.mts.
+    .register(copilot);
 
   // Mount the real project directory. This is deliberately not fatal: if the
   // scan is unavailable the shell still boots, just without /projects.
@@ -367,6 +332,13 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
 
   // A wipe must not be undone by the unload handler writing the session back.
   let resetting = false;
+
+  // Everything below opens windows *by module id*, and most of the apps are no
+  // longer compiled in — devkit is still evaluating them when boot() returns.
+  // Restoring a session, running autostart, or opening the default clock before
+  // that finishes asks the kernel for a module it does not have yet, and the
+  // user's first sight of the shell is `no module "chronos"`.
+  await whenReady(ctx);
 
   const restore = ctx.state.get<boolean>(RESTORE_KEY, true);
   let restored = false;
