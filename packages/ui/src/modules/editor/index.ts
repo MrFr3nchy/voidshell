@@ -5,13 +5,7 @@ import { extensionOf } from "../../kernel/filetypes";
 import { createProgram, isRunnable, type Program } from "../../runtime/program";
 import { renderMarkdown } from "./markdown";
 import { openStartPane, rememberRecent } from "./start";
-import {
-  RELOAD_REQUEST,
-  RELOAD_RESULT,
-  isModulePath,
-  type ReloadRequest,
-  type ReloadResult,
-} from "../devkit/protocol";
+import { isModulePath, requestReload } from "../devkit/protocol";
 import { TYPES_ARE_NOT_CHECKED, needsTransform } from "../../runtime/transformProtocol";
 
 /**
@@ -35,17 +29,6 @@ import { TYPES_ARE_NOT_CHECKED, needsTransform } from "../../runtime/transformPr
 
 /** Tab inserts this much, matching the repo's own style. */
 const INDENT = "  ";
-
-/**
- * How long to wait for devkit before giving up on a reload.
- *
- * There has to be a limit, because the request goes out on the bus and nothing
- * guarantees anybody is listening — devkit can be uninstalled, or the event can
- * arrive before it has activated. Silence would otherwise leave the button
- * saying "loading" forever, which reads as a hang in the loader rather than as
- * an answer that never came.
- */
-const RELOAD_TIMEOUT = 5000;
 
 export const editor: VoidModule = {
   manifest: {
@@ -400,8 +383,14 @@ export const editor: VoidModule = {
           if (line) goToLine(line, column ?? 1);
         };
 
-        /** The nonce we are currently waiting on, or "" if we are not. */
-        let awaiting = "";
+        /**
+         * Which reload this window is waiting on.
+         *
+         * Bumped per attempt so a slow answer to a superseded request is
+         * dropped rather than reported over a newer one — the same reason
+         * `requestReload` carries a nonce, one level up.
+         */
+        let generation = 0;
 
         const doReload = () => {
           if (!isModule) return;
@@ -411,33 +400,23 @@ export const editor: VoidModule = {
           clearMark();
           modErr.hidden = true;
           status.textContent = "loading";
-          const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          awaiting = nonce;
-          ctx.emit(RELOAD_REQUEST, { path, nonce } satisfies ReloadRequest);
-          setTimeout(() => {
-            if (awaiting !== nonce) return;
-            awaiting = "";
-            status.textContent = "";
-            showLoadError("devkit did not answer — is it still installed?");
-          }, RELOAD_TIMEOUT);
-        };
+          const mine = ++generation;
 
-        const offResult = ctx.on(RELOAD_RESULT, (e) => {
-          const res = e.payload as Partial<ReloadResult> | undefined;
-          if (!res || !awaiting || res.nonce !== awaiting) return;
-          awaiting = "";
-          if (res.ok) {
-            modErr.hidden = true;
-            clearMark();
-            status.textContent = `loaded ${res.id ?? ""}`.trim();
-            setTimeout(() => {
-              if (status.textContent?.startsWith("loaded")) status.textContent = "";
-            }, 1800);
-            return;
-          }
-          status.textContent = "failed";
-          showLoadError(res.error ?? "the module did not load", res.line, res.column);
-        });
+          void requestReload(ctx, path).then((res) => {
+            if (mine !== generation) return;
+            if (res.ok) {
+              modErr.hidden = true;
+              clearMark();
+              status.textContent = `loaded ${res.id ?? ""}`.trim();
+              setTimeout(() => {
+                if (status.textContent?.startsWith("loaded")) status.textContent = "";
+              }, 1800);
+              return;
+            }
+            status.textContent = "failed";
+            showLoadError(res.error ?? "the module did not load", res.line, res.column);
+          });
+        };
 
         runBtn.addEventListener("click", doRun);
         stopBtn.addEventListener("click", () => program?.stop());
@@ -510,7 +489,9 @@ export const editor: VoidModule = {
         requestAnimationFrame(() => (ta ?? scroller).focus());
 
         return () => {
-          offResult();
+          // Bumping this orphans any reload still in flight, so a late answer
+          // can't touch a window that has already gone.
+          generation++;
           program?.dispose();
           root.replaceChildren();
         };

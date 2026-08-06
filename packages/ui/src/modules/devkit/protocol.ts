@@ -12,8 +12,21 @@
  * `index.ts` so the editor can import the protocol without importing devkit.
  */
 
+import type { KernelContext } from "../../kernel/types";
+
 /** Where hand-written modules live. */
 export const MODULE_DIR = "/home/void/modules";
+
+/**
+ * How long to wait for devkit before giving up.
+ *
+ * There has to be a limit, because the request goes out on the bus and nothing
+ * guarantees anybody is listening — devkit can be uninstalled, or the request
+ * can arrive before it has activated. Silence would otherwise leave a caller
+ * waiting forever, which reads as a hang in the loader rather than as an
+ * answer that never came.
+ */
+export const RELOAD_TIMEOUT = 5000;
 
 /** Editor → devkit: save is done, please re-install this path. */
 export const RELOAD_REQUEST = "devkit.reload.request";
@@ -30,6 +43,24 @@ export interface ReloadRequest {
    * report it against the wrong file.
    */
   nonce: string;
+}
+
+/**
+ * Where the most recent load failure is parked.
+ *
+ * `tmp.` on purpose: it describes this session and nothing else, and a failure
+ * restored from the server next boot would be describing a problem that may no
+ * longer exist. Read by the assistant's `last_build_error` tool.
+ */
+export const LAST_ERROR_KEY = "tmp.devkit.lastError";
+
+export interface BuildFailure {
+  path: string;
+  message: string;
+  line?: number;
+  column?: number;
+  /** Epoch millis, so a caller can say how long ago it happened. */
+  at: number;
 }
 
 export interface ReloadResult {
@@ -63,3 +94,46 @@ export const isModuleFile = (name: string): boolean =>
  */
 export const isModulePath = (path: string): boolean =>
   path.startsWith(`${MODULE_DIR}/`) && isModuleFile(path);
+
+/**
+ * Ask devkit to install a path, and wait for the answer.
+ *
+ * The nonce bookkeeping lives here rather than in each caller because there is
+ * more than one caller now — the editor's Reload button and the assistant's
+ * `load_module` tool — and two hand-rolled copies of a correlation protocol is
+ * two chances to correlate it wrong.
+ *
+ * Always resolves, never rejects: a timeout comes back as an ordinary failed
+ * result, because "devkit didn't answer" is something the caller has to render
+ * next to "your module has a syntax error" either way.
+ */
+export function requestReload(
+  ctx: Pick<KernelContext, "emit" | "on">,
+  path: string,
+  timeoutMs = RELOAD_TIMEOUT
+): Promise<ReloadResult> {
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return new Promise<ReloadResult>((resolve) => {
+    let done = false;
+    const finish = (result: ReloadResult) => {
+      if (done) return;
+      done = true;
+      off();
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const off = ctx.on(RELOAD_RESULT, (e) => {
+      const res = e.payload as Partial<ReloadResult> | undefined;
+      if (!res || res.nonce !== nonce) return;
+      finish({ ...res, nonce, ok: res.ok === true });
+    });
+
+    const timer = setTimeout(
+      () => finish({ nonce, ok: false, error: "devkit did not answer — is it still installed?" }),
+      timeoutMs
+    );
+
+    ctx.emit(RELOAD_REQUEST, { path, nonce } satisfies ReloadRequest);
+  });
+}

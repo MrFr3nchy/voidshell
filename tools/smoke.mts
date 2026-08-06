@@ -6,7 +6,11 @@
  *
  *   npm i --no-save jsdom @types/jsdom
  *   npx esbuild tools/smoke.mts --bundle --platform=node --format=esm \
- *     --outfile=smoke.mjs --external:jsdom && node smoke.mjs && rm smoke.mjs
+ *     --outfile=smoke.mjs --external:jsdom --external:esbuild \
+ *     && node smoke.mjs && rm smoke.mjs
+ *
+ * --external:esbuild because the TypeScript checks compile with the real
+ * compiler; bundled, its main.js loses the __dirname it finds its binary with.
  *
  * jsdom has no canvas backend, so the ambient apps log one "not implemented"
  * notice each and mount an inert canvas. That's the intended fallback path in
@@ -74,8 +78,10 @@ const { arcade } = await import("../packages/ui/src/modules/arcade");
 const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
 const { arcadeChecks } = await import("./arcade-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
+const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { devkitChecks } = await import("./devkit-checks.mts");
 const { typescriptChecks } = await import("./ts-checks.mts");
+const { copilotChecks } = await import("./copilot-checks.mts");
 const { workspace } = await import("../packages/ui/src/modules/workspace");
 const { editor } = await import("../packages/ui/src/modules/editor");
 const { webapp } = await import("../packages/ui/src/modules/webapp");
@@ -214,6 +220,7 @@ kernel
   .register(portal)
   .register(arcade)
   .register(devkit)
+  .register(copilot)
   .register(cradle)
   .register(driftfield)
   .register(sandbox)
@@ -229,7 +236,7 @@ kernel
   .register(sunclock)
   .register(bell);
 
-const MODULE_COUNT = 35;
+const MODULE_COUNT = 36;
 
 const hud = dom.window.document.getElementById("hud")!;
 const gl = dom.window.document.getElementById("void")!;
@@ -1203,6 +1210,7 @@ check("writable file opens editable", Boolean(edRw?.querySelector(".ed-area")));
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 await devkitChecks(check, kernel, ctx);
 await typescriptChecks(check, kernel, ctx);
+await copilotChecks(check, kernel, ctx);
 check("the registry is back where it started", ctx.registry().length === MODULE_COUNT);
 
 // Closing everything must not throw.

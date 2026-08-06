@@ -374,6 +374,11 @@ export async function devkitChecks(
       "a module that does not parse comes back as a reportable failure",
       brokenResult.ok === false && Boolean(brokenResult.error)
     );
+    // The editor learns the result from its own `requestReload` promise, which
+    // settles a microtask after the one this harness is awaiting. Let the turn
+    // drain before reading the DOM, or this races the render rather than
+    // testing it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     check(
       "and the editor shows it",
       Boolean(

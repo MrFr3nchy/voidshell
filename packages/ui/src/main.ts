@@ -3,6 +3,7 @@ import "./ui/canvasStage.css";
 import "./ui/appShelves.css";
 import "./ui/surfaceForms.css";
 import "./modules/devkit/devkit.css";
+import "./modules/copilot/copilot.css";
 import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { WorkspaceSnapshot } from "./kernel/persistence";
@@ -52,6 +53,7 @@ import { sunclock } from "./modules/sunclock";
 import { bell } from "./modules/bell";
 import { arcade } from "./modules/arcade";
 import { createDevkit } from "./modules/devkit";
+import { copilot } from "./modules/copilot";
 
 /**
  * Get a dashboard, one way or another.
@@ -138,6 +140,7 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     .register(portal)
     .register(arcade)
     .register(devkit)
+    .register(copilot)
     // ambient apps — things to leave open and look at
     .register(cradle)
     .register(driftfield)

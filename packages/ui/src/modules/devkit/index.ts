@@ -9,10 +9,12 @@ import {
 import { EXAMPLE_SOURCE, EXAMPLE_TS_SOURCE } from "./example";
 import {
   CHANGED,
+  LAST_ERROR_KEY,
   MODULE_DIR as DIR,
   RELOAD_REQUEST,
   RELOAD_RESULT,
   isModuleFile,
+  type BuildFailure,
   type ReloadRequest,
   type ReloadResult,
 } from "./protocol";
@@ -139,21 +141,31 @@ export function createDevkit(host: ModuleHost): VoidModule {
       const offReload = ctx.on(RELOAD_REQUEST, (e) => {
         const req = e.payload as Partial<ReloadRequest> | undefined;
         if (typeof req?.path !== "string" || typeof req.nonce !== "string") return;
+        // Both captured, not read off `req` later: narrowing doesn't survive
+        // into the callbacks below, where `req.path` widens back to string|undefined.
         const nonce = req.nonce;
+        const path = req.path;
         const answer = (result: Omit<ReloadResult, "nonce">) =>
           ctx.emit(RELOAD_RESULT, { nonce, ...result } satisfies ReloadResult);
 
-        loadPath(ctx, req.path).then(
+        loadPath(ctx, path).then(
           (id) => answer({ ok: true, id }),
           (err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
-            ctx.log(`devkit: ${req.path}: ${message}`, "error");
-            answer({
-              ok: false,
-              error: message,
-              line: err instanceof ModuleLoadError ? err.line : undefined,
-              column: err instanceof ModuleLoadError ? err.column : undefined,
-            });
+            const line = err instanceof ModuleLoadError ? err.line : undefined;
+            const column = err instanceof ModuleLoadError ? err.column : undefined;
+            ctx.log(`devkit: ${path}: ${message}`, "error");
+            // Parked where the assistant's `last_build_error` tool can find it.
+            // `tmp.` so it never reaches the server: it describes this session
+            // and nothing else, and a stale one next boot would be a lie.
+            ctx.state.set(LAST_ERROR_KEY, {
+              path,
+              message,
+              line,
+              column,
+              at: Date.now(),
+            } satisfies BuildFailure);
+            answer({ ok: false, error: message, line, column });
           }
         );
       });
