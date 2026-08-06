@@ -233,6 +233,18 @@ export async function devkitChecks(
     return !ctx.registry().some((m) => m.id === "rt-boom");
   })());
 
+  /* ---------------- the seeded example is a real module ---------------- */
+
+  // `example.ts` claims to be documentation that cannot go stale, on the
+  // grounds that the harness loads it. It didn't — nothing referenced it — so
+  // the claim was true only in intent. Loaded, not installed: installing it
+  // would move the registry count every other check is measured against.
+  const { EXAMPLE_SOURCE } = await import("../packages/ui/src/modules/devkit/example");
+  check("the seeded example is a module the loader accepts", await (async () => {
+    const seeded = await loadModuleSource(EXAMPLE_SOURCE);
+    return seeded.manifest.id === "hello-void" && typeof seeded.launch === "function";
+  })());
+
   /* ---------------- errors carry a location, or admit they don't ---------------- */
 
   // An error thrown while the module body evaluates has a real stack naming the

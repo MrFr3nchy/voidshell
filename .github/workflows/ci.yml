@@ -73,10 +73,13 @@ jobs:
       - name: install harness deps
         run: npm i --no-save jsdom @types/jsdom
 
+      # --external:esbuild because the TypeScript checks compile with the real
+      # compiler. Bundled, its main.js loses the __dirname it uses to find its
+      # own binary and the harness dies on the first transform.
       - name: smoke — client
         run: |
           npx esbuild tools/smoke.mts --bundle --platform=node --format=esm \
-            --outfile=smoke.mjs --external:jsdom --log-level=error
+            --outfile=smoke.mjs --external:jsdom --external:esbuild --log-level=error
           node smoke.mjs
 
       - name: smoke — cli

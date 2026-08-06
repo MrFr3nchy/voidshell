@@ -12,6 +12,7 @@ import {
   type ReloadRequest,
   type ReloadResult,
 } from "../devkit/protocol";
+import { TYPES_ARE_NOT_CHECKED, needsTransform } from "../../runtime/transformProtocol";
 
 /**
  * The editor, and the place code actually runs.
@@ -213,7 +214,11 @@ export const editor: VoidModule = {
             ? "^⏎ run"
             : ""
           : isModule
-            ? "^S save · ^⏎ reload"
+            ? // Compiling a .ts module and loading it looks exactly like having
+              // checked it. Say which one actually happened.
+              needsTransform(path)
+              ? `^S save · ^⏎ reload · ${TYPES_ARE_NOT_CHECKED}`
+              : "^S save · ^⏎ reload"
             : runnable
               ? "^S save · ^⏎ run"
               : "^S save";
@@ -231,7 +236,9 @@ export const editor: VoidModule = {
         const reloadBtn = document.createElement("button");
         reloadBtn.className = "fm-btn";
         reloadBtn.textContent = "reload";
-        reloadBtn.title = "save, then install this module into the running shell";
+        reloadBtn.title = needsTransform(path)
+          ? `save, compile, and install this module into the running shell — ${TYPES_ARE_NOT_CHECKED}`
+          : "save, then install this module into the running shell";
 
         /** Where a failed load gets reported, against the line when we have one. */
         const modErr = document.createElement("div");

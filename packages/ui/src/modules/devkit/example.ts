@@ -77,3 +77,82 @@ export default {
   },
 };
 `;
+
+/**
+ * The TypeScript counterpart, seeded next to it.
+ *
+ * Not a translation for its own sake: the compile path is invisible until
+ * something uses it, and "write a .ts file yourself and find out" is a worse
+ * first experience than a file that is already there. It deliberately uses an
+ * interface, a generic and a type-only construct, because those are exactly the
+ * things that have to survive the round trip.
+ *
+ * The stray `: number` on a string would be a type error. It is not caught —
+ * esbuild strips types without checking them — and the comment says so, because
+ * the alternative is letting someone discover it at runtime and assume the
+ * compiler was broken rather than absent.
+ */
+export const EXAMPLE_TS_SOURCE = `/**
+ * A TypeScript module, compiled in the tab by esbuild-wasm.
+ *
+ * Types are STRIPPED, NOT CHECKED. There is no type checker here — a wrong
+ * annotation compiles perfectly and fails later, or never. Interfaces and
+ * generics are erased; everything else runs as written.
+ */
+
+interface Tally {
+  label: string;
+  count: number;
+}
+
+type Render<T> = (value: T) => string;
+
+const describe: Render<Tally> = (t) =>
+  \`\${t.label}: \${t.count} time\${t.count === 1 ? "" : "s"}\`;
+
+const tally: Tally = { label: "clicked", count: 0 };
+
+export default {
+  manifest: {
+    id: "hello-typed",
+    name: "hello typed",
+    kind: "app",
+    glyph: "◈",
+    blurb: "a TypeScript module compiled in the browser",
+  },
+
+  activate(ctx: any) {
+    ctx.log("hello-typed activated");
+    return () => ctx.log("hello-typed deactivated");
+  },
+
+  launch(ctx: any) {
+    ctx.openSurface({
+      title: "hello typed",
+      width: 320,
+      height: 190,
+      render: (root: HTMLElement, c: any) => {
+        root.style.cssText =
+          "display:grid;place-content:center;gap:12px;height:100%;text-align:center;font:14px/1.5 var(--vs-font, monospace)";
+
+        const label = document.createElement("div");
+        label.style.opacity = "0.7";
+        label.textContent = "compiled from ~/modules/hello.ts";
+
+        const button = document.createElement("button");
+        button.textContent = describe(tally);
+        button.style.cssText =
+          "padding:8px 14px;cursor:pointer;background:transparent;color:inherit;" +
+          "border:1px solid currentColor;border-radius:6px;font:inherit";
+        button.addEventListener("click", () => {
+          tally.count++;
+          button.textContent = describe(tally);
+        });
+
+        root.append(label, button);
+        return () => c.log("hello-typed window closed");
+      },
+    });
+  },
+};
+`;

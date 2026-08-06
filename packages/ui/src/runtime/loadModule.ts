@@ -1,4 +1,5 @@
 import type { ModuleManifest, VoidModule } from "../kernel/types";
+import type { SourceMapping } from "./sourcemap";
 
 /**
  * Turn module source into a live module, without rebuilding the shell.
@@ -224,7 +225,23 @@ export function asVoidModule(candidate: unknown): VoidModule {
  * a module. Always a `ModuleLoadError`, carrying `line`/`column` when the
  * runtime gave us enough to place the blame — see `locateError`.
  */
-export async function loadModuleSource(source: string): Promise<VoidModule> {
+export interface LoadOptions {
+  /**
+   * Where this source came from, if it was compiled rather than written.
+   *
+   * Stripping types is not line-preserving, so an error's position in the code
+   * we evaluated is not its position in the file the author has open. With a
+   * mapping the location is translated; **without one it is dropped**, because
+   * a generated line number rendered against a TypeScript file is precisely the
+   * confidently-wrong answer `locateError` exists to avoid.
+   */
+  origin?: SourceMapping | null;
+}
+
+export async function loadModuleSource(
+  source: string,
+  options: LoadOptions = {}
+): Promise<VoidModule> {
   const { url, release } = await sourceUrl(source);
   const lines = source.split("\n").length;
   try {
@@ -238,7 +255,12 @@ export async function loadModuleSource(source: string): Promise<VoidModule> {
     // the source itself and is worth trying to place.
     if (err instanceof ModuleLoadError) throw err;
     const message = err instanceof Error ? err.message : String(err);
-    throw new ModuleLoadError(message, locateError(err, url, lines));
+    // Located against the code that ran, then translated back to the code that
+    // was written. When the source was compiled and the map can't answer, the
+    // location is dropped rather than reported in the wrong coordinate system.
+    const at = locateError(err, url, lines);
+    const where = at && options.origin ? options.origin.originalAt(at.line, at.column) : at;
+    throw new ModuleLoadError(message, where);
   } finally {
     // Safe the moment the import settles: the module has been evaluated and
     // is held by the module map, so the URL has nothing left to point at.
