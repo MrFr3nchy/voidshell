@@ -37,8 +37,11 @@ export async function devkitChecks(
   kernel: Kernel,
   ctx: KernelContext
 ): Promise<void> {
-  const { loadModuleSource, asVoidModule } = await import(
+  const { loadModuleSource, asVoidModule, ModuleLoadError } = await import(
     "../packages/ui/src/runtime/loadModule"
+  );
+  const { RELOAD_RESULT, MODULE_DIR, isModulePath } = await import(
+    "../packages/ui/src/modules/devkit/protocol"
   );
 
   /* ---------------- validation ---------------- */
@@ -230,5 +233,145 @@ export async function devkitChecks(
     return !ctx.registry().some((m) => m.id === "rt-boom");
   })());
 
+  /* ---------------- errors carry a location, or admit they don't ---------------- */
+
+  // An error thrown while the module body evaluates has a real stack naming the
+  // module's own URL, so the line is recoverable and must be exact.
+  check("an error while evaluating reports the line it came from", await (async () => {
+    try {
+      await loadModuleSource('const a = 1;\nconst b = 2;\nthrow new Error("nope");\n');
+      return false;
+    } catch (err) {
+      return err instanceof ModuleLoadError && err.line === 3;
+    }
+  })());
+
+  // The trap this exists to prevent: Node hands a *parse* error a stack made
+  // entirely of its own loader internals, so reading the topmost frame reports
+  // a line inside `node:internal/modules/esm/utils` and underlines it in the
+  // author's gutter. No location beats a confidently wrong one.
+  check("a parse error never reports somebody else's line", await (async () => {
+    try {
+      await loadModuleSource("export default {\n  activate() { oops( }\n};\n");
+      return false;
+    } catch (err) {
+      if (!(err instanceof ModuleLoadError)) return false;
+      // Either the runtime told us (Firefox), or we say nothing — but never a
+      // line past the end of a three-line file.
+      return err.line === undefined || (err.line >= 1 && err.line <= 3);
+    }
+  })());
+
+  check("a validation failure has no line to report", await (async () => {
+    try {
+      await loadModuleSource("export default { manifest: { id: 1 }, activate(){} }");
+      return false;
+    } catch (err) {
+      return err instanceof ModuleLoadError && err.line === undefined;
+    }
+  })());
+
+  /* ---------------- edit -> save -> reload, through the editor ---------------- */
+
+  check("only files under ~/modules offer to reload", (() => {
+    return (
+      isModulePath(`${MODULE_DIR}/a.js`) &&
+      isModulePath(`${MODULE_DIR}/a.mjs`) &&
+      !isModulePath(`${MODULE_DIR}/a.txt`) &&
+      // A .js file anywhere else is a script. Offering to install it as a
+      // module would be offering to run it.
+      !isModulePath("/home/void/a.js")
+    );
+  })());
+
+  // The actual loop: a module file open in the editor, the Reload button
+  // clicked, and the running shell holding the new code afterwards. Everything
+  // above tests a piece of this; only this tests that the pieces are connected.
+  const query = (globalThis as {
+    document?: {
+      querySelector(s: string): unknown;
+      querySelectorAll(s: string): ArrayLike<unknown>;
+    };
+  }).document;
+
+  const modPath = `${MODULE_DIR}/harness.js`;
+  ctx.fs.mkdirp(MODULE_DIR);
+  ctx.fs.write(modPath, SOURCE("rt-edited"));
+
+  kernel.launch("editor", { path: modPath });
+  const buttons = [...(query?.querySelectorAll(".ed-root .fm-btn") ?? [])] as {
+    textContent: string;
+    click(): void;
+  }[];
+  const reloadBtn = buttons.find((b) => b.textContent === "reload");
+  check("the editor offers Reload on a module file", Boolean(reloadBtn));
+  check(
+    "and drops the run pane, which could only ever print nothing",
+    !query?.querySelector(".ed-root .ed-out")
+  );
+
+  if (reloadBtn) {
+    const answered = new Promise<{ ok?: boolean; id?: string }>((resolve) => {
+      const off = ctx.on(RELOAD_RESULT, (e) => {
+        off();
+        resolve((e.payload ?? {}) as { ok?: boolean; id?: string });
+      });
+      // Never hang the harness on a message that never arrives.
+      setTimeout(() => {
+        off();
+        resolve({});
+      }, 4000);
+    });
+    reloadBtn.click();
+    const result = await answered;
+
+    check("clicking Reload installs the module", result.ok === true && result.id === "rt-edited");
+    check(
+      "and the shell is running it",
+      ctx.registry().some((m) => m.id === "rt-edited")
+    );
+    check("it is listed as runtime-installed", kernel.runtimeModules().includes("rt-edited"));
+
+    kernel.uninstall("rt-edited");
+  }
+
+  // A module that cannot parse must come back as a failure the editor can show,
+  // not as a rejected promise nobody is holding.
+  //
+  // Broken by typing into the buffer rather than by writing the file: Reload
+  // saves first, so a write behind the editor's back would simply be overwritten
+  // by the good source still on screen and this would test nothing.
+  const area = query?.querySelector(".ed-root .ed-area") as { value: string } | undefined;
+  check("a module file opens as an editable buffer", Boolean(area));
+
+  if (reloadBtn && area) {
+    const broken = new Promise<{ ok?: boolean; error?: string }>((resolve) => {
+      const off = ctx.on(RELOAD_RESULT, (e) => {
+        off();
+        resolve((e.payload ?? {}) as { ok?: boolean; error?: string });
+      });
+      setTimeout(() => {
+        off();
+        resolve({});
+      }, 4000);
+    });
+    area.value = "export default { oops";
+    reloadBtn.click();
+    const brokenResult = await broken;
+    check(
+      "a module that does not parse comes back as a reportable failure",
+      brokenResult.ok === false && Boolean(brokenResult.error)
+    );
+    check(
+      "and the editor shows it",
+      Boolean(
+        (query?.querySelector(".ed-root .ed-moderr") as { hidden?: boolean } | undefined)
+          ?.hidden === false
+      )
+    );
+    check("the buffer was saved before loading", ctx.fs.read(modPath) === "export default { oops");
+  }
+
+  ctx.fs.rm(modPath);
   for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }

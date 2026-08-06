@@ -292,6 +292,41 @@ interface ModuleHost {
 
 Installing modules is not a capability every module should have. Same reasoning as `createPower` receiving `closeAll` from the shell.
 
+### Editing one
+
+A writable file under `~/modules` opens in the editor as a **module** rather than
+as a script: it gets a **Reload** button (and `^⏎`) instead of a run pane, because
+running a module's source through the JS sandbox evaluates an object literal and
+prints nothing. Reload saves the buffer, installs it, and reports the result
+against the offending line when the runtime gave us one.
+
+The editor does **not** hold `install`. It asks devkit over the bus:
+
+```ts
+ctx.emit(RELOAD_REQUEST, { path, nonce });     // editor  → devkit
+ctx.on(RELOAD_RESULT, …);                      // devkit  → editor
+```
+
+Both constants live in `modules/devkit/protocol.ts`, so a module can speak the
+protocol without importing devkit. Every request gets exactly one answer.
+
+**Error locations are best-effort and frequently absent.** Firefox and Safari put
+`lineNumber` on a `SyntaxError`; V8 does not, so in Chrome and in Node a module
+that fails to *parse* has no locatable line at all. Worse, Node gives such an
+error a stack made entirely of its own loader internals — reading the topmost
+frame reports a line inside `node:internal/modules/esm/utils` and underlines it
+in the author's gutter. `locateError` therefore accepts a frame only if it names
+the module's own URL, and returns nothing otherwise. A wrong location is worse
+than none.
+
+### Launch surfaces are already live
+
+A module installed after boot appears in the app drawer and the command palette
+with no work: **every launch surface rebuilds from `ctx.registry()` each time it
+opens.** Nothing listens to `module.installed`, and nothing needs to. The
+launcher *ring* is the exception, and correctly so — its nodes are bound slots,
+not a listing, so a new module shows up there once you bind it to one.
+
 ### What uninstall withdraws
 
 Windows (via the normal close path, so their cleanup runs), the deactivator, every setting and command the module defined, and its daemon process. Setting **values** stay in the store, so re-installing finds your toggles as you left them.
@@ -325,7 +360,8 @@ These are not style preferences. Each one is here because breaking it has alread
 | `packages/ui/src/kernel/types.ts` | The contract. Source of truth for this document. |
 | `packages/ui/src/kernel/Kernel.ts` | Registry, surfaces, settings, commands, session, install/uninstall. |
 | `packages/ui/src/main.ts` | Registration, CSS imports, keybinds, session lifecycle. |
-| `packages/ui/src/runtime/loadModule.ts` | Source text → live module. |
+| `packages/ui/src/runtime/loadModule.ts` | Source text → live module, and error → line. |
+| `packages/ui/src/modules/devkit/protocol.ts` | The editor ↔ devkit reload conversation. |
 | `packages/ui/src/runtime/program.ts` | Headless killable JS/Python runner with streaming output. |
 | `packages/ui/src/modules/devkit/` | Load, reload, unload modules at runtime. |
 | `packages/ui/src/ui/blip.ts` | Shared AudioContext. Do not create your own. |

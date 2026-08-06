@@ -1,6 +1,15 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import { loadModuleSource } from "../../runtime/loadModule";
+import { ModuleLoadError, loadModuleSource } from "../../runtime/loadModule";
 import { EXAMPLE_SOURCE } from "./example";
+import {
+  CHANGED,
+  MODULE_DIR as DIR,
+  RELOAD_REQUEST,
+  RELOAD_RESULT,
+  isModuleFile,
+  type ReloadRequest,
+  type ReloadResult,
+} from "./protocol";
 
 /**
  * Loading a module is a privileged act, so the capability is handed in rather
@@ -21,15 +30,12 @@ export interface ModuleHost {
   runtimeModules(): string[];
 }
 
-/** Where hand-written modules live. */
-const DIR = "/home/void/modules";
 /** Paths that were loaded, so the next boot can bring them back. */
 const LOADED_KEY = "devkit.loaded";
 const AUTOLOAD_KEY = "devkit.autoload";
-/** Raised whenever the installed set changes, so open windows redraw. */
-const CHANGED = "devkit.changed";
 
-const isModuleFile = (name: string) => name.endsWith(".js") || name.endsWith(".mjs");
+/** How long a confirmation stays on screen before it stops being news. */
+const NOTE_LINGER = 4000;
 
 export function createDevkit(host: ModuleHost): VoidModule {
   /** path -> module id, for everything this devkit put in. */
@@ -104,6 +110,33 @@ export function createDevkit(host: ModuleHost): VoidModule {
         run: (c) => c.launch("devkit"),
       });
 
+      // The editor's Reload button lands here. It cannot install anything
+      // itself — that capability was handed to devkit and to nothing else — so
+      // it asks, and this answers. Every request gets exactly one result,
+      // success or failure, because the caller is waiting on one and will
+      // otherwise sit there until its own timeout.
+      const offReload = ctx.on(RELOAD_REQUEST, (e) => {
+        const req = e.payload as Partial<ReloadRequest> | undefined;
+        if (typeof req?.path !== "string" || typeof req.nonce !== "string") return;
+        const nonce = req.nonce;
+        const answer = (result: Omit<ReloadResult, "nonce">) =>
+          ctx.emit(RELOAD_RESULT, { nonce, ...result } satisfies ReloadResult);
+
+        loadPath(ctx, req.path).then(
+          (id) => answer({ ok: true, id }),
+          (err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            ctx.log(`devkit: ${req.path}: ${message}`, "error");
+            answer({
+              ok: false,
+              error: message,
+              line: err instanceof ModuleLoadError ? err.line : undefined,
+              column: err instanceof ModuleLoadError ? err.column : undefined,
+            });
+          }
+        );
+      });
+
       // Bring back what was loaded last time. Fired rather than awaited —
       // activate() is synchronous, and a module that fails to come back must
       // not be able to hold up the boot of everything after it.
@@ -123,6 +156,7 @@ export function createDevkit(host: ModuleHost): VoidModule {
       }
 
       return () => {
+        offReload();
         for (const id of [...installed.values()]) host.uninstall(id);
         installed.clear();
       };
@@ -150,10 +184,23 @@ export function createDevkit(host: ModuleHost): VoidModule {
           note.className = "dk-note";
           note.hidden = true;
 
+          // A confirmation is news for a moment and then it is clutter — "hello
+          // loaded" sitting there ten minutes later reads as the current state
+          // of something rather than as a thing that happened. An error is the
+          // opposite: it is the reason the window is open, and it stays until
+          // something replaces it.
+          let linger: ReturnType<typeof setTimeout> | undefined;
           const say = (text: string, bad = false) => {
+            clearTimeout(linger);
+            linger = undefined;
             note.textContent = text;
             note.classList.toggle("is-bad", bad);
             note.hidden = false;
+            if (!bad) {
+              linger = setTimeout(() => {
+                note.hidden = true;
+              }, NOTE_LINGER);
+            }
           };
 
           /** One row per file on disk, whether or not it is loaded. */
@@ -250,6 +297,7 @@ export function createDevkit(host: ModuleHost): VoidModule {
           return () => {
             offFs();
             offChanged();
+            clearTimeout(linger);
           };
         },
       });

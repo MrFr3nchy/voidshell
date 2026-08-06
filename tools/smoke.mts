@@ -483,6 +483,48 @@ check(
 );
 check("palette listed rows", hud.querySelectorAll(".palette-row").length > 0);
 
+// A module installed after boot has to reach the launcher, or the only way to
+// open it is devkit's own row and it isn't really installed. This was the open
+// question on PR #44 — the answer is that every launch surface rebuilds from
+// ctx.registry() each time it opens, so none of them needed a listener adding.
+check("a module installed after boot reaches the launcher", (() => {
+  kernel.install({
+    manifest: { id: "rt-drawer", name: "rt-drawer", kind: "app", glyph: "*" },
+    activate: () => {},
+    launch: () => {},
+  });
+  drawer.toggle(false);
+  drawer.toggle(true);
+  const tiles = hud.querySelectorAll(".drawer-tile").length;
+  const named = [...hud.querySelectorAll(".tile-name")].some(
+    (el) => (el as unknown as { textContent: string }).textContent === "rt-drawer"
+  );
+  // Not asserted against the launcher ring: its nodes are six *bound* slots,
+  // not a listing, so a new module correctly doesn't appear there until it is
+  // bound to one.
+  //
+  // The palette has to be searched rather than read, because it caps at twelve
+  // rows — enumerating it and looking for a name proves nothing about a shell
+  // with thirty-five modules in it.
+  palette.toggle(false);
+  palette.toggle(true);
+  const search = hud.querySelector(".palette-input") as HTMLInputElement;
+  search.value = "rt-drawer";
+  search.dispatchEvent(new hud.ownerDocument.defaultView!.Event("input"));
+  const inPalette = [...hud.querySelectorAll(".palette-row")].some((el) =>
+    (el as unknown as { textContent: string }).textContent.includes("rt-drawer")
+  );
+
+  kernel.uninstall("rt-drawer");
+  drawer.toggle(false);
+  drawer.toggle(true);
+  const restored = hud.querySelectorAll(".drawer-tile").length === MODULE_COUNT;
+  // Put the palette back the way it was found — re-opening clears the query.
+  palette.toggle(false);
+  palette.toggle(true);
+  return tiles === MODULE_COUNT + 1 && named && inPalette && restored;
+})());
+
 // Settings must render a control for every def in the active group. Launched
 // here rather than relying on the sweep above, which closes what it opens.
 kernel.launch("settings");

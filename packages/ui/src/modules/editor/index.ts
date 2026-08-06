@@ -5,6 +5,13 @@ import { extensionOf } from "../../kernel/filetypes";
 import { createProgram, isRunnable, type Program } from "../../runtime/program";
 import { renderMarkdown } from "./markdown";
 import { openStartPane, rememberRecent } from "./start";
+import {
+  RELOAD_REQUEST,
+  RELOAD_RESULT,
+  isModulePath,
+  type ReloadRequest,
+  type ReloadResult,
+} from "../devkit/protocol";
 
 /**
  * The editor, and the place code actually runs.
@@ -27,6 +34,17 @@ import { openStartPane, rememberRecent } from "./start";
 
 /** Tab inserts this much, matching the repo's own style. */
 const INDENT = "  ";
+
+/**
+ * How long to wait for devkit before giving up on a reload.
+ *
+ * There has to be a limit, because the request goes out on the bus and nothing
+ * guarantees anybody is listening — devkit can be uninstalled, or the event can
+ * arrive before it has activated. Silence would otherwise leave the button
+ * saying "loading" forever, which reads as a hang in the loader rather than as
+ * an answer that never came.
+ */
+const RELOAD_TIMEOUT = 5000;
 
 export const editor: VoidModule = {
   manifest: {
@@ -116,7 +134,13 @@ export const editor: VoidModule = {
           return () => root.replaceChildren();
         }
 
-        const runnable = isRunnable(path);
+        // A writable file under ~/modules is a module, and its verb is Reload,
+        // not Run. Running one through the JS sandbox evaluates an object
+        // literal and prints nothing, so the run pane it would otherwise get is
+        // structurally incapable of ever showing output — which is a worse
+        // answer to "what does this button do" than not offering the button.
+        const isModule = !readonly && isModulePath(path);
+        const runnable = isRunnable(path) && !isModule;
 
         /* ---------------- the buffer ---------------- */
 
@@ -188,9 +212,11 @@ export const editor: VoidModule = {
           ? runnable
             ? "^⏎ run"
             : ""
-          : runnable
-            ? "^S save · ^⏎ run"
-            : "^S save";
+          : isModule
+            ? "^S save · ^⏎ reload"
+            : runnable
+              ? "^S save · ^⏎ run"
+              : "^S save";
 
         const runBtn = document.createElement("button");
         runBtn.className = "fm-btn";
@@ -202,6 +228,15 @@ export const editor: VoidModule = {
         const saveBtn = document.createElement("button");
         saveBtn.className = "fm-btn";
         saveBtn.textContent = "save";
+        const reloadBtn = document.createElement("button");
+        reloadBtn.className = "fm-btn";
+        reloadBtn.textContent = "reload";
+        reloadBtn.title = "save, then install this module into the running shell";
+
+        /** Where a failed load gets reported, against the line when we have one. */
+        const modErr = document.createElement("div");
+        modErr.className = "ed-moderr";
+        modErr.hidden = true;
 
         /* ---------------- markdown preview ---------------- */
 
@@ -231,6 +266,7 @@ export const editor: VoidModule = {
         bar.append(status, hint);
         if (isMarkdown) bar.append(previewBtn);
         if (runnable) bar.append(stopBtn, runBtn);
+        if (isModule) bar.append(reloadBtn);
         if (!readonly) bar.append(saveBtn);
 
         /* ---------------- the run pane ---------------- */
@@ -253,6 +289,7 @@ export const editor: VoidModule = {
 
         root.append(wrap, preview, bar);
         if (runnable) root.append(out);
+        if (isModule) root.append(modErr);
 
         // A read-only .md is almost always something you want to read rather
         // than audit the source of — /projects READMEs, the welcome file.
@@ -317,9 +354,88 @@ export const editor: VoidModule = {
           program.start(buffer());
         };
 
+        /* ---------------- reloading a module ---------------- */
+
+        // The editor does not install anything. `install` isn't on
+        // KernelContext on purpose — devkit holds it, handed over by main.ts —
+        // so this asks devkit over the bus and waits for its answer, which is
+        // the same way every other pair of modules talks.
+
+        // Marks are found by class rather than by remembered index, because
+        // renderGutter throws its children away whenever the line count
+        // changes and a remembered index would then point at a stranger.
+        const clearMark = () => {
+          for (const el of gutter.querySelectorAll(".is-bad")) el.classList.remove("is-bad");
+        };
+
+        /** Put the caret on a line, and get it on screen. */
+        const goToLine = (line: number, column: number) => {
+          const lines = buffer().split("\n");
+          gutter.children[line - 1]?.classList.add("is-bad");
+          if (!ta) return;
+          let offset = 0;
+          for (let i = 0; i < line - 1 && i < lines.length; i++) offset += lines[i].length + 1;
+          offset += Math.min(Math.max(0, column - 1), lines[line - 1]?.length ?? 0);
+          ta.focus();
+          ta.setSelectionRange(offset, offset);
+          // Setting a selection doesn't scroll to it in every engine, so put the
+          // line roughly mid-pane ourselves.
+          const perLine = scroller.scrollHeight / Math.max(1, lines.length);
+          scroller.scrollTop = Math.max(0, (line - 1) * perLine - scroller.clientHeight / 2);
+          gutter.scrollTop = scroller.scrollTop;
+        };
+
+        const showLoadError = (message: string, line?: number, column?: number) => {
+          // The location is genuinely often unknown — V8 gives a parse error no
+          // stack worth reading — so the message has to stand on its own.
+          modErr.textContent = line ? `line ${line}: ${message}` : message;
+          modErr.hidden = false;
+          if (line) goToLine(line, column ?? 1);
+        };
+
+        /** The nonce we are currently waiting on, or "" if we are not. */
+        let awaiting = "";
+
+        const doReload = () => {
+          if (!isModule) return;
+          // Reload reads the file, so an unsaved buffer would install the
+          // previous version and report success for code that isn't running.
+          if (!doSave()) return;
+          clearMark();
+          modErr.hidden = true;
+          status.textContent = "loading";
+          const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          awaiting = nonce;
+          ctx.emit(RELOAD_REQUEST, { path, nonce } satisfies ReloadRequest);
+          setTimeout(() => {
+            if (awaiting !== nonce) return;
+            awaiting = "";
+            status.textContent = "";
+            showLoadError("devkit did not answer — is it still installed?");
+          }, RELOAD_TIMEOUT);
+        };
+
+        const offResult = ctx.on(RELOAD_RESULT, (e) => {
+          const res = e.payload as Partial<ReloadResult> | undefined;
+          if (!res || !awaiting || res.nonce !== awaiting) return;
+          awaiting = "";
+          if (res.ok) {
+            modErr.hidden = true;
+            clearMark();
+            status.textContent = `loaded ${res.id ?? ""}`.trim();
+            setTimeout(() => {
+              if (status.textContent?.startsWith("loaded")) status.textContent = "";
+            }, 1800);
+            return;
+          }
+          status.textContent = "failed";
+          showLoadError(res.error ?? "the module did not load", res.line, res.column);
+        });
+
         runBtn.addEventListener("click", doRun);
         stopBtn.addEventListener("click", () => program?.stop());
         saveBtn.addEventListener("click", doSave);
+        reloadBtn.addEventListener("click", doReload);
 
         stdin.addEventListener("keydown", (e) => {
           e.stopPropagation();
@@ -352,7 +468,8 @@ export const editor: VoidModule = {
 
           if (mod && e.key === "Enter") {
             e.preventDefault();
-            doRun();
+            if (isModule) doReload();
+            else doRun();
             return;
           }
           if (mod && e.key.toLowerCase() === "s") {
@@ -386,6 +503,7 @@ export const editor: VoidModule = {
         requestAnimationFrame(() => (ta ?? scroller).focus());
 
         return () => {
+          offResult();
           program?.dispose();
           root.replaceChildren();
         };
