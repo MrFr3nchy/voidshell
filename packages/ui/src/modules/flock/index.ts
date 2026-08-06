@@ -1,11 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
 
 const VIEW = 46; // how far a boid can see, in CSS pixels
 const SEPARATION = 21;
@@ -52,6 +45,7 @@ export const flock: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
     ctx.openSurface({
       title: "flock",
       width: 420,

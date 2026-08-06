@@ -1,11 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
 
 const G = 9.81;
 const L1 = 1;
@@ -57,6 +50,7 @@ export const chaos: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
     ctx.openSurface({
       title: "chaos",
       width: 380,

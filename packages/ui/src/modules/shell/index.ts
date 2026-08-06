@@ -17,7 +17,7 @@ import {
   resolveSlots,
 } from "../../ui/spawner";
 import { SECONDS_KEY, STATUSBAR_KEY } from "../../ui/statusBar";
-import { tone } from "../../ui/blip";
+import { tone } from "../../kernel/audio";
 
 export const SOUND_KEY = "system.sound";
 export const RESTORE_KEY = "system.restoreSession";

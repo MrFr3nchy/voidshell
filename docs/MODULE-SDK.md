@@ -221,6 +221,36 @@ uptime(): number                    // ms since boot
 
 A launch is a process. Closing its last window is how it exits — derived from surface ownership, never tracked separately.
 
+### Canvas and sound
+
+```ts
+stage.mount(host, { className?, layout?, frame? }): () => void
+stage.palette(): Palette          // live theme colours, never hardcode them
+stage.withAlpha(color, alpha) / stage.rgbOf(color)
+stage.toolbar(host) / stage.toolButton(bar, label, onClick)
+
+audio.burst({ freq, q?, gain?, decay? })     // percussive
+audio.tone({ freq, toFreq?, gain?, decay?, wave? })
+audio.enabled(): boolean                     // the system sound setting
+```
+
+`stage.mount` gives you a canvas that fills its panel, survives the resize grip,
+draws at device resolution, and runs a frame loop that stops dead when the window
+closes. You get a context and a delta; you draw.
+
+**These are on `ctx` because of what a module is.** A module imports nothing, so
+a helper it cannot reach through the context is a helper it cannot use — and
+fourteen of the ambient apps wanted exactly `mountStage` and nothing else, which
+made one shell-local file the single thing standing between them and being
+ordinary loadable modules. Audio has a second reason: a page gets one
+`AudioContext` before browsers start refusing, so "every module makes its own"
+was never a matter of taste.
+
+`audio.enabled()` **reports** the system sound setting; `burst` and `tone` do not
+consult it. Three apps currently ignore the system setting and keep their own
+per-app mute, so gating everything centrally would change what four modules sound
+like — a product decision, not a refactor's to make.
+
 ### The world (compositor-dependent)
 
 Every one of these degrades safely if the active compositor doesn't implement it.
@@ -403,6 +433,17 @@ These are not style preferences. Each one is here because breaking it has alread
 
 **The smoke harness has three touch points that move together.** When adding a module: `MODULE_COUNT` in `tools/smoke.mts`, the `.register(...)` call in that file, and the `.register(...)` in `main.ts`. Update one and the harness reports green while testing nothing. Registrations in `main.ts` must be **bare identifiers** — the harness counts them with `/\.register\((\w+)\)/`, so `.register(createThing(kernel))` is invisible to it. Bind it to a const first.
 
+**A portable module imports nothing — and the harness enforces it.** The 22
+modules listed in `tools/contract-checks.mts` are the ones that can become
+runtime-loadable, and a single value import silently takes one out of that set
+without breaking anything visible. `import type` is fine: it is erased, which is
+what lets a portable module still be written in typed TypeScript.
+
+**No module may import another module's source.** The one exception is
+`devkit/protocol.ts`, which is a shared message contract imported by both sides
+of a boundary so that neither imports the other's implementation. This is also
+checked.
+
 **Never push directly to `main`.** Every change is a PR. Branch is tested before merge.
 
 **Verify before pushing.** Typecheck and build (or smoke) must pass locally. The
@@ -441,5 +482,6 @@ binary and the harness dies on the first transform.
 | `packages/ui/src/modules/copilot/tools.ts` | What the assistant may do, and what it must ask about. |
 | `packages/ui/src/runtime/program.ts` | Headless killable JS/Python runner with streaming output. |
 | `packages/ui/src/modules/devkit/` | Load, reload, unload modules at runtime. |
-| `packages/ui/src/ui/blip.ts` | Shared AudioContext. Do not create your own. |
+| `packages/ui/src/kernel/stage.ts` | The canvas behind `ctx.stage`. |
+| `packages/ui/src/kernel/audio.ts` | The one AudioContext, behind `ctx.audio`. |
 | `tools/smoke.mts` | Headless harness — boots the real kernel in jsdom. |

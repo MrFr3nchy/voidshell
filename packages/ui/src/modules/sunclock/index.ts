@@ -1,11 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  toolbar,
-  toolButton,
-  withAlpha,
-} from "../../ui/canvasStage";
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -93,6 +86,7 @@ export const sunclock: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, toolbar, toolButton, withAlpha } = ctx.stage;
     ctx.openSurface({
       title: "sunclock",
       width: 380,

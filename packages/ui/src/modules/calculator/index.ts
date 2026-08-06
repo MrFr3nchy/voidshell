@@ -1,6 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import { tone } from "../../ui/blip";
-import { SOUND_KEY } from "../shell";
 
 /**
  * A calculator.
@@ -165,6 +163,7 @@ export const calculator: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { tone } = ctx.audio;
     ctx.openSurface({
       title: "calculator",
       width: 380,
@@ -244,7 +243,7 @@ export const calculator: VoidModule = {
             input.value = "";
             browsing = -1;
             paint();
-            if (ctx.state.get<boolean>(SOUND_KEY, false)) {
+            if (ctx.audio.enabled()) {
               tone({ freq: 880, toFreq: 1180, gain: 0.05, decay: 0.06 });
             }
           } catch (err) {

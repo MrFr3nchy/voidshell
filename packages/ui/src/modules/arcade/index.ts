@@ -27,7 +27,7 @@
  */
 
 import type { KernelContext, LaunchArgs, VoidModule } from "../../kernel/types";
-import { mountStage, palette, toolbar, toolButton, withAlpha } from "../../ui/canvasStage";
+import { mountStage, palette, toolbar, toolButton, withAlpha } from "../../kernel/stage";
 import type { Game, GameDef, GameKey, Pad } from "./types";
 import { CABINETS, cabinet } from "./registry";
 import { CRT_PRESETS, CrtScreen } from "./crt";

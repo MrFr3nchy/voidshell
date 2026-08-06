@@ -5,6 +5,8 @@ import { DIR_EXT, assocKey, handlersFor } from "./assoc";
 import { extensionOf } from "./filetypes";
 import { Journal } from "./journal";
 import { KERNEL_PID, ProcTable } from "./procs";
+import { burst, tone } from "./audio";
+import { mountStage, palette, rgbOf, toolbar, toolButton, withAlpha } from "./stage";
 import {
   MemoryWorkspaceHost,
   WORKSPACE_BYTES,
@@ -21,6 +23,7 @@ import {
 } from "./sysfs";
 import type {
   ArrangeMode,
+  AudioApi,
   BodyKind,
   Command,
   Compositor,
@@ -32,6 +35,7 @@ import type {
   NotifyKind,
   NotifyOptions,
   SettingDef,
+  StageApi,
   Surface,
   SurfacePlacement,
   SurfaceRequest,
@@ -42,6 +46,15 @@ import type {
 const MAX_SURFACES = 24;
 
 const SESSION_KEY = "system.session";
+
+/**
+ * The system-wide sound toggle, published by the shell's settings.
+ *
+ * Named here as well so `ctx.audio.enabled()` can answer without a module
+ * importing the shell for a string — which is exactly what the calculator was
+ * doing, and the one real contract violation the module audit turned up.
+ */
+const SYSTEM_SOUND_KEY = "system.sound";
 
 /** How many closed windows can be brought back. */
 const REOPEN_DEPTH = 12;
@@ -110,6 +123,24 @@ function jsonSafe(args: LaunchArgs | undefined): LaunchArgs | undefined {
 }
 
 let surfaceCounter = 0;
+
+/**
+ * The stage and audio helpers, packaged for `ctx`.
+ *
+ * Built once at module scope because they hold no state and belong to no
+ * caller — a fresh object per context would be thirty identical allocations
+ * that compare unequal, which is a subtle way to break a memo somewhere.
+ */
+const STAGE_API: StageApi = {
+  mount: mountStage,
+  palette,
+  withAlpha,
+  rgbOf,
+  toolbar,
+  toolButton,
+};
+
+
 
 /**
  * The whole operating system fits in this class, and that's on purpose.
@@ -181,6 +212,16 @@ export class Kernel {
    * above this line knows whether its state survives the tab closing.
    */
   private host: WorkspaceHost;
+
+  /**
+   * Audio, bound to this kernel so `enabled()` can answer from its own store.
+   * The generators are stateless; only the setting lookup needs a kernel.
+   */
+  private readonly audioApi: AudioApi = {
+    burst,
+    tone,
+    enabled: () => this.store.get<boolean>(SYSTEM_SOUND_KEY, false),
+  };
 
   /** Coalesces the two change sources into one snapshot per turn. */
   private saveScheduled = false;
@@ -328,6 +369,10 @@ export class Kernel {
       log: (msg, level) => this.journal.write(tag, msg, level),
       journal: () => this.journal.read(),
       uptime: () => this.journal.uptime(),
+      // Handed over whole rather than re-wrapped per call: these are stateless
+      // browser primitives, and there is nothing per-module to tag them with.
+      stage: STAGE_API,
+      audio: this.audioApi,
     };
   }
 

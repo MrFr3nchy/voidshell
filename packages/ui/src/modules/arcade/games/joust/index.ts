@@ -27,8 +27,8 @@
  */
 
 import type { Game, GameDef, GameHost, Pad } from "../../types";
-import { burst, tone } from "../../../../ui/blip";
-import { palette, withAlpha } from "../../../../ui/canvasStage";
+import { burst, tone } from "../../../../kernel/audio";
+import { palette, withAlpha } from "../../../../kernel/stage";
 import {
   blit,
   pterodactyl,

@@ -1,11 +1,4 @@
 import type { KernelContext, VoidModule } from "../../kernel/types";
-import {
-  mountStage,
-  palette,
-  rgbOf,
-  toolbar,
-  toolButton,
-} from "../../ui/canvasStage";
 
 const SCALE = 4; // CSS pixels per field sample
 const THRESHOLD = 1;
@@ -52,6 +45,7 @@ export const lavalamp: VoidModule = {
   },
 
   launch(ctx: KernelContext) {
+    const { mount: mountStage, palette, rgbOf, toolbar, toolButton } = ctx.stage;
     ctx.openSurface({
       title: "lavalamp",
       width: 260,
