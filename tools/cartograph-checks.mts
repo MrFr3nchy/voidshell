@@ -13,11 +13,13 @@
  */
 import { fieldFromParams, siteMarkers } from "../packages/ui/src/modules/cartograph/terrain";
 import {
+  fieldFromDoc,
   packHeights,
   parseDoc,
   unpackHeights,
 } from "../packages/ui/src/modules/cartograph/heightmap";
 import { EXAMPLE_DOCS } from "../packages/ui/src/modules/cartograph/examples";
+import { project } from "../packages/ui/src/modules/cartograph/nyc";
 import { DEFAULT_PARAMS } from "../packages/ui/src/modules/cartograph/types";
 import type { Field, TerrainParams } from "../packages/ui/src/modules/cartograph/types";
 
@@ -182,8 +184,14 @@ export function cartographChecks(check: Check): void {
   // Their marker coordinates are baked, so they are only correct for the noise
   // that was in the tree when the generator last ran. Change the generator and
   // this is what tells you the holds are now in the sea.
+  //
+  // Built with `fieldFromDoc` rather than `fieldFromParams`: a city map's
+  // ground comes from its coastline rings, and running its parameters through
+  // the noise generator instead produces a *different continent* that the
+  // markers were never placed on. The first version of this check did exactly
+  // that and reported every New York marker as drowned.
   for (const doc of EXAMPLE_DOCS) {
-    const field = fieldFromParams(doc.params);
+    const field = fieldFromDoc(doc);
     check(`cartograph: ${doc.name} parses`, parseDoc(JSON.stringify(doc)).name === doc.name);
     check(
       `cartograph: ${doc.name} — every baked marker is still on land`,
@@ -191,12 +199,117 @@ export function cartographChecks(check: Check): void {
     );
   }
 
-  check(
-    "cartograph: the archipelago is mostly water",
-    fieldFromParams(EXAMPLE_DOCS[1].params).landFraction < 0.3
-  );
-  check(
-    "cartograph: the northern province is mostly land",
-    fieldFromParams(EXAMPLE_DOCS[0].params).landFraction > 0.4
-  );
+  /**
+   * Looked up by name, not by index.
+   *
+   * These two were written as `EXAMPLE_DOCS[0]` and `[1]`, which quietly
+   * asserts the order of an array whose order is a presentation decision.
+   * Adding a map to the front of the library made "the archipelago is mostly
+   * water" start testing the northern province — a failure that says nothing
+   * about the thing that broke.
+   */
+  const byName = (name: string) => {
+    const doc = EXAMPLE_DOCS.find((d) => d.name === name);
+    if (!doc) throw new Error(`no stock map called ${name}`);
+    return fieldFromDoc(doc);
+  };
+
+  check("cartograph: the archipelago is mostly water", byName("The Sunder Reach").landFraction < 0.3);
+  check("cartograph: the northern province is mostly land", byName("Kaldmark").landFraction > 0.4);
+
+  /* ---------------- water ---------------- */
+
+  {
+    // Rivers and lakes were the whole point of the hydrology pass, and both
+    // are easy to lose to a tuning change without anything throwing — the
+    // maps simply come back dry and nobody notices until they are looked at.
+    const wet = fieldFromParams({ ...DEFAULT_PARAMS, rainfall: 0.8, riverDensity: 0.7 });
+    let riverCells = 0;
+    for (let i = 0; i < wet.water.river.length; i++) if (wet.water.river[i] > 0) riverCells++;
+    check("cartograph: a rained-on map grows rivers", riverCells > wet.h.length * 0.004);
+    check("cartograph: and standing water somewhere", wet.water.lakes.length > 0);
+
+    // A river must sit in its own channel. If the carve ever stops running,
+    // the water surface ends up above the surrounding ground and the map
+    // renders with rivers draped over the hillsides.
+    const n = wet.size;
+    let inChannel = 0;
+    let checked = 0;
+    for (let y = 2; y < n - 2; y++) {
+      for (let x = 2; x < n - 2; x++) {
+        const i = y * n + x;
+        if (wet.water.river[i] <= 0) continue;
+        checked++;
+        const bed = wet.h[i];
+        const around =
+          (wet.h[i - 2] + wet.h[i + 2] + wet.h[i - n * 2] + wet.h[i + n * 2]) / 4;
+        if (bed <= around) inChannel++;
+      }
+    }
+    check(
+      "cartograph: rivers run below the ground beside them",
+      checked > 0 && inChannel / checked > 0.85
+    );
+
+    const dry = fieldFromParams({ ...DEFAULT_PARAMS, rainfall: 0 });
+    let dryRivers = 0;
+    for (let i = 0; i < dry.water.river.length; i++) if (dry.water.river[i] > 0) dryRivers++;
+    check("cartograph: no rain, no drainage network", dryRivers < dry.h.length * 0.02);
+  }
+
+  {
+    // River width is a fact about the geography, not about how finely it was
+    // sampled. The first version divided by the grid size, so the same river
+    // on the same map came out three times wider at 96² than at 256².
+    const coarse = fieldFromParams({ ...DEFAULT_PARAMS, size: 96 });
+    const fine = fieldFromParams({ ...DEFAULT_PARAMS, size: 256 });
+    const widest = (f: Field) => {
+      let w = 0;
+      for (let i = 0; i < f.water.river.length; i++) if (f.water.river[i] > w) w = f.water.river[i];
+      return w;
+    };
+    const a = widest(coarse);
+    const b = widest(fine);
+    check(
+      "cartograph: detail does not change how wide a river is",
+      a > 0 && b > 0 && Math.max(a, b) / Math.min(a, b) < 1.6
+    );
+  }
+
+  /* ---------------- New York ---------------- */
+
+  {
+    const nyc = EXAMPLE_DOCS.find((d) => d.name === "New York");
+    if (!nyc || !nyc.city) throw new Error("New York is not in the stock library");
+    const field = fieldFromDoc(nyc);
+
+    // Manhattan is an island. If the coastline rings are ever edited into
+    // touching, the Hudson closes and the whole point of the map goes with it.
+    const wetAt = (lon: number, lat: number) => {
+      const [u, v] = project(lon, lat);
+      return !dryAt(field, nyc.params, u, v);
+    };
+    check("cartograph: the Hudson is water", wetAt(-74.017, 40.7657));
+    check("cartograph: the East River is water", wetAt(-73.9628, 40.7561));
+    check("cartograph: the Upper Bay is water", wetAt(-74.045, 40.6685));
+    check("cartograph: Midtown is dry", !wetAt(-73.9819, 40.7587));
+    check("cartograph: Brooklyn is dry", !wetAt(-73.95, 40.68));
+    check("cartograph: Staten Island is dry", !wetAt(-74.14, 40.58));
+    check("cartograph: the Atlantic is water", wetAt(-73.85, 40.53));
+
+    // The skyline is the part anyone would recognise, so the towers have to
+    // stand on ground rather than in the harbour.
+    check(
+      "cartograph: every landmark tower is on land",
+      nyc.city.landmarks.every((l) => dryAt(field, nyc.params, l.u, l.v))
+    );
+
+    // Heights are in metres to the architectural top and people know them.
+    const oneWTC = nyc.city.landmarks.find((l) => l.name === "One World Trade Center");
+    check("cartograph: One World Trade is 541m", oneWTC?.heightM === 541);
+    check(
+      "cartograph: the relief covers the tallest tower",
+      nyc.params.reliefM > Math.max(...nyc.city.landmarks.map((l) => l.heightM))
+    );
+  }
 }
