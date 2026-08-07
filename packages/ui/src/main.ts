@@ -4,6 +4,7 @@ import "./ui/appShelves.css";
 import "./ui/surfaceForms.css";
 import "./modules/devkit/devkit.css";
 import "./modules/copilot/copilot.css";
+import "./modules/cartograph/cartograph.css";
 import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { WorkspaceSnapshot } from "./kernel/persistence";
@@ -33,6 +34,7 @@ import { settings } from "./modules/settings";
 import { notes } from "./modules/notes";
 import { vitals } from "./modules/vitals";
 import { arcade } from "./modules/arcade";
+import { cartograph } from "./modules/cartograph";
 import { createDevkit } from "./modules/devkit";
 import { copilot } from "./modules/copilot";
 import { whenReady } from "./modules/devkit/protocol";
@@ -116,6 +118,7 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
     .register(monitor)
     .register(portal)
     .register(arcade)
+    .register(cartograph)
     .register(devkit)
     // The ambient apps used to be registered here. They now ship as source in
     // stock.generated.ts, are planted in ~/modules on first run, and are loaded
