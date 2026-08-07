@@ -1,0 +1,430 @@
+/**
+ * Cartograph.
+ *
+ * Imported from main.ts rather than from the module, because esbuild bundles
+ * every module into one outfile and a CSS import from a TypeScript module
+ * breaks that. Colours come from Aurora's variables so a theme change carries
+ * here too — nothing below hardcodes an accent.
+ */
+
+.cg-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--text, #dbe6f5);
+}
+
+/* ---------------- top bar ---------------- */
+
+.cg-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(150, 185, 255, 0.14);
+  flex: 0 0 auto;
+}
+
+.cg-crumb {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  color: var(--cyan, #4fe3d0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cg-bar-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.cg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+/* ---------------- buttons and fields ---------------- */
+
+.cg-btn {
+  appearance: none;
+  border: 1px solid rgba(150, 185, 255, 0.22);
+  background: rgba(20, 32, 52, 0.55);
+  color: var(--text, #dbe6f5);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+.cg-btn:hover {
+  background: rgba(38, 58, 92, 0.7);
+  border-color: rgba(150, 185, 255, 0.4);
+}
+.cg-btn.is-primary {
+  border-color: color-mix(in srgb, var(--cyan, #4fe3d0) 55%, transparent);
+  color: var(--cyan, #4fe3d0);
+}
+.cg-btn.is-quiet {
+  color: var(--dim, #8fa3c0);
+}
+.cg-btn.is-wide {
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 10px;
+}
+.cg-btn.is-tiny {
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.cg-btn.is-on {
+  background: color-mix(in srgb, var(--cyan, #4fe3d0) 18%, transparent);
+  border-color: color-mix(in srgb, var(--cyan, #4fe3d0) 55%, transparent);
+  color: var(--cyan, #4fe3d0);
+}
+
+.cg-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(10, 18, 32, 0.6);
+  border: 1px solid rgba(150, 185, 255, 0.2);
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  padding: 4px 7px;
+}
+.cg-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--cyan, #4fe3d0) 60%, transparent);
+}
+
+.cg-dim {
+  color: var(--dim, #8fa3c0);
+}
+
+/* ---------------- library ---------------- */
+
+.cg-grid {
+  flex: 1 1 auto;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  align-content: start;
+}
+
+.cg-card {
+  border: 1px solid rgba(150, 185, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(12, 20, 36, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cg-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: block;
+  background: rgba(4, 8, 16, 0.8);
+}
+
+.cg-card-meta {
+  padding: 7px 9px 4px;
+}
+.cg-card-name {
+  font-weight: 600;
+}
+.cg-card-sub,
+.cg-card-note {
+  color: var(--dim, #8fa3c0);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.cg-card-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 9px 9px;
+  margin-top: auto;
+}
+
+.cg-empty {
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+  color: var(--dim, #8fa3c0);
+}
+.cg-empty p {
+  margin: 0 0 6px;
+}
+
+/* ---------------- forge ---------------- */
+
+.cg-forge {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+}
+
+.cg-forge-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.cg-preview {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(4, 8, 16, 0.8);
+}
+
+.cg-preview-stat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--dim, #8fa3c0);
+}
+
+.cg-forge-controls {
+  overflow-y: auto;
+  padding: 12px;
+  border-left: 1px solid rgba(150, 185, 255, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.cg-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cg-field-name {
+  color: var(--dim, #8fa3c0);
+  min-width: 42px;
+}
+.cg-seed {
+  flex: 1 1 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cg-slider {
+  display: block;
+}
+.cg-slider-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.cg-slider-name {
+  color: var(--dim, #8fa3c0);
+}
+.cg-slider-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--cyan, #4fe3d0);
+}
+.cg-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--cyan, #4fe3d0);
+}
+
+/* ---------------- sky view ---------------- */
+
+.cg-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+}
+
+.cg-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #060b14;
+}
+
+.cg-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Dragging the void behind a panel is a compositor gesture; inside the map
+     it has to be the camera, so the canvas keeps the pointer to itself. */
+  touch-action: none;
+  cursor: grab;
+}
+.cg-canvas:active {
+  cursor: grabbing;
+}
+
+.cg-flat {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.cg-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.cg-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  color: #f2f7ff;
+  background: rgba(6, 12, 22, 0.6);
+  border: 1px solid rgba(180, 210, 255, 0.2);
+  transition: opacity 140ms ease;
+  will-change: transform;
+}
+.cg-label.is-hold { border-color: rgba(255, 210, 127, 0.55); }
+.cg-label.is-port { border-color: rgba(127, 216, 255, 0.55); }
+.cg-label.is-ruin { border-color: rgba(199, 155, 255, 0.55); }
+.cg-label.is-peak { border-color: rgba(255, 255, 255, 0.5); }
+.cg-label.is-camp { border-color: rgba(159, 230, 160, 0.55); }
+
+.cg-note {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  font-size: 11px;
+  color: var(--dim, #8fa3c0);
+  background: rgba(6, 12, 22, 0.7);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.cg-panel {
+  border-left: 1px solid rgba(150, 185, 255, 0.14);
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cg-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 10px;
+}
+.cg-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+.cg-stat-label {
+  color: var(--dim, #8fa3c0);
+}
+.cg-stat-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cg-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.cg-panel-head {
+  color: var(--dim, #8fa3c0);
+  text-transform: lowercase;
+  letter-spacing: 0.08em;
+  border-top: 1px solid rgba(150, 185, 255, 0.14);
+  padding-top: 8px;
+}
+
+.cg-markers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cg-marker {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cg-marker-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  padding: 2px 5px;
+}
+.cg-marker-name:hover {
+  border-color: rgba(150, 185, 255, 0.2);
+}
+.cg-marker-name:focus {
+  outline: none;
+  background: rgba(10, 18, 32, 0.6);
+  border-color: color-mix(in srgb, var(--cyan, #4fe3d0) 60%, transparent);
+}
+
+.cg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #f2f7ff;
+}
+.cg-dot.is-hold { background: #ffd27f; }
+.cg-dot.is-town { background: #ffe9c4; }
+.cg-dot.is-port { background: #7fd8ff; }
+.cg-dot.is-ruin { background: #c79bff; }
+.cg-dot.is-peak { background: #ffffff; }
+.cg-dot.is-camp { background: #9fe6a0; }
+
+/* Narrow panels: the side rail becomes a strip under the map rather than
+   squeezing the thing you actually came here to look at. */
+@media (max-width: 640px) {
+  .cg-view,
+  .cg-forge {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .cg-panel,
+  .cg-forge-controls {
+    border-left: none;
+    border-top: 1px solid rgba(150, 185, 255, 0.14);
+    max-height: 45%;
+  }
+}
