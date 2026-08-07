@@ -39,7 +39,7 @@ const KEYBINDS: [string, string][] = [
   ["double-click a title bar", "fill the screen / put it back"],
   ["drag a title bar to an edge", "snap it to that half, or the top to fill"],
   ["drag any edge or corner", "resize from that side"],
-  ["scroll a window", "push it away / pull it closer"],
+  ["⌘ / ctrl + scroll a window", "push it away / pull it closer"],
   ["drag \u2059 onto a window", "link them into a constellation"],
   ["drag \u2059 onto a body", "merge \u2014 the window rides its orbit"],
   ["drag \u2059 onto a singularity", "let it be eaten"],

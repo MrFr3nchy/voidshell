@@ -2021,20 +2021,21 @@ export class ThreeCompositor implements Compositor {
   }
 
   /**
-   * Scroll over a panel to push it deeper into the void or pull it closer.
-   * Scrollable panel content wins — a terminal's backlog still scrolls normally,
-   * and only panels with nothing to scroll take the wheel as a depth change.
+   * Ctrl/⌘ + scroll over a panel pushes it deeper into the void or pulls it
+   * closer. A bare wheel is left alone so panel content always scrolls the way
+   * it looks like it should.
    */
   private bindPanelDepth(id: string, panel: HTMLElement): void {
     panel.addEventListener(
       "wheel",
       (e) => {
+        if (!e.ctrlKey && !e.metaKey) return;
+
         const p = this.panels.get(id);
         // Snapped windows have no depth to push into.
         if (!p || p.pinned || p.snap) return;
 
-        const content = (e.target as HTMLElement).closest?.(".vs-panel-content");
-        if (content && content.scrollHeight > content.clientHeight) return;
+        // Claim the gesture from the browser's own ctrl+wheel page zoom.
         e.preventDefault();
 
         this.freeFromBody(p);
