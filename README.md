@@ -46,7 +46,7 @@ two commands to run it.
 | drag a title bar | move a window through space |
 | double-click a title bar | fill the screen / put it back |
 | drag a title bar to an edge | snap it to that half, or to the top to fill |
-| scroll a window | push it away / pull it closer |
+| **⌘ / ctrl** + scroll a window | push it away / pull it closer |
 | drag any edge or corner | resize from that side |
 | drag **⁙** onto another window | bind them into a constellation |
 | drag **⁙** onto a celestial body | merge — the window rides that orbit |
