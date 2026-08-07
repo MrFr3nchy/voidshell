@@ -6,6 +6,8 @@
  * document — which makes the encoding a real decision rather than a detail,
  * because these files sync to the server on every save.
  */
+import { cityDevelopment, cityHeights, isCityMap } from "./citymap";
+import { hydrology } from "./hydrology";
 import { colourise, generateHeights } from "./terrain";
 import type { Field, ImportedField, MapDoc, TerrainParams } from "./types";
 
@@ -191,11 +193,26 @@ export function fieldFromDoc(doc: MapDoc): Field {
     ? { ...doc.params, size: doc.imported.size }
     : doc.params;
   const n = params.size;
-  const h = doc.imported ? unpackHeights(doc.imported.data, n) : generateHeights(params);
+  // Three ways ground can arrive: unpacked from an import, rasterised from a
+  // real coastline, or invented from the seed. In that order of authority —
+  // measured beats surveyed beats imagined.
+  const h = doc.imported
+    ? unpackHeights(doc.imported.data, n)
+    : isCityMap(doc.city)
+      ? cityHeights(doc.city, params)
+      : generateHeights(params);
+
+  // An imported heightmap gets its water routed too. It arrived as bare
+  // elevation with no notion of drainage, and running the same hydrology over
+  // it is what puts rivers in the valleys of a real DEM — which is most of the
+  // reason anyone imports one.
+  const water = hydrology(h, n, params);
+
+  const developed = isCityMap(doc.city) ? cityDevelopment(doc.city, n) : undefined;
   const rgb =
     doc.imported?.paint !== undefined
       ? unpackPaint(doc.imported.paint, n)
-      : colourise(h, n, params);
+      : colourise(h, n, params, water, developed);
 
   let peak = 0;
   let land = 0;
@@ -203,7 +220,7 @@ export function fieldFromDoc(doc: MapDoc): Field {
     if (h[i] > peak) peak = h[i];
     if (h[i] >= params.seaLevel) land++;
   }
-  return { size: n, h, rgb, peak, landFraction: h.length ? land / h.length : 0 };
+  return { size: n, h, rgb, peak, landFraction: h.length ? land / h.length : 0, water };
 }
 
 /** Roughly what this document will cost on disk, for the size hint in the UI. */
@@ -231,8 +248,39 @@ export function parseDoc(text: string): MapDoc {
     version: 1,
     name: typeof doc.name === "string" && doc.name.trim() ? doc.name : "untitled",
     note: typeof doc.note === "string" ? doc.note : undefined,
-    params: doc.params as TerrainParams,
+    params: withDefaults(doc.params as Partial<TerrainParams>),
     markers: Array.isArray(doc.markers) ? doc.markers : [],
     imported: doc.imported,
+    city: doc.city,
+  };
+}
+
+/**
+ * Fill in parameters a map was saved before we had.
+ *
+ * Maps written by the version of this app that had no water carry no rainfall
+ * and no river density, and `undefined` through the droplet loop produces a
+ * heightfield of NaN — a blank window and no error anywhere near the cause.
+ * Defaulting here rather than at each read site means one place knows the
+ * shape of a `TerrainParams`, which is the only way this stays true as the
+ * generator grows.
+ */
+function withDefaults(p: Partial<TerrainParams>): TerrainParams {
+  const num = (v: unknown, fallback: number) =>
+    typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  return {
+    seed: num(p.seed, 1),
+    size: num(p.size, 192),
+    extentKm: num(p.extentKm, 240),
+    reliefM: num(p.reliefM, 3800),
+    seaLevel: num(p.seaLevel, 0.34),
+    ridges: num(p.ridges, 0.55),
+    continentality: num(p.continentality, 0.6),
+    warp: num(p.warp, 0.45),
+    erosion: num(p.erosion, 14),
+    rainfall: num(p.rainfall, 0.55),
+    riverDensity: num(p.riverDensity, 0.5),
+    latitude: num(p.latitude, 0.5),
+    aridity: num(p.aridity, 0.35),
   };
 }
