@@ -77,6 +77,8 @@ const { bell } = await import("../packages/ui/src/modules/bell");
 const { arcade } = await import("../packages/ui/src/modules/arcade");
 const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
 const { arcadeChecks } = await import("./arcade-checks.mts");
+const { cartograph } = await import("../packages/ui/src/modules/cartograph");
+const { cartographChecks } = await import("./cartograph-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { STOCK_MODULES } = await import("../packages/ui/src/modules/stock.generated");
@@ -217,11 +219,12 @@ kernel
   .register(monitor)
   .register(portal)
   .register(arcade)
+  .register(cartograph)
   .register(devkit)
   .register(copilot);
 
 /** Modules the shell is built with. The rest ship as source and are loaded. */
-const BUILTIN_COUNT = 17;
+const BUILTIN_COUNT = 18;
 /** Built-ins plus everything devkit plants in ~/modules and loads at boot. */
 const MODULE_COUNT = BUILTIN_COUNT + STOCK_MODULES.length;
 
@@ -788,6 +791,15 @@ check(
   ctx.handlersFor("/home/void/adir")[0]?.id === "workspace"
 );
 
+// A map is cartograph's, and nothing else's — the importer deliberately does
+// not claim "png", which would have broken the binary-file check above.
+ctx.fs.write("/home/void/maps/probe.vmap", "{}");
+check(
+  "a .vmap routes to cartograph",
+  ctx.handlersFor("/home/void/maps/probe.vmap")[0]?.id === "cartograph"
+);
+ctx.fs.rm("/home/void/maps/probe.vmap");
+
 // Opening a binary must say so rather than opening an empty editor.
 for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 const beforeBinary = ctx.openSurfaces().length;
@@ -1175,6 +1187,31 @@ check("the cabinet asks for the keyboard", Boolean(cab?.querySelector(".arcade-v
  * made this file mostly about the arcade.
  */
 await arcadeChecks(check, CABINETS);
+
+/* ---------------- cartograph ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("cartograph");
+const cg = hud.ownerDocument.querySelector(".cg-root");
+check("cartograph mounted", Boolean(cg));
+check("the library seeded itself with maps", (cg?.querySelectorAll(".cg-card").length ?? 0) >= 2);
+check("the maps live in ~/maps", ctx.fs.isDir("/home/void/maps"));
+// Opening one without a GPU must fall back to the flat atlas rather than
+// throwing. jsdom has no WebGL, so this is the only place that path is walked.
+(cg?.querySelector(".cg-card-actions .cg-btn") as HTMLButtonElement | null)?.click();
+check("a map opens without a GPU", Boolean(cg?.querySelector(".cg-flat")));
+check("and says why", (cg?.querySelector(".cg-note")?.textContent ?? "").includes("WebGL"));
+check("its places are listed", (cg?.querySelectorAll(".cg-marker").length ?? 0) > 0);
+
+/**
+ * Cartograph's own rules, same reasoning as the arcade's.
+ *
+ * Launching the app proves the wiring, and the checks just above prove it
+ * renders. Neither can see whether the continent runs off the edge of the map,
+ * whether the snowline ever fires, or whether a hold ended up in the sea —
+ * all three of which produce a perfectly valid-looking window.
+ */
+cartographChecks(check);
 
 /* ---------------- editor: buffer, gutter and run pane ---------------- */
 
