@@ -360,6 +360,8 @@ export function createSkyView(host: HTMLElement, opts: SkyViewOptions = {}): Sky
   };
 
   const onWheel = (e: WheelEvent) => {
+    // Ctrl/⌘ + wheel belongs to the shell — it moves the whole panel in depth.
+    if (e.ctrlKey || e.metaKey) return;
     e.preventDefault();
     const k = Math.exp(e.deltaY * 0.0012);
     want.radius = Math.min(WORLD * 3, Math.max(WORLD * 0.06, want.radius * k));
