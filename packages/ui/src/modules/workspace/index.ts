@@ -4,6 +4,7 @@ import { HOME, ancestry, dirOf, tildify } from "../../kernel/fsutil";
 import { createBrowser } from "./browser";
 import { createConsole } from "./console";
 import { createPlaces } from "./places";
+import { renderProjectsRoot } from "./projectsRoot";
 
 /**
  * Files and the console, in one window, over one working directory.
@@ -36,7 +37,21 @@ export const workspace: VoidModule = {
   handles: ["dir"],
   priority: 10,
 
-  activate() {},
+  activate(ctx: KernelContext) {
+    // The Files app is where the filesystem is explained, so it is where
+    // /projects gets explained too. Publishing it as a setting rather than
+    // burying it in the window means it is findable when the mount looks
+    // wrong, which is the only moment anybody goes looking for it.
+    ctx.defineSetting({
+      key: "projects.root",
+      label: "Projects folder",
+      kind: "custom",
+      group: "System",
+      order: 40,
+      hint: "the folder on your machine that /projects is a view of",
+      render: renderProjectsRoot,
+    });
+  },
 
   launch(ctx: KernelContext, args?: LaunchArgs) {
     // Open where we were told to, falling back to home. A file argument opens

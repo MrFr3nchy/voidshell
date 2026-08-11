@@ -18,3 +18,10 @@ prices-smoke.mjs
 # CLI: per-checkout droplet settings and the local dev database
 .voidshell.json
 .voidshell-dev/
+
+# Per-machine settings: which folder /projects is a view of. Deliberately not
+# committed — it is the whole point that this differs between machines.
+voidshell.local.json
+
+# Smoke harness bundle for the projects-root checks.
+pr-smoke.mjs

@@ -5,6 +5,7 @@ import "./ui/surfaceForms.css";
 import "./modules/devkit/devkit.css";
 import "./modules/copilot/copilot.css";
 import "./modules/cartograph/cartograph.css";
+import "./modules/workspace/workspace.css";
 import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { WorkspaceSnapshot } from "./kernel/persistence";
