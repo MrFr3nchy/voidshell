@@ -23,12 +23,16 @@ import {
   parseDoc,
   sampleImage,
 } from "./heightmap";
+import { isCityMap } from "./citymap";
 import { fieldFromParams, placeName, siteMarkers } from "./terrain";
-import { DEFAULT_EXAGGERATION, createSkyView } from "./scene";
-import type { SkyView } from "./scene";
+import { CITY_EXAGGERATION, DEFAULT_EXAGGERATION, createSkyView } from "./scene";
+import type { CameraMode, SkyView } from "./scene";
+import { openPureView } from "./pureview";
+import type { PureView } from "./pureview";
 import { DEFAULT_PARAMS, MAPS_DIR, MAP_EXT } from "./types";
-import type { Field, MapDoc, Marker, MarkerKind, TerrainParams } from "./types";
+import type { Field, MapDoc, Marker, MarkerKind, Quality, TerrainParams } from "./types";
 
+const K_QUALITY = "cartograph.quality";
 const K_SHADOWS = "cartograph.shadows";
 const K_DETAIL = "cartograph.detail";
 const K_LABELS = "cartograph.labels";
@@ -186,6 +190,19 @@ export const cartograph: VoidModule = {
       unit: "\u00d7",
     });
     ctx.defineSetting({
+      key: K_QUALITY,
+      label: "Render quality",
+      kind: "select",
+      group: "Apps",
+      hint: "mesh density, texture size and shadows, all at once",
+      default: "balanced",
+      options: [
+        { value: "low", label: "low \u2014 integrated graphics" },
+        { value: "balanced", label: "balanced" },
+        { value: "high", label: "high \u2014 discrete GPU" },
+      ],
+    });
+    ctx.defineSetting({
       key: K_SHADOWS,
       label: "Terrain shadows",
       kind: "toggle",
@@ -258,6 +275,12 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
   const teardown = () => {
     disposed = true;
     window.clearTimeout(saveTimer);
+    // Order matters: the widget holds the canvas, so it has to let go before
+    // the view disposes of the context. Closing the window while the map is in
+    // pure view must not leave a live canvas on the glass with nothing to
+    // dismiss it.
+    pure?.close();
+    pure = null;
     sky?.dispose();
     sky = null;
   };
@@ -274,6 +297,10 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
   };
 
   const clearBody = () => {
+    pure?.close();
+    pure = null;
+    stageHost = null;
+    statusEl = null;
     sky?.dispose();
     sky = null;
     body.replaceChildren();
@@ -463,9 +490,11 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
         try {
           const field = fieldFromParams({ ...params, size: PREVIEW_SIZE });
           drawAtlas(canvas, field, { ...params, size: PREVIEW_SIZE }, { relief: 0.9 });
-          stat.textContent = `${Math.round(field.landFraction * 100)}% land \u00b7 peak ${Math.round(
-            field.peak * params.reliefM
-          )}m`;
+          const lakes = field.water.lakes.length;
+          stat.textContent =
+            `${Math.round(field.landFraction * 100)}% land \u00b7 peak ${Math.round(
+              field.peak * params.reliefM
+            )}m \u00b7 ${lakes} lake${lakes === 1 ? "" : "s"}`;
         } catch {
           stat.textContent = "preview unavailable";
         }
@@ -523,6 +552,20 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
     });
     bind("warp", { label: "warp", min: 0, max: 1, step: 0.01, format: (v) => v.toFixed(2) });
     bind("erosion", { label: "erosion", min: 0, max: 60, step: 1, format: (v) => `${v} passes` });
+    bind("rainfall", {
+      label: "rainfall",
+      min: 0,
+      max: 1,
+      step: 0.01,
+      format: (v) => (v < 0.05 ? "none" : v > 0.7 ? "heavy" : v > 0.35 ? "steady" : "light"),
+    });
+    bind("riverDensity", {
+      label: "rivers",
+      min: 0.1,
+      max: 1,
+      step: 0.01,
+      format: (v) => (v > 0.7 ? "a fine web" : v > 0.4 ? "branching" : "a few trunks"),
+    });
     bind("latitude", {
       label: "latitude",
       min: 0,
@@ -565,6 +608,71 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
 
   /* ---------------- sky view ---------------- */
 
+  /** Where the pure-view widget currently is, so it reopens where you left it. */
+  let pureRect: import("./pureview").PureViewRect | undefined;
+  let pure: PureView | null = null;
+  let stageHost: HTMLElement | null = null;
+  let statusEl: HTMLElement | null = null;
+
+  /**
+   * Where a map's vertical exaggeration starts.
+   *
+   * The global setting is deliberately *not* consulted for city maps. It
+   * defaults to 8, which is right for terrain — 3800m of relief across 240km
+   * is genuinely invisible at true scale — and absurd for architecture, where
+   * it turns a 541m tower into a four-kilometre spike. Reading the setting
+   * with a city default as the fallback does not work either: `state.get`
+   * returns the setting's own registered default long before it reaches the
+   * fallback, so New York opened at 8× regardless.
+   */
+  function defaultExaggeration(mapDoc: MapDoc): number {
+    if (isCityMap(mapDoc.city)) return CITY_EXAGGERATION;
+    return ctx.state.get<number>(K_RELIEF, DEFAULT_EXAGGERATION);
+  }
+
+  /**
+   * Move the live canvas onto the glass, or bring it home again.
+   *
+   * The window is never closed — it keeps the document, the save timer and
+   * the marker list. It just shows a note instead of a viewport while the map
+   * is elsewhere, and the canvas itself is the only thing that moves.
+   */
+  function setPure(on: boolean, fullscreen = false): void {
+    if (!sky || !doc) return;
+    if (on === !!pure) {
+      if (on && pure) pure.setFullscreen(fullscreen);
+      return;
+    }
+
+    if (!on) {
+      pure?.close();
+      pure = null;
+      if (stageHost) sky.reparent(stageHost);
+      stageHost?.classList.remove("is-elsewhere");
+      if (statusEl) {
+        statusEl.textContent = "";
+        statusEl.classList.remove("is-on");
+      }
+      return;
+    }
+
+    pure = openPureView({
+      title: doc.name,
+      rect: pureRect,
+      startFullscreen: fullscreen,
+      onChange: (r) => {
+        pureRect = r;
+      },
+      onRestore: () => setPure(false),
+    });
+    sky.reparent(pure.stage);
+    stageHost?.classList.add("is-elsewhere");
+    if (statusEl) {
+      statusEl.textContent = "this map is on the glass \u2014 escape brings it back";
+      statusEl.classList.add("is-on");
+    }
+  }
+
   function openMap(mapPath: string, mapDoc: MapDoc, prebuilt?: Field): void {
     clearBody();
     doc = mapDoc;
@@ -581,13 +689,24 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
     }
 
     const view = el("div", "cg-view");
-    const stageHost = el("div", "cg-stage");
+    const host = el("div", "cg-stage");
     const panel = el("div", "cg-panel");
-    view.append(stageHost, panel);
+    view.append(host, panel);
     body.append(view);
+    stageHost = host;
 
-    sky = createSkyView(stageHost, {
+    // Shown while a bake runs, and while the map is living in pure view.
+    const status = el("div", "cg-status");
+    host.append(status);
+    statusEl = status;
+
+    sky = createSkyView(host, {
+      quality: ctx.state.get<Quality>(K_QUALITY, "balanced"),
       shadows: ctx.state.get<boolean>(K_SHADOWS, true),
+      onStatus: (text) => {
+        status.textContent = text ?? "";
+        status.classList.toggle("is-on", !!text);
+      },
       onPickGround: (u, v) => addMarker(u, v),
       onPickMarker: (id) => {
         const m = mapDoc.markers.find((x) => x.id === id);
@@ -606,12 +725,12 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
       } catch {
         /* no canvas backend either — the harness. */
       }
-      stageHost.append(flat);
-      stageHost.append(el("div", "cg-note", "no WebGL here \u2014 showing the flat atlas"));
+      host.append(flat);
+      host.append(el("div", "cg-note", "no WebGL here \u2014 showing the flat atlas"));
     } else {
-      sky.setTerrain(field, mapDoc.params);
+      sky.setMap(field, mapDoc.params, mapDoc.city);
       sky.setMarkers(mapDoc.markers);
-      sky.setExaggeration(ctx.state.get<number>(K_RELIEF, DEFAULT_EXAGGERATION));
+      sky.setExaggeration(defaultExaggeration(mapDoc));
       sky.setLabelsVisible(ctx.state.get<boolean>(K_LABELS, true));
       sky.setSun(0.34);
     }
@@ -681,12 +800,15 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
   function buildPanel(panel: HTMLElement, mapDoc: MapDoc, field: Field): void {
     panel.replaceChildren();
 
+    const water = field.water;
     const stats = el("div", "cg-stats");
     stats.append(
       stat("relief", `${Math.round(field.peak * mapDoc.params.reliefM)} m`),
       stat("extent", `${mapDoc.params.extentKm} km`),
       stat("land", `${Math.round(field.landFraction * 100)}%`),
-      stat("grid", `${field.size}\u00b2`)
+      stat("grid", `${field.size}\u00b2`),
+      stat("lakes", String(water.lakes.length)),
+      stat("water", `${Math.round(water.wetFraction * 100)}%`)
     );
     panel.append(stats);
 
@@ -698,7 +820,8 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
           max: 1,
           step: 0.01,
           value: 0.34,
-          format: (v) => (v < 0.2 ? "dawn" : v < 0.45 ? "morning" : v < 0.7 ? "afternoon" : "dusk"),
+          format: (v) =>
+            v < 0.12 || v > 0.88 ? "night" : v < 0.25 ? "dawn" : v < 0.45 ? "morning" : v < 0.7 ? "afternoon" : "dusk",
           onInput: (v) => sky?.setSun(v),
         }),
         slider({
@@ -706,11 +829,44 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
           min: 1,
           max: 20,
           step: 1,
-          value: ctx.state.get<number>(K_RELIEF, DEFAULT_EXAGGERATION),
+          value: defaultExaggeration(mapDoc),
           format: (v) => `${v}\u00d7`,
-          onInput: (v) => sky?.setExaggeration(v),
+          // A rebuild, not a rescale — debounced, because dragging this would
+          // otherwise re-bake the textures on every pointermove.
+          onInput: (v) => {
+            window.clearTimeout(reliefTimer);
+            reliefTimer = window.setTimeout(() => sky?.setExaggeration(v), 220);
+          },
         })
       );
+
+      /* ---------------- how you look at it ---------------- */
+
+      const viewRow = el("div", "cg-toggles");
+      const flyBtn = button("fly", () => {
+        if (!sky) return;
+        const next: CameraMode = sky.cameraMode() === "fly" ? "orbit" : "fly";
+        sky.setCameraMode(next);
+        flyBtn.classList.toggle("is-on", next === "fly");
+        flyHint.classList.toggle("is-on", next === "fly");
+      });
+      const pureBtn = button("pure view", () => {
+        setPure(!pure);
+        pureBtn.classList.toggle("is-on", !!pure);
+      });
+      const fullBtn = button("fullscreen", () => {
+        setPure(true, true);
+        pureBtn.classList.add("is-on");
+      });
+      viewRow.append(flyBtn, pureBtn, fullBtn, button("reset", () => sky?.resetView()));
+      panel.append(viewRow);
+
+      const flyHint = el(
+        "div",
+        "cg-flyhint",
+        "WASD to move \u00b7 Q/E down and up \u00b7 shift to sprint \u00b7 drag to look \u00b7 wheel sets speed"
+      );
+      panel.append(flyHint);
 
       const toggles = el("div", "cg-toggles");
       let atlas = false;
@@ -732,8 +888,24 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
         labelBtn.classList.toggle("is-on", labels);
       });
       labelBtn.classList.toggle("is-on", labels);
-      toggles.append(projectionBtn, wireBtn, labelBtn, button("reset", () => sky?.resetView()));
+      toggles.append(projectionBtn, wireBtn, labelBtn);
       panel.append(toggles);
+    }
+
+    if (isCityMap(mapDoc.city)) {
+      panel.append(el("div", "cg-panel-head", "landmarks"));
+      const list = el("div", "cg-markers");
+      // Tallest first. A list of towers in document order is a list; a list in
+      // height order is a skyline.
+      for (const l of [...mapDoc.city.landmarks].sort((a, b) => b.heightM - a.heightM)) {
+        const row = el("div", "cg-marker");
+        const name = el("span", "cg-marker-name is-static", l.name);
+        const height = el("span", "cg-marker-height", `${l.heightM} m`);
+        row.append(el("span", "cg-dot is-hold"), name, height);
+        row.addEventListener("click", () => sky?.flyTo(l.u, l.v));
+        list.append(row);
+      }
+      panel.append(list);
     }
 
     panel.append(el("div", "cg-panel-head", "places"));
@@ -741,6 +913,8 @@ function mount(root: HTMLElement, ctx: KernelContext, args: MountArgs): () => vo
     panel.append(markerList);
     rebuildMarkerList();
   }
+
+  let reliefTimer = 0;
 
   function stat(label: string, value: string): HTMLElement {
     const wrap = el("div", "cg-stat");

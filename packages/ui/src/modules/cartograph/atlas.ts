@@ -75,7 +75,7 @@ function drawnRelief(
 
   const img = bg.createImageData(n, n);
   const px = img.data;
-  const { h, rgb } = field;
+  const { h, rgb, water } = field;
 
   const az = opts.sunAzimuth ?? -Math.PI * 0.75;
   const strength = opts.relief ?? 1;
@@ -87,7 +87,11 @@ function drawnRelief(
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       const i = y * n + x;
-      const under = h[i] < params.seaLevel;
+      // Any water, not just the sea. A river is a cell whose height is well
+      // above the waterline, so testing sea level alone hillshades the inside
+      // of every channel — which draws each one as a bright rim and a dark
+      // rim, exactly like the ridge it is the opposite of.
+      const under = h[i] < params.seaLevel || water.surface[i] >= 0;
 
       let shade = 1;
       if (!under) {

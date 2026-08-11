@@ -798,6 +798,7 @@ Beyond the world toys and the arcade, the set a desktop is expected to have:
 | **Timer** | countdown and stopwatch |
 | **Portal** | a web browser |
 | **Dev Server** | frames a dev server the host bridge is running |
+| **Cartograph** | build a world, then go and fly through it |
 | **Settings** | every knob, from every module |
 
 Two of those used to be windows that did nothing when opened on their own.
@@ -808,6 +809,54 @@ directory, a search box, and a new-file line. **Dev Server** (which was called
 "Web App") said "No port." It now asks the host what is actually running and
 lists it, and where there is no host bridge — every deployed build — it says
 *that*, instead of describing a console command that would also fail.
+
+### Cartograph: water, and a city
+
+A map is thirteen numbers and a seed. The generator invents a continent from
+them; a *hydrology* pass then rains on it, and everything interesting follows
+from what the water does. Droplet erosion carves the valley network — branching
+drainage is not modelled anywhere, it falls out of following each drop
+downhill. A priority flood fills what is left, and whatever holds water is a
+lake. D8 accumulation routes the flow, and where enough of it gathers is a
+river, which is then *cut into the ground* rather than painted on it, because
+water running along the outside of a hillside is something the eye catches
+instantly even when it cannot say why.
+
+Sea, lakes and rivers are one surface and one mesh. That is the point of doing
+it this way: the old build had a single flat plane at sea level, which can draw
+an ocean and by construction cannot draw a lake — a lake is above sea level —
+or a river, which is neither flat nor level.
+
+**The maps are not blurry any more**, and the reason is worth knowing if you
+write another canvas app for this shell. The compositor projects each floating
+panel from a point in space and writes the result as a CSS `scale()` between
+0.35 and 1.6. A canvas sized to its own `clientWidth` therefore renders at
+layout size and is then *stretched* by whatever the panel's depth implies — at
+the far end, a 62%-resolution image blown up. The sky view sizes its drawing
+buffer by the element's real on-screen scale instead, read back from its
+bounding rect. Everything else is downstream of that: the terrain is a baked
+colour, normal and AO/roughness set at up to 4096², synthesised between the
+field's samples rather than generated at that size, since a river is in the
+same valley whether you sampled it 192 or 2048 times.
+
+**Pure view** takes the live canvas out of the window entirely and puts it on
+the glass — chromeless, above the pinned band, at true device resolution
+because nothing is scaling it. Escape steps out one level at a time,
+fullscreen → widget → back in the window. **Fly** swaps the orbit camera for
+WASD, Q/E for down and up, shift to sprint, drag to look and the wheel as a
+throttle. Fly mode swallows exactly the keys it uses, so rising does not also
+summon the launcher ring.
+
+**New York** ships in the library. It is a hand-authored reconstruction, not
+data: the coastlines were written from knowledge of the place as longitude and
+latitude, and the sixteen landmark towers stand at their real coordinates at
+their real architectural heights — One World Trade at 541m, the Empire State
+at 443m. Everything between them is generated from a street grid, including
+Manhattan's 29°-off-north Commissioners' grid and its 3.4:1 blocks. It is
+accurate to a few hundred metres on the shore and invented everywhere else;
+Newark Bay and the Hackensack are simply absent rather than badly
+approximated. If you want the real geometry, the import button reads a
+greyscale heightmap and that is the honest way in.
 
 ### Notes are files
 

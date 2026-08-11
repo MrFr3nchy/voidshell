@@ -8,6 +8,8 @@
  * happened to peak at.
  */
 import { Noise2D, rng } from "./noise";
+import { hydrology } from "./hydrology";
+import type { WaterField } from "./hydrology";
 import type { Field, Marker, MarkerKind, TerrainParams } from "./types";
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
@@ -156,8 +158,19 @@ const C = {
   forest: [0.145, 0.271, 0.180] as RGB,
   tundra: [0.427, 0.435, 0.376] as RGB,
   rock: [0.365, 0.353, 0.361] as RGB,
+  // Built ground, seen from altitude: asphalt and roof, warmer and lighter
+  // than bare stone because half of what you are looking at is rooftop. The
+  // first value here was as dark as wet slate, which mixed into the temperate
+  // forest underneath and left the boroughs reading as woodland at dusk.
+  paved: [0.447, 0.427, 0.404] as RGB,
   scree: [0.267, 0.259, 0.278] as RGB,
   snow: [0.937, 0.953, 0.976] as RGB,
+  // Fresh water reads green-brown, not the blue-grey of the open sea — a lake
+  // painted in shelf blue looks like a hole punched through to the ocean.
+  riverbed: [0.153, 0.196, 0.180] as RGB,
+  lakebed: [0.098, 0.161, 0.173] as RGB,
+  /** The band of damp ground either side of a channel. Cheap, and worth it. */
+  riparian: [0.176, 0.325, 0.196] as RGB,
 };
 
 function mix(a: RGB, b: RGB, t: number, out: RGB): RGB {
@@ -207,10 +220,65 @@ function computeSlopes(h: Float32Array, n: number): Float32Array {
   return raw;
 }
 
+/**
+ * Cells to the nearest fresh water, by two-pass chamfer.
+ *
+ * A true Euclidean transform is not worth it here — the only consumer is a
+ * moisture gradient that gets smoothstepped into a colour ramp, and the 3-4
+ * chamfer's few-percent error is invisible under that. Two linear passes over
+ * the grid, rather than a flood fill per river cell.
+ */
+function distanceToWater(water: WaterField, n: number, seaLevel: number): Float32Array {
+  const big = n * 4;
+  const dist = new Float32Array(n * n).fill(big);
+  for (let i = 0; i < n * n; i++) {
+    if (water.surface[i] >= 0 && water.surface[i] > seaLevel) dist[i] = 0;
+  }
+
+  const relax = (i: number, j: number, cost: number) => {
+    const d = dist[j] + cost;
+    if (d < dist[i]) dist[i] = d;
+  };
+
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const i = y * n + x;
+      if (x > 0) relax(i, i - 1, 3);
+      if (y > 0) relax(i, i - n, 3);
+      if (x > 0 && y > 0) relax(i, i - n - 1, 4);
+      if (x < n - 1 && y > 0) relax(i, i - n + 1, 4);
+    }
+  }
+  for (let y = n - 1; y >= 0; y--) {
+    for (let x = n - 1; x >= 0; x--) {
+      const i = y * n + x;
+      if (x < n - 1) relax(i, i + 1, 3);
+      if (y < n - 1) relax(i, i + n, 3);
+      if (x < n - 1 && y < n - 1) relax(i, i + n + 1, 4);
+      if (x > 0 && y < n - 1) relax(i, i + n - 1, 4);
+    }
+  }
+
+  // Back into cells from chamfer units.
+  for (let i = 0; i < dist.length; i++) dist[i] /= 3;
+  return dist;
+}
+
 /** Paint the field. Height and slope decide the rock; latitude and aridity the rest. */
-export function colourise(h: Float32Array, n: number, p: TerrainParams): Float32Array {
+export function colourise(
+  h: Float32Array,
+  n: number,
+  p: TerrainParams,
+  water?: WaterField,
+  developed?: Float32Array
+): Float32Array {
   const rgb = new Float32Array(n * n * 3);
   const slopes = computeSlopes(h, n);
+  // In cells, scaled with resolution so the damp band is a fixed *distance*
+  // rather than a fixed number of samples — otherwise a fine map gets a
+  // hairline of green and a coarse one gets a green floodplain.
+  const riparianReach = n * 0.02;
+  const toWater = water ? distanceToWater(water, n, p.seaLevel) : null;
   const grain = new Noise2D(p.seed ^ 0x1f83d9ab);
   const out: RGB = [0, 0, 0];
   const veg: RGB = [0, 0, 0];
@@ -244,8 +312,33 @@ export function colourise(h: Float32Array, n: number, p: TerrainParams): Float32
       // Per-vertex variation, so nothing reads as a contour band.
       const jitter = grain.fbm(x * 0.09, y * 0.09, 3) * 0.5;
 
-      // Moisture: wetter at sea level, drier high up and in arid climates.
-      const moisture = clamp(1 - p.aridity * 1.25 - e * 0.42 + jitter * 0.34, 0, 1);
+      // Under a river or a lake: paint the bed, and skip the whole land
+      // pipeline. A riverbed that got a snowline applied to it because it
+      // happens to sit at 2000m is the sort of thing that only looks wrong
+      // once you notice it, and then looks wrong forever.
+      if (water && water.surface[i] > sea) {
+        const bed = water.lakeOf[i] >= 0 ? C.lakebed : C.riverbed;
+        // Deeper water, darker bed — the same two-stop logic as the sea.
+        const depth = clamp((water.surface[i] - hv) * 26, 0, 1);
+        mix(bed, C.abyss, depth * 0.55, out);
+        rgb[i * 3] = out[0];
+        rgb[i * 3 + 1] = out[1];
+        rgb[i * 3 + 2] = out[2];
+        continue;
+      }
+
+      // Proximity to fresh water, 1 at the bank and 0 beyond the reach.
+      const damp = toWater ? smoothstep(riparianReach, 0, toWater[i]) : 0;
+
+      // Moisture: wetter at sea level and beside water, drier high up and in
+      // arid climates. The riparian term is what makes a river legible from
+      // altitude on a dry map — a green thread through ochre, which is exactly
+      // how a real desert river looks from a plane.
+      const moisture = clamp(
+        1 - p.aridity * 1.25 - e * 0.42 + jitter * 0.34 + damp * 0.55,
+        0,
+        1
+      );
 
       // Vegetation band first — everything above is painted over it.
       if (p.latitude > 0.62) {
@@ -259,6 +352,10 @@ export function colourise(h: Float32Array, n: number, p: TerrainParams): Float32
       out[0] = veg[0];
       out[1] = veg[1];
       out[2] = veg[2];
+
+      // The bank itself, over whatever biome the moisture picked. Held back on
+      // steep ground: a gorge has bare rock down to the water, not a lawn.
+      if (damp > 0) mix(out, C.riparian, damp * 0.65 * smoothstep(1.6, 0.6, slope), out);
 
       // Beach, but only where the land actually meets the water gently — a
       // sea cliff with a sand stripe painted along its foot looks wrong.
@@ -278,6 +375,13 @@ export function colourise(h: Float32Array, n: number, p: TerrainParams): Float32
         smoothstep(2.1, 1.2, slope);
       if (cover > 0) mix(out, C.snow, cover, out);
 
+      // Then pave it. After the biome rather than instead of it, so the parks
+      // and the undeveloped edges still carry whatever climate the map has —
+      // a city is a grey lid over a landscape, not a different planet.
+      if (developed && developed[i] > 0) {
+        mix(out, C.paved, clamp(developed[i] * (0.95 + jitter * 0.2), 0, 1), out);
+      }
+
       rgb[i * 3] = out[0];
       rgb[i * 3 + 1] = out[1];
       rgb[i * 3 + 2] = out[2];
@@ -286,8 +390,17 @@ export function colourise(h: Float32Array, n: number, p: TerrainParams): Float32
   return rgb;
 }
 
-/** Heights plus colours plus the two summary numbers the UI shows. */
+/**
+ * Heights plus water plus colours plus the summary numbers the UI shows.
+ *
+ * `hydrology` mutates `h` — it erodes the ground and cuts channels into it —
+ * so everything after this line is reading post-water terrain. That is the
+ * point, and it is why the peak and land counts are taken afterwards: before
+ * erosion they describe a continent that no longer exists.
+ */
 export function buildField(h: Float32Array, n: number, p: TerrainParams): Field {
+  const water = hydrology(h, n, p);
+
   let peak = 0;
   let land = 0;
   for (let i = 0; i < h.length; i++) {
@@ -297,9 +410,10 @@ export function buildField(h: Float32Array, n: number, p: TerrainParams): Field 
   return {
     size: n,
     h,
-    rgb: colourise(h, n, p),
+    rgb: colourise(h, n, p, water),
     peak,
     landFraction: h.length ? land / h.length : 0,
+    water,
   };
 }
 
