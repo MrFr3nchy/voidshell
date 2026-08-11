@@ -90,6 +90,12 @@ jobs:
             --outfile=smoke.mjs --external:jsdom --external:esbuild --log-level=error
           node smoke.mjs
 
+      - name: smoke — projects root
+        run: |
+          npx esbuild tools/projects-root-smoke.mts --bundle --platform=node \
+            --format=esm --packages=external --outfile=pr-smoke.mjs --log-level=error
+          node pr-smoke.mjs
+
       - name: smoke — cli
         run: |
           npx esbuild tools/cli-smoke.mts --bundle --platform=node --format=esm \
