@@ -1,21 +1,15 @@
 import { fileURLToPath } from "node:url";
-import path from "node:path";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import { voidshellProjects } from "./plugins/projects";
 import { voidshellHost } from "./plugins/host";
+import {
+  CONFIG_FILE,
+  ENV_VAR,
+  createRootHandle,
+  resolveProjectsRoot,
+} from "./plugins/projectsRoot";
 
-/**
- * Where /projects and the host bridge look for sibling repos.
- *
- * Both plugins default this to `path.resolve(config.root, "..")`, which was
- * the directory holding voidshell back when the Vite root *was* the repo root.
- * The root is now packages/ui, so that default would resolve to packages/ and
- * find nothing. Pin it explicitly instead of relying on the depth of the tree.
- */
-const siblingRepos = path.resolve(
-  fileURLToPath(new URL(".", import.meta.url)),
-  "../../.." // packages/ui -> packages -> voidshell -> the directory holding it
-);
+const uiDir = fileURLToPath(new URL(".", import.meta.url));
 
 /**
  * Cross-origin isolation. Required for SharedArrayBuffer, which is what lets
@@ -36,23 +30,51 @@ const isolationHeaders = {
   "Cross-Origin-Embedder-Policy": "credentialless",
 };
 
-export default defineConfig({
-  // Mounts the sibling project directories at /projects inside the shell:
-  // live during dev, frozen into the bundle at build.
-  // voidshellHost is `apply: "serve"` — it exists only while the dev server is
-  // running, so the deployed static build has no command bridge at all.
-  plugins: [voidshellProjects({ root: siblingRepos }), voidshellHost({ root: siblingRepos })],
-  server: {
-    port: 5173,
-    open: true,
-    headers: isolationHeaders,
-    // Same-origin /api in dev as in production, so the session cookie — which
-    // is SameSite=Strict — behaves identically in both. Pointing the client at
-    // http://localhost:3000 directly would work right up until the cookie
-    // didn't.
-    proxy: { "/api": { target: "http://127.0.0.1:3000", changeOrigin: false } },
-  },
-  preview: { headers: isolationHeaders },
-  build: { target: "es2021" },
-  worker: { format: "es" },
+export default defineConfig(({ mode }) => {
+  /**
+   * Where /projects and the host bridge look for your repos.
+   *
+   * This was pinned to `path.resolve(uiDir, "../../..")` — the directory
+   * holding the checkout — which is right only when voidshell happens to live
+   * beside the things you want mounted. Now it is stated: an env var, or
+   * `projectsRoot` in `voidshell.local.json`, with that old path as the
+   * fallback so an untouched clone behaves exactly as before.
+   *
+   * `loadEnv` with the `VOIDSHELL_` prefix so the variable also works from
+   * `.env.local`, which is the only one of the two that survives a reboot.
+   */
+  const env = { ...process.env, ...loadEnv(mode, uiDir, "VOIDSHELL_") };
+  const resolved = resolveProjectsRoot({ uiDir, env });
+
+  if (!resolved.exists) {
+    console.warn(
+      `[voidshell] projects root does not exist: ${resolved.root} (from ${resolved.source})\n` +
+        `            /projects will be empty. Set ${ENV_VAR}, or "projectsRoot" in ${CONFIG_FILE}.`
+    );
+  }
+
+  // One handle, shared: the mount and the command sandbox must never disagree
+  // about which tree they are looking at.
+  const root = createRootHandle(resolved);
+
+  return {
+    // Mounts the project directories at /projects inside the shell: live
+    // during dev, frozen into the bundle at build.
+    // voidshellHost is `apply: "serve"` — it exists only while the dev server
+    // is running, so the deployed static build has no command bridge at all.
+    plugins: [voidshellProjects({ root }), voidshellHost({ root })],
+    server: {
+      port: 5173,
+      open: true,
+      headers: isolationHeaders,
+      // Same-origin /api in dev as in production, so the session cookie —
+      // which is SameSite=Strict — behaves identically in both. Pointing the
+      // client at http://localhost:3000 directly would work right up until the
+      // cookie didn't.
+      proxy: { "/api": { target: "http://127.0.0.1:3000", changeOrigin: false } },
+    },
+    preview: { headers: isolationHeaders },
+    build: { target: "es2021" },
+    worker: { format: "es" as const },
+  };
 });
