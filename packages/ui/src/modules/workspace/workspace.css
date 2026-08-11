@@ -1,0 +1,77 @@
+/**
+ * Files' own styles.
+ *
+ * Only the /projects root control lives here for now — the rest of the app is
+ * still in style.css. A new module stylesheet rather than sixty more lines on
+ * the end of an 80KB file, which is the direction devkit, copilot and
+ * cartograph already went.
+ */
+
+.ws-projroot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ws-projroot-status {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.ws-projroot-status.bad {
+  color: var(--ember);
+}
+
+.ws-projroot-row {
+  display: flex;
+  gap: 6px;
+}
+
+/*
+ * An author rule outranks the UA stylesheet, so an element this file gives a
+ * `display` to needs its own `[hidden]` guard — without it `row.hidden = true`
+ * silently does nothing and leaves a dead text box on a production build.
+ */
+.ws-projroot-row[hidden] {
+  display: none;
+}
+
+.ws-projroot-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+
+.ws-projroot-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+.ws-projroot-apply {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+}
+
+.ws-projroot-apply:hover:not(:disabled) {
+  border-color: var(--cyan);
+}
+
+.ws-projroot-apply:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
