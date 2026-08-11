@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { Plugin } from "vite";
+import { readRoot, type RootHandle, type RootOption } from "./projectsRoot";
 
 /**
  * Mounts the author's real project directory into voidshell's filesystem.
@@ -19,6 +20,7 @@ import type { Plugin } from "vite";
 const VIRTUAL_ID = "virtual:voidshell-projects";
 const RESOLVED_ID = "\0" + VIRTUAL_ID;
 const DEV_ENDPOINT = "/__vs/projects.json";
+export const ROOT_ENDPOINT = "/__vs/projects/root";
 
 /** Directories that are build output, dependencies, or VCS noise. */
 const SKIP_DIRS = new Set([
@@ -232,21 +234,29 @@ export function scanProjects(root: string, selfName: string): ProjectsSnapshot {
 }
 
 export interface ProjectsPluginOptions {
-  /** Directory to mount. Defaults to the parent of the vite root. */
-  root?: string;
+  /**
+   * Directory to mount. A plain string pins it; a `RootHandle` lets it be
+   * repointed while the dev server runs. Omitted, it falls back to the old
+   * behaviour so the plugin is still usable on its own.
+   */
+  root?: RootOption;
 }
 
 export function voidshellProjects(opts: ProjectsPluginOptions = {}): Plugin {
-  let scanRoot = "";
+  let fallbackRoot = "";
   let selfName = "";
   let isBuild = false;
+  const scanRoot = () => readRoot(opts.root, fallbackRoot);
+  /** Present only when the caller passed a handle, i.e. only in dev. */
+  const handle = (): RootHandle | null =>
+    opts.root && typeof opts.root !== "string" ? opts.root : null;
 
   return {
     name: "voidshell-projects",
 
     configResolved(config) {
       isBuild = config.command === "build";
-      scanRoot = opts.root ?? path.resolve(config.root, "..");
+      fallbackRoot = path.resolve(config.root, "..");
       selfName = path.basename(config.root);
     },
 
@@ -259,10 +269,21 @@ export function voidshellProjects(opts: ProjectsPluginOptions = {}): Plugin {
 
       if (isBuild) {
         // Freeze the scan into the bundle — the deployed site has no disk.
-        const snap = scanProjects(scanRoot, selfName);
+        const root = scanRoot();
+        const snap = scanProjects(root, selfName);
         const kb = (snap.embeddedBytes / 1024).toFixed(0);
+        // A build that quietly ships an empty /projects is the failure this
+        // whole file exists to make visible, so say so rather than reporting
+        // "0 projects" as though it were a result.
+        if (!snap.projects.length) {
+          this.warn?.(
+            `no projects found under ${root} — /projects will be empty. ` +
+              `Set VOIDSHELL_PROJECTS_ROOT or projectsRoot in voidshell.local.json.`
+          );
+        }
         this.info?.(
-          `mounted ${snap.projects.length} projects, ${snap.entries.length} entries, ${kb}KB text`
+          `mounted ${snap.projects.length} projects from ${root}, ` +
+            `${snap.entries.length} entries, ${kb}KB text`
         );
         return `const snapshot = ${JSON.stringify(snap)};
 export function loadProjects() { return Promise.resolve(snapshot); }`;
@@ -282,7 +303,7 @@ export function loadProjects() { return Promise.resolve(snapshot); }`;
     configureServer(server) {
       server.middlewares.use(DEV_ENDPOINT, (_req, res) => {
         try {
-          const snap = scanProjects(scanRoot, selfName);
+          const snap = scanProjects(scanRoot(), selfName);
           res.setHeader("Content-Type", "application/json");
           res.setHeader("Cache-Control", "no-store");
           res.end(JSON.stringify(snap));
@@ -290,6 +311,68 @@ export function loadProjects() { return Promise.resolve(snapshot); }`;
           res.statusCode = 500;
           res.end(JSON.stringify({ error: String(err) }));
         }
+      });
+
+      /**
+       * Read and repoint the mount, without restarting Vite.
+       *
+       * Dev only, by the same construction as the host bridge:
+       * `configureServer` never runs for a production build, so a deployed
+       * voidshell has no way to reach this and the Settings control it backs
+       * degrades to showing the frozen root the bundle was built with.
+       */
+      server.middlewares.use(ROOT_ENDPOINT, (req, res) => {
+        const h = handle();
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Cache-Control", "no-store");
+
+        const report = (info: ReturnType<RootHandle["info"]>) => {
+          // Count projects rather than just echoing the path: "that directory
+          // exists" and "that directory has anything in it" are different
+          // answers, and only the second one is the question being asked.
+          let projects = 0;
+          try {
+            projects = scanProjects(info.root, selfName).projects.length;
+          } catch {
+            /* unreadable — reported as zero, alongside exists:false */
+          }
+          res.end(JSON.stringify({ ...info, projects, settable: true }));
+        };
+
+        if (!h) {
+          res.statusCode = 501;
+          res.end(JSON.stringify({ error: "no root handle", settable: false }));
+          return;
+        }
+
+        if (req.method === "GET") return report(h.info());
+
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: "GET or POST" }));
+          return;
+        }
+
+        let raw = "";
+        req.on("data", (c) => (raw += c));
+        req.on("end", () => {
+          let next = "";
+          try {
+            next = String((JSON.parse(raw || "{}") as { root?: unknown }).root ?? "");
+          } catch {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: "body is not valid JSON" }));
+            return;
+          }
+          try {
+            report(h.set(next));
+          } catch (err) {
+            // A refused path leaves the old root in place, so a typo costs a
+            // message rather than the mount.
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: String((err as Error).message) }));
+          }
+        });
       });
     },
   };
