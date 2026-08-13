@@ -5,6 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 import type { Plugin, ViteDevServer } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readRoot, type RootOption } from "./projectsRoot";
 
 /**
  * The host bridge: lets the shell inside the browser run real commands on the
@@ -132,27 +133,36 @@ const json = (res: ServerResponse, code: number, body: unknown) => {
 };
 
 export interface HostPluginOptions {
-  /** Commands may only run at or below this directory. Defaults to vite root's parent. */
-  root?: string;
+  /**
+   * Commands may only run at or below this directory. A plain string pins it;
+   * a `RootHandle` lets it follow the mount when that is repointed while the
+   * dev server runs. Omitted, it defaults to the vite root's parent.
+   */
+  root?: RootOption;
 }
 
 export function voidshellHost(opts: HostPluginOptions = {}): Plugin {
-  let sandboxRoot = "";
+  let fallbackRoot = "";
+  const sandboxRoot = () => readRoot(opts.root, fallbackRoot);
 
   return {
     name: "voidshell-host",
     apply: "serve", // never present in a production build
 
     configResolved(config) {
-      sandboxRoot = opts.root ?? path.resolve(config.root, "..");
+      fallbackRoot = path.resolve(config.root, "..");
     },
 
     configureServer(server: ViteDevServer) {
       /** Reject anything outside the sandbox, including via symlink or "..". */
       const safeCwd = (raw: string | undefined): string => {
-        const candidate = path.resolve(sandboxRoot, raw || ".");
+        // Read the root per call. Closing over a string would leave the
+        // sandbox wherever it booted after the mount is repointed, so the
+        // shell would list files it then refuses to run anything against.
+        const root = sandboxRoot();
+        const candidate = path.resolve(root, raw || ".");
         const real = fs.existsSync(candidate) ? fs.realpathSync(candidate) : candidate;
-        const rootReal = fs.realpathSync(sandboxRoot);
+        const rootReal = fs.realpathSync(root);
         if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
           throw new Error(`outside sandbox: ${raw}`);
         }
@@ -338,7 +348,7 @@ export function voidshellHost(opts: HostPluginOptions = {}): Plugin {
             // Piped sockets emit 'error' when the peer goes away mid-write.
             // Unhandled, that error propagates and kills the whole dev server,
             // so both ends are wired to tear the pair down quietly instead.
-            const bind = (a: import("node:net").Socket, b: import("node:net").Socket) => {
+            const bind = (a: import("node:stream").Duplex, b: import("node:stream").Duplex) => {
               a.on("error", () => b.destroy());
               a.on("close", () => b.destroy());
             };
@@ -426,7 +436,7 @@ export function voidshellHost(opts: HostPluginOptions = {}): Plugin {
 
         return new Promise((resolve, reject) => {
           const proxy = http.createServer((preq, pres) => {
-            const headers: Record<string, unknown> = { ...preq.headers };
+            const headers: http.OutgoingHttpHeaders = { ...preq.headers };
             // The upstream must see its own name, not localhost:41234.
             headers.host = target.host;
             // Both would otherwise announce a localhost proxy port, which some
@@ -444,7 +454,11 @@ export function voidshellHost(opts: HostPluginOptions = {}): Plugin {
               {
                 protocol: target.protocol,
                 host: target.hostname,
-                port: target.port || (secure ? 443 : 80),
+                // `URL.port` is a string, and "" for a default port. Passed
+                // through unconverted it is a string here too, which is not
+                // what http.request wants — hence Number(), with the falsy
+                // empty string still falling through to the scheme default.
+                port: Number(target.port) || (secure ? 443 : 80),
                 path: preq.url,
                 method: preq.method,
                 headers,

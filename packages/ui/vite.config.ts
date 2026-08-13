@@ -61,12 +61,11 @@ export default defineConfig(({ mode }) => {
     // voidshellHost is `apply: "serve"` — it exists only while the dev server
     // is running, so the deployed static build has no command bridge at all.
     //
-    // The mount takes the live handle so it can be repointed from Settings
-    // without a restart. The host bridge takes the path as resolved at
-    // startup: `HostPluginOptions.root` is still a plain string, so its
-    // sandbox stays where it booted until the dev server restarts. That is
-    // why changing the root offers a reload rather than claiming to be done.
-    plugins: [voidshellProjects({ root }), voidshellHost({ root: resolved.root })],
+    // Both take the same live handle, so repointing the root moves the scan
+    // and the command sandbox together. Were the bridge given a fixed string,
+    // the two would drift apart and the shell would list files it then
+    // refused to run anything against.
+    plugins: [voidshellProjects({ root }), voidshellHost({ root })],
     server: {
       port: 5173,
       open: true,
