@@ -407,7 +407,7 @@ through `ctx.fs`. Five mounts ship:
 | mount | mode | backing |
 | --- | --- | --- |
 | `/home/void` | read-write | your account's workspace, on the server |
-| `/projects` | read-only | build-time scan of the sibling project dirs |
+| `/projects` | read-only | scan of a project folder you choose (see below) |
 | `/proc` | synthetic | the process table and live system counters |
 | `/dev` | synthetic | `null`, `zero`, `random`, `console` |
 | `/etc` | synthetic, writable | the settings store |
@@ -461,11 +461,51 @@ becoming a 27MB download. Classification is a binary-extension *denylist*, not a
 text allowlist, so unguessable text files (`.firebaserc`, `.gql`) stay readable;
 a NUL-byte check catches anything mislabeled.
 
-Point it somewhere else with `voidshellProjects({ root: "/some/path" })` in
-`packages/ui/vite.config.ts`, which is how it is wired today: the root is
-pinned to the directory holding the voidshell repo. Left unset it falls back to
-the parent of the Vite root, which since the workspace split is `packages/` —
-the wrong place, and empty.
+### Choosing the folder
+
+The root used to be `path.resolve(uiDir, "../../..")` — the directory holding
+the checkout. That is not a hard-coded *path*, but it is a hard-coded
+*assumption*, and it has the same effect: right when voidshell happens to sit
+beside the repos you want mounted, silently wrong when it doesn't, with nothing
+reporting the difference. `/projects` was simply whatever was next door on that
+machine, which is why the mount changed shape depending on which computer you
+sat down at.
+
+The location is now something you state. Three sources, first hit wins:
+
+1. `VOIDSHELL_PROJECTS_ROOT` in the environment — also picked up from
+   `.env.local`, which is the one of the two that survives a reboot:
+
+   ```bash
+   VOIDSHELL_PROJECTS_ROOT=~/code npm run dev
+   ```
+
+2. `projectsRoot` in `voidshell.local.json` at the repo root — gitignored,
+   per-machine, and what the in-shell setting writes to:
+
+   ```json
+   { "projectsRoot": "~/code" }
+   ```
+
+3. The directory containing the checkout, as before, so an untouched clone
+   behaves exactly as it always did.
+
+`~` expands on both routes. People write `~/code` in a JSON file and reasonably
+expect it to mean something, and a JSON file has no shell to do it for them.
+Relative paths resolve against the checkout rather than the working directory,
+so `npm run dev` gives the same answer whichever folder you run it from.
+
+A root that doesn't exist warns and skips the mount rather than crashing the
+dev server, and a build that finds zero projects warns with the name of the
+setting to change — an empty `/projects` that says nothing is the failure this
+exists to prevent.
+
+**Settings › System › Projects folder** does the same from inside the shell. It
+writes `voidshell.local.json` and offers a reload, because `/projects` is
+mounted once during boot and the tree already on screen is still the old one. In
+a production build it degrades to a read-only report of the root the bundle was
+frozen with: the endpoint behind it is dev-only by the same construction as the
+host bridge.
 
 ### Files: browsing and typing over one directory
 
