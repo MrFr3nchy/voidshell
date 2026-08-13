@@ -25,3 +25,6 @@ voidshell.local.json
 
 # Smoke harness bundle for the projects-root checks.
 pr-smoke.mjs
+
+# Perft harness bundle for the Pawnageddon move generator.
+pg-perft.mjs

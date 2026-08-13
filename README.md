@@ -799,6 +799,7 @@ Beyond the world toys and the arcade, the set a desktop is expected to have:
 | **Portal** | a web browser |
 | **Dev Server** | frames a dev server the host bridge is running |
 | **Cartograph** | build a world, then go and fly through it |
+| **Pawnageddon** | chess, until the chaos deck gets involved |
 | **Settings** | every knob, from every module |
 
 Two of those used to be windows that did nothing when opened on their own.

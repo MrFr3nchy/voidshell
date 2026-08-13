@@ -96,6 +96,16 @@ jobs:
             --format=esm --packages=external --outfile=pr-smoke.mjs --log-level=error
           node pr-smoke.mjs
 
+      # Chess has a published right answer, so the move generator is checked
+      # against one rather than against how it looks. The default tier is the
+      # fast one; `--deep` adds the 4.9M-node run and is for when the generator
+      # itself is touched.
+      - name: perft — pawnageddon move generator
+        run: |
+          npx esbuild tools/pawnageddon-perft.mts --bundle --platform=node \
+            --format=esm --packages=external --outfile=pg-perft.mjs --log-level=error
+          node pg-perft.mjs
+
       - name: smoke — cli
         run: |
           npx esbuild tools/cli-smoke.mts --bundle --platform=node --format=esm \
