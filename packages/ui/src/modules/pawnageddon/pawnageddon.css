@@ -1,0 +1,278 @@
+/**
+ * Pawnageddon.
+ *
+ * Imported from main.ts, not from the module — esbuild bundles modules to a
+ * single outfile and a CSS import from TypeScript breaks it. See the house
+ * rules in docs/MODULE-SDK.md.
+ *
+ * The board keeps its own wooden colours because that is what a chess board
+ * looks like; everything around it takes the theme, so the panel still belongs
+ * to the shell it is floating in.
+ */
+
+.pg {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+  color: var(--text, #e8edff);
+  font: 12px/1.45 system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.pg-board {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pg-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.pg-side {
+  flex: 0 0 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* ── Status ── */
+
+.pg-turn {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pg-turn.bad {
+  color: var(--ember, #ff8a5c);
+}
+
+.pg-phase {
+  color: var(--text-dim, #8a93b8);
+  font-size: 11px;
+}
+
+/* ── Meters ── */
+
+.pg-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pg-meter {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text, #e8edff) 12%, transparent);
+  overflow: hidden;
+}
+
+.pg-bar-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--magenta, #c05cff), var(--ember, #ff8a5c));
+  transition: width 0.25s ease-out;
+}
+
+/* ── Buttons ── */
+
+.pg-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pg-btn,
+.pg-chip {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--text, #e8edff) 22%, transparent);
+  background: color-mix(in srgb, var(--text, #e8edff) 7%, transparent);
+  color: inherit;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pg-btn:hover:not(:disabled),
+.pg-chip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cyan, #4fe3d0) 18%, transparent);
+}
+
+.pg-btn:disabled,
+.pg-chip:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.pg-btn-quiet {
+  color: var(--text-dim, #8a93b8);
+}
+
+.pg-h {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim, #8a93b8);
+}
+
+/* ── Shop ── */
+
+.pg-shop-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.pg-chip {
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.pg-muted {
+  opacity: 0.5;
+}
+
+/* ── Hand ── */
+
+.pg-hand-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.pg-card {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--text, #e8edff) 20%, transparent);
+  border-left-width: 3px;
+  background: color-mix(in srgb, var(--text, #e8edff) 6%, transparent);
+  color: inherit;
+  border-radius: 5px;
+  padding: 5px 7px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pg-card:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--magenta, #c05cff) 16%, transparent);
+}
+
+.pg-card:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pg-card-desc {
+  color: var(--text-dim, #8a93b8);
+  font-size: 10.5px;
+}
+
+/* Rarity reads off the left edge, so a legendary is findable in a full hand. */
+.pg-common { border-left-color: color-mix(in srgb, var(--text, #e8edff) 35%, transparent); }
+.pg-uncommon { border-left-color: var(--cyan, #4fe3d0); }
+.pg-rare { border-left-color: #6ba8ff; }
+.pg-epic { border-left-color: var(--magenta, #c05cff); }
+.pg-legendary { border-left-color: var(--ember, #ff8a5c); }
+
+/* ── Captured and log ── */
+
+.pg-captured-row {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.pg-captured-label {
+  color: var(--text-dim, #8a93b8);
+  flex: 0 0 74px;
+}
+
+.pg-captured-list {
+  word-break: break-all;
+}
+
+.pg-log {
+  border-top: 1px solid color-mix(in srgb, var(--text, #e8edff) 12%, transparent);
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pg-log-line,
+.pg-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim, #8a93b8);
+}
+
+/* ── Promotion sheet ── */
+
+.pg-promo {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: color-mix(in srgb, #05060a 72%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 2;
+}
+
+/* Required: the rule above sets `display`, which outranks the UA stylesheet's
+   `[hidden] { display: none }`. Without this, `promo.hidden = true` does
+   nothing and leaves a full-panel sheet eating every click on the board. */
+.pg-promo[hidden] {
+  display: none;
+}
+
+.pg-promo-title {
+  font-weight: 600;
+}
+
+.pg-promo-row {
+  display: flex;
+  gap: 6px;
+}
+
+.pg-promo-row .pg-btn {
+  text-align: center;
+}
+
+/* ── Banner ── */
+
+.pg-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  /* No blend mode: the source is a full illustration with its own dark, fiery
+     ground rather than lettering on white, so it sits on the panel as-is and
+     anything that lightens it only washes it out. */
+  opacity: 0.95;
+}

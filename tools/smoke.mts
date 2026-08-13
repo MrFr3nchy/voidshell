@@ -78,7 +78,9 @@ const { arcade } = await import("../packages/ui/src/modules/arcade");
 const { CABINETS } = await import("../packages/ui/src/modules/arcade/registry");
 const { arcadeChecks } = await import("./arcade-checks.mts");
 const { cartograph } = await import("../packages/ui/src/modules/cartograph");
+const { pawnageddon } = await import("../packages/ui/src/modules/pawnageddon");
 const { cartographChecks } = await import("./cartograph-checks.mts");
+const { pawnageddonChecks } = await import("./pawnageddon-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { STOCK_MODULES } = await import("../packages/ui/src/modules/stock.generated");
@@ -220,11 +222,12 @@ kernel
   .register(portal)
   .register(arcade)
   .register(cartograph)
+  .register(pawnageddon)
   .register(devkit)
   .register(copilot);
 
 /** Modules the shell is built with. The rest ship as source and are loaded. */
-const BUILTIN_COUNT = 18;
+const BUILTIN_COUNT = 19;
 /** Built-ins plus everything devkit plants in ~/modules and loads at boot. */
 const MODULE_COUNT = BUILTIN_COUNT + STOCK_MODULES.length;
 
@@ -1212,6 +1215,29 @@ check("its places are listed", (cg?.querySelectorAll(".cg-marker").length ?? 0) 
  * all three of which produce a perfectly valid-looking window.
  */
 cartographChecks(check);
+
+/* ---------------- pawnageddon ---------------- */
+
+for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
+kernel.launch("pawnageddon");
+const pg = hud.ownerDocument.querySelector(".pg");
+check("pawnageddon mounted", Boolean(pg));
+// jsdom has no 2D context, so mountStage returns early and never runs a frame.
+// The panel around the board must still come up, or the app is unusable on
+// any machine where the canvas fails for its own reasons.
+check("its side panel rendered", Boolean(pg?.querySelector(".pg-side")));
+check("the turn is stated", (pg?.querySelector(".pg-turn")?.textContent ?? "").includes("White"));
+check("the promotion sheet starts hidden", (pg?.querySelector(".pg-promo") as HTMLElement)?.hidden === true);
+check("the shop is locked at turn 0", (pg?.querySelector(".pg-shop")?.className ?? "").includes("pg-muted"));
+
+/**
+ * Pawnageddon's own rules, same reasoning as cartograph's.
+ *
+ * Launching it proves the wiring; none of it can see whether a shield saves
+ * the piece it is on, which is the sort of thing that looks completely fine
+ * on screen while being exactly backwards.
+ */
+pawnageddonChecks(check);
 
 /* ---------------- editor: buffer, gutter and run pane ---------------- */
 
