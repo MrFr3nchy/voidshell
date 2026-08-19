@@ -35,8 +35,15 @@ export async function arcadeChecks(check: Check, CABINETS: GameDef[]): Promise<v
    * trusted.
    */
   check(
+    // Stated as a fraction of the screen, not as a pixel range. The pixel
+    // range was a hidden dependency on the playfield being 240 tall: resizing
+    // the arena and rescaling the flight constants to match — which preserves
+    // the design exactly — would have failed this, and leaving the constants
+    // alone while the arena grew, which changes the game completely, would
+    // have passed it. It was asserting the wrong thing in both directions.
     "one flap lifts about a body height",
-    joustRules.flapApex() > 12 && joustRules.flapApex() < 17
+    joustRules.flapApex() / joustRules.GAME_H > 0.06 &&
+      joustRules.flapApex() / joustRules.GAME_H < 0.085
   );
   check(
     "the higher lance wins and level lances draw",
@@ -50,8 +57,8 @@ export async function arcadeChecks(check: Check, CABINETS: GameDef[]): Promise<v
   );
   check(
     "the playfield is a cylinder",
-    joustRules.wrapDelta(10, 310) === -20 &&
-      joustRules.wrapDelta(310, 10) === 20 &&
+    joustRules.wrapDelta(10, joustRules.GAME_W - 10) === -20 &&
+      joustRules.wrapDelta(joustRules.GAME_W - 10, 10) === 20 &&
       joustRules.wrapX(-5) === joustRules.GAME_W - 5
   );
   check(
@@ -69,6 +76,47 @@ export async function arcadeChecks(check: Check, CABINETS: GameDef[]): Promise<v
   check(
     "every arena platform stays above the lava",
     [1, 7, 20, 40].every((w) => joustRules.arena(w).every((p) => p.y < joustRules.LAVA_Y))
+  );
+  check(
+    // The first two screens bridge the lava, as the original's do, and from
+    // the third the pools are open. Checked by total floor width rather than
+    // by counting gaps, so it survives the runs being repositioned.
+    "the lava is bridged for two waves and open from the third",
+    (() => {
+      const floor = (w: number) =>
+        joustRules
+          .arena(w)
+          .filter((p) => p.floor)
+          .reduce((n, p) => n + p.w, 0);
+      return floor(1) === joustRules.GAME_W && floor(3) < joustRules.GAME_W;
+    })()
+  );
+  check(
+    // Every rider has to land on something the instant it becomes solid, and
+    // two riders must never be handed the same pad.
+    "every rider gets its own pad and every pad is a real platform",
+    (() => {
+      const a = joustRules.arena(1);
+      return (
+        joustRules.SPAWN_ON.length === a.length &&
+        new Set(joustRules.SPAWN_ON).size === joustRules.SPAWN_ON.length &&
+        joustRules.SPAWN_ON.every((i) => i >= 0 && i < a.length)
+      );
+    })()
+  );
+  check(
+    // The player's pad is the one thing in the arena that must mean the same
+    // place on wave 40 as it did on wave 1, which rules out the floor: the
+    // floor erodes.
+    "the player's pad is in the same place on every wave",
+    (() => {
+      const at = (w: number) => joustRules.arena(w)[joustRules.SPAWN_ON[0]];
+      const p = at(1);
+      return [2, 7, 20, 40].every((w) => {
+        const q = at(w);
+        return q.x === p.x && q.y === p.y && q.w === p.w;
+      });
+    })()
   );
 
   /**
