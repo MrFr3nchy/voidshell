@@ -300,9 +300,9 @@ export class Kernel {
    * - Compiled into the shell → trusted. These modules *are* the shell; aurora
    *   owns every colour in the build and the workspace owns the console, and
    *   fencing them would be fencing the system from itself.
-   * - Declared `permissions` → exactly that, and nothing else. An empty list is
-   *   honoured as an empty list, because a module claiming to need nothing is
-   *   making a claim worth holding it to.
+   * - Declared `permissions` → exactly that, and nothing else. The empty array
+   *   is truthy, so a module claiming to need nothing lands here and is held to
+   *   the claim rather than falling through to the policy below.
    * - Declared nothing → trusted, unless the user asked for strict mode. This
    *   is what keeps the change free of regressions: every manifest written
    *   before capabilities existed says "nothing", and every one of them keeps
@@ -312,9 +312,6 @@ export class Kernel {
     if (!this.runtime.has(id)) return null;
     const declared = this.declared.get(id);
     if (declared) return new Set(declared);
-    if (declared !== undefined && declared === null) {
-      // Explicitly recorded as undeclared. Falls through to policy below.
-    }
     return this.store.get<boolean>(STRICT_KEY, false) ? new Set(SAFE_DEFAULT) : null;
   }
 
