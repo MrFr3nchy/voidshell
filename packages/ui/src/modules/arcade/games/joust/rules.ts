@@ -54,6 +54,10 @@ export const LAVA_Y = 342;
  * Anything measured in *sprite* pixels — hit boxes, the lance grid, the egg —
  * is deliberately left alone. Those are properties of the art, not of the
  * arena, and scaling them would have undone the entire point.
+ *
+ * The horizontal constants have since moved off this scaling on purpose; see
+ * the note on MAX_VX_AIR. The scale is how the arena was sized, not a claim
+ * that every number still sits on it.
  */
 export const LENGTH_SCALE = 1.5;
 export const SPEED_SCALE = 1.35;
@@ -122,16 +126,34 @@ export const TERMINAL_VY = 351;
  * Holding a direction in mid-air used to accelerate you smoothly, which meant
  * the stick flew the bird and the flap only supplied height — two independent
  * controls, and far too much authority. In Joust the wings do both: you go
- * where you flap. `ACC_AIR` is a sixth of what it was, so drifting steers you
- * a little and flapping is what actually moves you. Measured: the stick alone
- * reaches 36px/s in two seconds against 126 with the wings.
+ * where you flap.
+ *
+ * Cut again, from 46, as part of making top speed something you *build*. At 46
+ * against the old cap, four flaps put you at ninety percent of maximum and
+ * there was nothing left to work towards.
  */
-export const FLAP_DVX = 46;
+export const FLAP_DVX = 34;
 
-export const ACC_AIR = 22;
-export const ACC_GROUND = 316;
-export const MAX_VX_AIR = 170;
-export const MAX_VX_GROUND = 113;
+export const ACC_AIR = 12;
+export const ACC_GROUND = 200;
+
+/**
+ * Top speed in the air, and the single number that decides whether this game
+ * has momentum in it.
+ *
+ * Deliberately *off* the 1.35 velocity scale — it is nearly double what the
+ * old 126 became. The cap is not a limit you bump into, it is the headroom you
+ * accelerate through, and a low one means top speed is simply the speed you
+ * travel at. Measured against the old numbers: four flaps and 0.63s to reach
+ * ninety percent of maximum, which is not a build-up, it is a switch. It is
+ * now seven flaps and 1.23s, and holding it means continuing to flap, which
+ * costs altitude control.
+ *
+ * The ground cap stays far below it. Running is not flying, and the gap is
+ * what makes taking off worth doing.
+ */
+export const MAX_VX_AIR = 250;
+export const MAX_VX_GROUND = 120;
 
 /**
  * Steering against your own momentum.
@@ -140,8 +162,15 @@ export const MAX_VX_GROUND = 113;
  * characteristic thing about flying in this game. Below 1 it is *harder* to
  * turn than to keep going, so committing to a direction is a real decision and
  * changing your mind costs you the width of the screen.
+ *
+ * Tightened from 0.82 along with the brake below, then loosened back off 0.42
+ * after measuring: at 0.42 a full reversal took 7 seconds and 781px, which is
+ * more than one and a half screens and reads as the controls being broken
+ * rather than as the bird being heavy. Heavy is the goal; unresponsive is a
+ * bug, and the gap between them is narrow enough to need a number rather than
+ * an opinion. At 0.7 it is 4.0s and 388px — real work, still under one screen.
  */
-export const TURN_BOOST = 0.82;
+export const TURN_BOOST = 0.7;
 
 /*
  * A note on facing, because it was wrong and a Joust player spotted it.
@@ -164,10 +193,9 @@ export const TURN_BOOST = 0.82;
  * A wingbeat into your own momentum is a brake, not a thruster: it bleeds
  * speed rather than reversing it, so a full turn costs several beats instead
  * of one. Together with TURN_BOOST this is what stops the stick from being a
- * steering wheel — measured, a full reversal takes 1.68s and gives up 33px of
- * ground, against 1.02s and 8px before.
+ * steering wheel.
  */
-export const TURN_FLAP_BRAKE = 0.45;
+export const TURN_FLAP_BRAKE = 0.4;
 
 /**
  * Ground friction, and the skid.
@@ -177,13 +205,26 @@ export const TURN_FLAP_BRAKE = 0.45;
  * the speed under which it applies, and `DRAG_SKID` is the much weaker drag
  * above it. Overshooting your landing and sailing off the far end of a ledge
  * is supposed to be a thing that happens to you.
+ *
+ * The skid drag is less than half what it was and the threshold is higher, so
+ * arriving fast means genuinely sliding rather than settling. Touching down
+ * was the cheapest way in the game to shed momentum you had spent seconds
+ * building, which made the floor a brake pedal.
  */
-export const DRAG_GROUND = 4.0;
-export const DRAG_SKID = 0.8;
-export const SKID_ABOVE = 62;
+export const DRAG_GROUND = 3.4;
+export const DRAG_SKID = 0.35;
+export const SKID_ABOVE = 78;
 
-/** Almost nothing. You coast until something stops you. */
-export const DRAG_AIR = 0.2;
+/**
+ * Almost nothing. You coast until something stops you.
+ *
+ * Was 0.22, which sounds small and is not: measured, a rider let go of at top
+ * speed kept 45% of it four seconds later. Half your momentum evaporating
+ * while you do nothing is the opposite of the thing this game is about, and it
+ * is most of why the flight read as "sensible" rather than as Joust. At 0.035
+ * the same rider still has 87%.
+ */
+export const DRAG_AIR = 0.035;
 
 /**
  * Downward shove after clouting your head on the underside of a ledge, and
@@ -243,8 +284,32 @@ export const LANCE_GRID = 5;
 /** Snapped heights within this many grid steps are a draw. */
 export const LANCE_TIE = 1;
 
+/**
+ * What a wall does to you.
+ *
+ * The fraction of your speed that comes back at you when you fly into the side
+ * of a ledge. Zeroing it instead — which is what the first pass at side
+ * collision did — makes a platform a free brake: you arrive at full speed, you
+ * stop dead, and you leave in any direction you like at no cost, which is a
+ * better way to shed momentum than anything the flight model offers. Bouncing
+ * means hitting the stone throws you back out and you have to rebuild.
+ */
+export const WALL_BOUNCE = 0.35;
+
+/**
+ * The shove you get off an enemy you have just unseated.
+ *
+ * A won joust is still a collision. The original knocks you back off whoever
+ * you took the mount from; passing cleanly through the space where they were
+ * is the one moment in the game where two bodies touch and nothing happens.
+ * Deliberately much softer than a draw — it should nudge your aim off, not
+ * cost you the screen.
+ */
+export const UNHORSE_KICK = 55;
+export const UNHORSE_LIFT = -40;
+
 /** Collisions ricochet hard. Getting shoved across the screen is the point. */
-export const BOUNCE_VX = 130;
+export const BOUNCE_VX = 150;
 export const BOUNCE_VY = -78;
 
 export type Joust = "a" | "b" | "draw";
@@ -357,10 +422,13 @@ export const BEAT_PERIOD = 0.22;
  * the long way round — and when you are already moving, the long way is often
  * quicker than paying for a reversal. This is the rule that makes the flock
  * read as Joust: they streak across, overshoot, and reappear on the far side
- * still coming. Seam crossings went from 17 to 41 per minute and the flock's
- * mean speed from 56 to 97px/s.
+ * still coming.
+ *
+ * Raised with the air cap. It is a fraction of top speed, not an absolute, and
+ * leaving it at 84 against a 250 cap would have meant a buzzard taking the
+ * seam at a third of maximum — which is to say, almost always, turning never.
  */
-export const WRAP_RATHER_THAN_TURN = 84;
+export const WRAP_RATHER_THAN_TURN = 120;
 
 export const PTERO_SCORE = 1000;
 export const SURVIVAL_BONUS = 3000;
@@ -446,7 +514,7 @@ export interface Platform {
  *   the wrap seam. Two pools, which is what the troll reaches out of, and it
  *   is worth being explicit that laying the runs flush to 0 and GAME_W instead
  *   joins the outer gaps *through* the seam into a single pool;
- * - the left ledge, low and hugging the left edge;
+ * - the left ledge, hugging the left edge;
  * - the middle ledge, centred and standing over the floor. The centrepiece of
  *   the original screen, and the thing every strategy for the game is written
  *   around;
@@ -478,8 +546,12 @@ export function arena(wave: number): Platform[] {
     bridged ? base(240, 240) : base(276, 176),
     // The middle ledge, dead centre. Also the player's pad — see SPAWN_ON.
     { x: 180, y: 238, w: 120, h: 10 },
-    // Left ledge, low, flush to the edge so it continues through the seam.
-    { x: 0, y: 262, w: 110, h: 10 },
+    // Left ledge, flush to the edge so it continues through the seam. It sat
+    // at 262, which put it three quarters of the way down the screen — barely
+    // above the floor, with the whole left half of the arena empty above it.
+    // Raised to sit roughly level with the lower right shelf, so the mid band
+    // spans both sides and the space underneath is somewhere you fly.
+    { x: 0, y: 216, w: 110, h: 10 },
     // The right-hand pair, and the slot between them.
     { x: 360, y: 210, w: 120, h: 10 },
     { x: 336, y: 160, w: 96, h: 10 },
