@@ -115,8 +115,12 @@ export const arcade: VoidModule = {
 
     ctx.openSurface({
       title: "arcade",
-      width: 700,
-      height: 560,
+      // Sized so the widest cabinet still gets a whole-number scale factor with
+      // room for the toolbar and the readout. Joust's playfield grew to 480x360
+      // and at the old 700x560 it opened one step down, which is the one place
+      // a game's resolution leaks into the launcher.
+      width: 820,
+      height: 660,
       render: (root) => {
         root.innerHTML = "";
         root.classList.add("stage-root", "arcade-root");
