@@ -14,9 +14,11 @@
  *   the flap is what actually moves you sideways.
  * - **Momentum is the difficulty, but the sprite is not.** Air drag is almost
  *   nothing and turning against your own velocity is harder than holding a
- *   line, so a full reversal costs 1.68s and a third of a screen — yet the
+ *   line, so a full reversal costs four seconds and most of a screen — yet the
  *   bird turns to face the stick *at once*. Facing left while still sailing
  *   right is the silhouette this game is made of.
+ * - **Nothing sheds momentum for free.** Not the air, not the floor, and not a
+ *   wall. Every surface that stops you either bounces you back or slides.
  * - **The screen is a cylinder, and the flock uses it.** A fast buzzard whose
  *   target has ended up behind it takes the seam rather than braking.
  * - **Eggs are the economy.** Killing something doesn't remove it, it drops an
@@ -99,6 +101,9 @@ import {
   TIERS,
   TURN_BOOST,
   TURN_FLAP_BRAKE,
+  UNHORSE_KICK,
+  UNHORSE_LIFT,
+  WALL_BOUNCE,
   waveEnemies,
   waveKind,
   WRAP_RATHER_THAN_TURN,
@@ -682,7 +687,12 @@ export class Joust implements Game {
       // Horizontal thrust is nearly all flap, so a buzzard that only flaps for
       // *height* barely moves sideways. That was a real bug: the flock
       // averaged half the player's speed and could not close.
-      const wantsDrive = want !== 0 && want * e.vx < MAX_VX_AIR * 0.74;
+      //
+      // Cut from 0.74 when the air cap went to 250. It is a fraction of the
+      // player's top speed and the flock has no reason to want all of it —
+      // left alone, a raised ceiling silently turns every buzzard into a
+      // permanent sprint.
+      const wantsDrive = want !== 0 && want * e.vx < MAX_VX_AIR * 0.5;
 
       e.beat -= dt;
       const flap = e.beat <= 0 && (wantsHeight || wantsDrive);
@@ -784,7 +794,7 @@ export class Joust implements Game {
    * So: the two swept crossings first, because a sweep cannot be stepped over
    * at any speed and getting them wrong puts a bird inside the floor. Then, if
    * the boxes still overlap after that, the rider came in from the side and
-   * gets pushed back out of it with its momentum killed.
+   * gets bounced back out of it.
    *
    * `py` is the y at the start of the step. It stays the start-of-step value
    * across the whole platform loop even as `r.y` is corrected, which is what
@@ -809,17 +819,23 @@ export class Joust implements Game {
       return;
     }
 
-    // Still inside it: came through the side. Push out the nearer way — via
+    // Still inside it: came through the side. Pushed out the nearer way — via
     // `wrapDelta`, because a platform flush to the seam has a near side that
-    // is off the other edge of the screen.
+    // is off the other edge of the screen — and *thrown back*, not stopped
+    // dead. Killing the velocity outright made a ledge the most effective
+    // brake in the game: arrive at any speed, stop instantly, leave in
+    // whatever direction you fancy having paid nothing. That is exactly the
+    // "run into a platform and just change the direction of your momentum"
+    // complaint, and it made walls a tool for shedding speed rather than a
+    // hazard.
     if (r.y + FOOT <= p.y || r.y >= p.y + p.h) return;
     const d = wrapDelta(p.x + p.w / 2, r.x + HIT_DX + HIT_W / 2);
     if (d >= 0) {
       r.x = wrapX(p.x + p.w - HIT_DX);
-      if (r.vx < 0) r.vx = 0;
+      if (r.vx < 0) r.vx = -r.vx * WALL_BOUNCE;
     } else {
       r.x = wrapX(p.x - HIT_DX - HIT_W);
-      if (r.vx > 0) r.vx = 0;
+      if (r.vx > 0) r.vx = -r.vx * WALL_BOUNCE;
     }
   }
 
@@ -895,7 +911,11 @@ export class Joust implements Game {
         b.y += (dy / d) * 175 * dt;
         if (d < 8) {
           // Collected by the flock and put back in the fight, one tier up.
-          const r = this.makeRider(false, Math.min(2, e.tier + 1), e.x - 6, e.y - 8);
+          //
+          // Wrapped. An egg collected within six pixels of the seam produced a
+          // rider at negative x, which every steering and collision test in
+          // the game reads through `wrapDelta` and none of them expect.
+          const r = this.makeRider(false, Math.min(2, e.tier + 1), wrapX(e.x - 6), e.y - 8);
           r.spawn = 0.35;
           r.vy = -81;
           this.enemies.push(r);
@@ -1189,6 +1209,15 @@ export class Joust implements Game {
   /** An enemy loses its mount: it becomes points, and an egg that will bite back. */
   private unhorse(e: Rider, index: number): void {
     const t = TIERS[e.tier];
+    // The bump. Taking someone's mount is still two bodies meeting, and
+    // sailing cleanly through the space where they were was the one collision
+    // in the game that had no physical consequence at all. Soft on purpose:
+    // it should knock your aim off the next one, not end your run.
+    const p = this.player;
+    const away = (Math.sign(wrapDelta(e.x, p.x)) || 1) as 1 | -1;
+    p.vx = p.vx * 0.55 + away * UNHORSE_KICK;
+    p.vy = Math.min(p.vy, UNHORSE_LIFT);
+    p.grounded = false;
     this.add(t.score);
     this.floatText(e.x, e.y, t.score);
     this.burstBits(e.x + SPR_W / 2, e.y + SPR_H / 2, t.color, 14);
@@ -1411,7 +1440,6 @@ export class Joust implements Game {
       g.fillRect(r.x + SPR_W / 2 - 1, r.y - 2, 2, SPR_H);
       return;
     }
-
     const ink = tier ? riderInk(tier.color, tier.shade, "#cfd6e8", "#7b8399", tier.shade) : PLAYER_INK;
     const flip = r.face < 0;
     const phase = 1 - Math.min(1, r.wing);
