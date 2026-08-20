@@ -111,7 +111,11 @@ function reset() {
   queue = [{ status: 200, body: { user: {}, workspace: { state: { back: 1 }, fs: null } } }];
   ($(".lock-btn-primary") as HTMLButtonElement).click();
   const ws = await settled;
-  check("retry resolves with the workspace once the server returns", (ws.state as { back: number }).back === 1);
+  check(
+    "retry resolves with the workspace once the server returns",
+    (ws.workspace.state as { back: number }).back === 1
+  );
+  check("a session reached through the server is not a guest one", ws.guest === false);
 }
 
 /* ---------------- a wrong key ---------------- */
@@ -168,7 +172,7 @@ function reset() {
   ($(".lock-form") as HTMLFormElement).dispatchEvent(new dom.window.Event("submit"));
   const ws = await settled;
 
-  check("a good key resolves with the dashboard", (ws.state as { hue: number }).hue === 7);
+  check("a good key resolves with the dashboard", (ws.workspace.state as { hue: number }).hue === 7);
   check("it signed in and then loaded the session", calls.join(" ") === "POST /api/auth/signin GET /api/session");
 }
 
@@ -206,7 +210,53 @@ function reset() {
   queue = [{ status: 200, body: { user: {}, workspace: { state: {}, fs: null } } }];
   enter.click();
   const ws = await settled;
-  check("a new dashboard starts empty", JSON.stringify(ws) === '{"state":{},"fs":null}');
+  check("a new dashboard starts empty", JSON.stringify(ws.workspace) === '{"state":{},"fs":null}');
+}
+
+/* ---------------- going in without an account ---------------- */
+
+/**
+ * The offer has to be on *both* screens, and the reasons differ.
+ *
+ * On the locked screen it is the answer to being asked for a credential before
+ * being shown what it unlocks. On the unreachable one it is the difference
+ * between a dead page and a working shell — nothing behind that screen needs
+ * the server except the saving, so refusing to boot over an outage costs the
+ * user the whole OS rather than one of its properties.
+ */
+const guestButton = () =>
+  doc.querySelector(".lock-guest .lock-btn") as HTMLButtonElement | null;
+
+{
+  reset();
+  const settled = runLockScreen({ unreachable: false });
+  await tick();
+
+  const btn = guestButton();
+  check("the locked screen offers a way in without an account", btn !== null);
+  check("it says what you give up", text().includes("saved when the tab closes"));
+
+  btn!.click();
+  const session = await settled;
+  check("it resolves as a guest", session.guest === true);
+  check("a guest starts from an empty dashboard", JSON.stringify(session.workspace) === '{"state":{},"fs":null}');
+  // The whole point is that this path needs nothing from the server. A request
+  // here would mean guest mode is unavailable in exactly the case it exists for.
+  check("nothing was asked of the server", calls.length === 0);
+}
+
+{
+  reset();
+  const settled = runLockScreen({ unreachable: true });
+  await tick();
+
+  check("an unreachable server offers it too", guestButton() !== null);
+  check("it says only the saving needs the server", text().includes("only the saving needs the server"));
+
+  guestButton()!.click();
+  const session = await settled;
+  check("an outage still gets you a shell", session.guest === true);
+  check("still nothing was asked of the server", calls.length === 0);
 }
 
 /* ---------------- what goes on the wire ---------------- */

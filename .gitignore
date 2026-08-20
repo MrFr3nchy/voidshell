@@ -12,8 +12,14 @@ dist/
 .DS_Store
 *.log
 
-# Smoke harness bundles.
-prices-smoke.mjs
+# Harness bundles. Every check in CI is an esbuild bundle dropped in the repo
+# root and run once; three of them were listed here by name as they were added,
+# which meant each new harness left an untracked file until somebody noticed.
+*-smoke.mjs
+*-checks.mjs
+*-perft.mjs
+smoke.mjs
+emit.mjs
 
 # CLI: per-checkout droplet settings and the local dev database
 .voidshell.json
@@ -22,9 +28,3 @@ prices-smoke.mjs
 # Per-machine settings: which folder /projects is a view of. Deliberately not
 # committed — it is the whole point that this differs between machines.
 voidshell.local.json
-
-# Smoke harness bundle for the projects-root checks.
-pr-smoke.mjs
-
-# Perft harness bundle for the Pawnageddon move generator.
-pg-perft.mjs
