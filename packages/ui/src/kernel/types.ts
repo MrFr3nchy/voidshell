@@ -7,11 +7,12 @@
  * the same modules render in a completely different world.
  */
 
+import type { Capability } from "./caps";
 import type { LogEntry, LogLevel } from "./journal";
 import type { ProcInfo } from "./procs";
 import type { MountInfo } from "./vfs";
 
-export type { LogEntry, LogLevel, MountInfo, ProcInfo };
+export type { Capability, LogEntry, LogLevel, MountInfo, ProcInfo };
 
 /** A 3D-ish position in the void. Compositors decide what the units mean. */
 export interface Vec3 {
@@ -276,6 +277,19 @@ export interface ModuleManifest {
    */
   singleton?: boolean;
   version?: string;
+  /**
+   * Which parts of the syscall surface this module needs — see `kernel/caps.ts`.
+   *
+   * Optional, and its absence is not the same as `[]`. Omitting it means "I am
+   * trusted", which is what every manifest written before capabilities existed
+   * says by saying nothing, and the kernel honours that unless the user turns
+   * strict mode on. Declaring `[]` is a module stating it needs nothing at all
+   * — a stronger claim, and one the kernel will hold it to.
+   *
+   * Only enforced for modules installed at runtime. Anything compiled into the
+   * shell is the shell.
+   */
+  permissions?: Capability[];
 }
 
 /** Arguments passed to a module at launch. `path` is the conventional one. */
@@ -392,6 +406,11 @@ export interface FsEntry {
 /**
  * The context handed to every module. This is the entire syscall surface of
  * voidshell — deliberately small. Grow it on purpose, never by accident.
+ *
+ * Not every module gets all of it. A module installed at runtime may declare
+ * `manifest.permissions`, and the kernel then hands it a context that refuses
+ * everything it did not ask for — see `kernel/caps.ts`. Anything added to this
+ * interface must be given a capability there, or explicitly left ungated.
  */
 export interface KernelContext {
   /** Publish/subscribe bus (the OS's IPC). */

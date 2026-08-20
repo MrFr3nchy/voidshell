@@ -66,6 +66,20 @@ jobs:
             exit 1
           fi
 
+      # Modules reach the kernel only through the context they are handed, so
+      # the fence in caps.ts is only a fence if nothing else hands one out. A
+      # module that imported the Kernel class directly would have the unfenced
+      # surface and nothing would say so.
+      - name: modules do not import the kernel directly
+        run: |
+          hits=$(grep -rn "from \"\.\./\.\./kernel/Kernel\"\|from '\.\./\.\./kernel/Kernel'" \
+                 /tmp/src-nc/modules || true)
+          if [ -n "$hits" ]; then
+            echo "$hits" | sed -e 's#^/tmp/src-nc/#packages/ui/src/#' -e 's#\.js:#.ts:#'
+            echo "::error::a module is importing Kernel directly — everything comes through ctx"
+            exit 1
+          fi
+
       - run: npm run typecheck
 
       - run: npm run build
@@ -89,6 +103,15 @@ jobs:
           npx esbuild tools/smoke.mts --bundle --platform=node --format=esm \
             --outfile=smoke.mjs --external:jsdom --external:esbuild --log-level=error
           node smoke.mjs
+
+      # Needs no DOM at all: the capability layer wraps a context, and a
+      # recording stub is a better subject than a real kernel because it can
+      # assert what *didn't* reach the other side.
+      - name: checks — module capabilities
+        run: |
+          npx esbuild tools/caps-checks.mts --bundle --platform=node --format=esm \
+            --outfile=caps-checks.mjs --log-level=error
+          node caps-checks.mjs
 
       - name: smoke — projects root
         run: |

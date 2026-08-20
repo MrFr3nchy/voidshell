@@ -10,6 +10,7 @@
  *     cat /proc/uptime              live, recomputed on every read
  *     ls /proc                      one directory per running process
  *     cat /proc/12/status           what process 12 actually is
+ *     cat /proc/permissions         what each module is allowed to do
  *     tail -n 20 /var/log/system.log | grep warn
  *     noisy-command > /dev/null     a real sink, not a special case in the shell
  *     echo notes >> /etc/autostart   edits what launches at boot
@@ -23,6 +24,7 @@
 import type { VNode } from "./vfs";
 import type { Journal } from "./journal";
 import { ProcTable } from "./procs";
+import { formatPermissions, type ModulePermissions } from "./caps";
 import type { CompositorStats, ModuleManifest } from "./types";
 
 /** Everything sysfs needs to describe the running system. */
@@ -30,6 +32,15 @@ export interface SysfsHooks {
   journal: Journal;
   procs: ProcTable;
   registry(): ModuleManifest[];
+  /**
+   * What each module is permitted to do — see `caps.ts`.
+   *
+   * Separate from `registry()` because a manifest says what a module *asked*
+   * for and only the kernel knows what it was actually given: the two differ
+   * whenever strict mode is on, and that difference is the entire point of
+   * reading the file.
+   */
+  permissions(): ModulePermissions[];
   usage(): { files: number; dirs: number; bytes: number; indexed: number };
   stats(): CompositorStats;
   store: {
@@ -190,6 +201,15 @@ export function buildProc(h: SysfsHooks): VNode {
         })
         .join("\n")
     ),
+
+    /**
+     * What each module is allowed to do.
+     *
+     * A fence nobody can see is indistinguishable from no fence, and this is
+     * the cheapest possible way to be able to see it: no new app, no new verb,
+     * and `grep` and `tail` work on it the day it lands.
+     */
+    genFile("permissions", () => formatPermissions(h.permissions())),
 
     genFile("cpuinfo", () => {
       const s = h.stats();

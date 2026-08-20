@@ -8,6 +8,14 @@ import { KERNEL_PID, ProcTable } from "./procs";
 import { burst, tone } from "./audio";
 import { mountStage, palette, rgbOf, toolbar, toolButton, withAlpha } from "./stage";
 import {
+  SAFE_DEFAULT,
+  STRICT_KEY,
+  parsePermissions,
+  restrict,
+  type Capability,
+  type ModulePermissions,
+} from "./caps";
+import {
   MemoryWorkspaceHost,
   WORKSPACE_BYTES,
   type WorkspaceHost,
@@ -178,6 +186,13 @@ export class Kernel {
    * so it is not something anybody gets to uninstall.
    */
   private runtime = new Set<string>();
+  /**
+   * What each runtime module's manifest asked to be allowed to do.
+   *
+   * `null` for a module that declared nothing, which is a different fact from
+   * `[]` and is treated differently — see `grantsFor`.
+   */
+  private declared = new Map<string, Capability[] | null>();
   /** True once boot() has activated everything registered up front. */
   private booted = false;
   private surfaces = new Map<string, Surface>();
@@ -275,14 +290,80 @@ export class Kernel {
     return this.host.flush();
   }
 
+  /* ---------------- capabilities ---------------- */
+
+  /**
+   * What `id` may do, or null when it is trusted outright.
+   *
+   * Three cases, in the order they are decided:
+   *
+   * - Compiled into the shell → trusted. These modules *are* the shell; aurora
+   *   owns every colour in the build and the workspace owns the console, and
+   *   fencing them would be fencing the system from itself.
+   * - Declared `permissions` → exactly that, and nothing else. The empty array
+   *   is truthy, so a module claiming to need nothing lands here and is held to
+   *   the claim rather than falling through to the policy below.
+   * - Declared nothing → trusted, unless the user asked for strict mode. This
+   *   is what keeps the change free of regressions: every manifest written
+   *   before capabilities existed says "nothing", and every one of them keeps
+   *   working exactly as it did.
+   */
+  private grantsFor(id: string): ReadonlySet<Capability> | null {
+    if (!this.runtime.has(id)) return null;
+    const declared = this.declared.get(id);
+    if (declared) return new Set(declared);
+    return this.store.get<boolean>(STRICT_KEY, false) ? new Set(SAFE_DEFAULT) : null;
+  }
+
+  /**
+   * What every module is permitted to do. Backs `/proc/permissions`.
+   *
+   * Reported for built-ins too, rather than only for the fenced ones: "which
+   * of these is unrestricted, and why" is the question a user actually has,
+   * and a list that silently omitted two thirds of the answer would be worse
+   * than no list.
+   */
+  permissions(): ModulePermissions[] {
+    return this.registry().map((m) => {
+      const granted = this.grantsFor(m.id);
+      return {
+        id: m.id,
+        runtime: this.runtime.has(m.id),
+        declared: this.declared.get(m.id) ?? null,
+        granted: granted ? [...granted] : null,
+      };
+    });
+  }
+
   /**
    * The syscall surface handed to every module — and to the shell UI.
    *
    * `tag` is who is calling, used to attribute journal writes. Modules get
    * their own id so the log can say which one spoke; the shell's own UI gets
    * the default.
+   *
+   * Anything installed at runtime is handed a *fenced* version of it. The
+   * fence is applied here rather than at install time because a module keeps
+   * whatever context it was activated with for as long as it lives, so this is
+   * the only place that sees every one of them.
    */
   context(tag = "shell"): KernelContext {
+    const raw = this.rawContext(tag);
+    if (!this.runtime.has(tag)) return raw;
+    return restrict(raw, {
+      moduleId: tag,
+      // A thunk, so turning strict mode on takes effect at once rather than at
+      // the next reload — see caps.ts.
+      granted: () => this.grantsFor(tag),
+      onDenied: (err) => {
+        this.journal.write("kernel", err.message, "warn");
+        this.notify(err.message, "warn");
+      },
+    });
+  }
+
+  /** The unfenced surface. Everything the kernel can actually do. */
+  private rawContext(tag: string): KernelContext {
     return {
       emit: (t, p) => this.bus.emit(t, p),
       on: (t, h) => this.bus.on(t, h),
@@ -406,8 +487,15 @@ export class Kernel {
       throw new Error(`a module called "${id}" is already registered`);
     }
 
+    // Before anything is registered: a manifest asking for a capability that
+    // does not exist is a manifest whose author believes they are protected by
+    // something. Refusing here is the only moment that belief is still cheap
+    // to correct.
+    const permissions = parsePermissions(id, mod.manifest.permissions);
+
     this.modules.set(id, mod);
     this.runtime.add(id);
+    this.declared.set(id, permissions);
 
     // Before boot, installing is only registering: boot() activates everything
     // in the table, and doing it here as well would activate twice. A module
@@ -429,9 +517,17 @@ export class Kernel {
       throw err;
     }
 
-    this.journal.write("kernel", `installed ${id}`);
+    this.journal.write("kernel", `installed ${id}${this.grantNote(id)}`);
     this.bus.emit("module.installed", { id });
     return id;
+  }
+
+  /** How an install reads in the journal, so a fence is visible without asking. */
+  private grantNote(id: string): string {
+    const declared = this.declared.get(id) ?? null;
+    if (declared === null) return " — declared no permissions, running unrestricted";
+    if (!declared.length) return " — asked for nothing";
+    return ` — allowed ${declared.join(", ")}`;
   }
 
   /**
@@ -487,6 +583,9 @@ export class Kernel {
 
     this.modules.delete(id);
     this.runtime.delete(id);
+    // Dropped with the module: a stale grant would let the *next* module to
+    // claim this id inherit permissions its own manifest never asked for.
+    this.declared.delete(id);
 
     this.journal.write("kernel", `uninstalled ${id}`);
     // The settings app redraws off this, and it has just lost some controls.
@@ -519,6 +618,25 @@ export class Kernel {
     this.fs.onChange(() => this.scheduleSave());
 
     this.mountSysfs();
+
+    // Published by the kernel rather than by a module, because it is the
+    // kernel that enforces it. Owned by "shell" so that uninstalling something
+    // can never take the security control with it.
+    this.defineSetting(
+      {
+        key: STRICT_KEY,
+        label: "Fence modules that ask for nothing",
+        kind: "toggle",
+        group: "System",
+        hint:
+          "A module loaded at runtime with no `permissions` in its manifest gets " +
+          `windows and nothing else (${SAFE_DEFAULT.join(", ")}). Modules built ` +
+          "into the shell are never fenced. See /proc/permissions.",
+        default: false,
+        order: 65,
+      },
+      "shell"
+    );
 
     // Subscribed before any module activates, so a notice raised during startup
     // is journalled too. Notifications are the system talking; the journal is
@@ -566,6 +684,7 @@ export class Kernel {
       journal: this.journal,
       procs: this.procs,
       registry: () => this.registry(),
+      permissions: () => this.permissions(),
       usage: () => this.fs.usage(),
       stats: () =>
         this.compositor.stats?.() ?? { fps: 0, panels: this.surfaces.size, bodies: 0, groups: 0 },
