@@ -6,6 +6,7 @@ import {
   HOSTNAME_KEY,
   USER_KEY,
 } from "../../kernel/sysfs";
+import { GUEST_KEY } from "../../kernel/guest";
 import { emptyTrash, TRASH_DIR } from "../../kernel/trash";
 import {
   ALLAPPS_KEY,
@@ -251,10 +252,27 @@ export const shell: VoidModule = {
       },
     });
 
+    /**
+     * Leaving, under whichever of the two names is true.
+     *
+     * A guest has no account to sign out of and no key to get back in with, so
+     * both halves of the usual hint describe things that cannot happen. What
+     * the same action actually does for them is throw the session away and
+     * hand back an empty one, which is worth saying plainly — it is the only
+     * way to start over, and it is not reversible.
+     *
+     * Read once at activate rather than per render: whether this session has
+     * an account behind it is decided before any module loads and cannot
+     * change while one is running.
+     */
+    const guest = ctx.state.get<boolean>(GUEST_KEY, false);
+
     ctx.defineSetting({
       key: "system.signOut",
-      label: "sign out",
-      hint: "your dashboard is saved first \u2014 you'll need your key to get back in",
+      label: guest ? "start over" : "sign out",
+      hint: guest
+        ? "throws this guest session away and opens an empty one \u2014 nothing is kept"
+        : "your dashboard is saved first \u2014 you'll need your key to get back in",
       kind: "action",
       group: "System",
       order: 44,
@@ -330,8 +348,10 @@ export const shell: VoidModule = {
     // veil acts on it. Same split as factoryReset: modules don't touch chrome.
     ctx.defineCommand({
       id: "shell.signOut",
-      label: "sign out",
-      hint: "save, close the session, and go back to the key screen",
+      label: guest ? "start over" : "sign out",
+      hint: guest
+        ? "close every window and begin again from an empty void"
+        : "save, close the session, and go back to the key screen",
       glyph: "\u2192",
       run: (c) => c.emit("shell.signOut"),
     });

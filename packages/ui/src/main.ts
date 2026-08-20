@@ -9,7 +9,8 @@ import "./modules/pawnageddon/pawnageddon.css";
 import "./modules/workspace/workspace.css";
 import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
-import type { WorkspaceSnapshot } from "./kernel/persistence";
+import type { ShellHost } from "./kernel/persistence";
+import { GUEST_KEY, GuestWorkspaceHost } from "./kernel/guest";
 import { ThreeCompositor } from "./compositor/ThreeCompositor";
 import { runBootSequence } from "./boot/bootSequence";
 import { createSpawner } from "./ui/spawner";
@@ -18,7 +19,7 @@ import { createPalette } from "./ui/palette";
 import { createToasts } from "./ui/toasts";
 import { createStatusBar } from "./ui/statusBar";
 import { createPower } from "./ui/power";
-import { runLockScreen } from "./ui/lockScreen";
+import { runLockScreen, type Session } from "./ui/lockScreen";
 import { monitor } from "./modules/monitor";
 import { portal } from "./modules/portal";
 import { workspace } from "./modules/workspace";
@@ -43,6 +44,20 @@ import { copilot } from "./modules/copilot";
 import { whenReady } from "./modules/devkit/protocol";
 
 /**
+ * Whether this build was made with no server to talk to.
+ *
+ * Set at build time (`VITE_VOIDSHELL_GUEST=1`) for the published demo, which
+ * is a static bundle on a host that has no API half at all. Probing `/api` in
+ * that build asks a question with one possible answer and pays a failed
+ * request and a "can't reach the server" screen to hear it — so it is skipped
+ * and the shell opens straight into a guest session.
+ *
+ * Optional chaining because the headless harnesses bundle this tree with
+ * esbuild and run it under Node, where `import.meta` exists and `env` does not.
+ */
+const GUEST_ONLY = import.meta.env?.VITE_VOIDSHELL_GUEST === "1";
+
+/**
  * Get a dashboard, one way or another.
  *
  * Returns only once there is a session. Nothing that follows — no compositor,
@@ -50,9 +65,10 @@ import { whenReady } from "./modules/devkit/protocol";
  * the difference between a lock screen and a login form drawn over a running
  * OS that has already leaked what it contains.
  */
-async function openSession(): Promise<WorkspaceSnapshot> {
+async function openSession(): Promise<Session> {
+  if (GUEST_ONLY) return { workspace: { state: {}, fs: null }, guest: true };
   try {
-    return (await api.session()).workspace;
+    return { workspace: (await api.session()).workspace, guest: false };
   } catch (err) {
     // A 401 is "sign in". Anything else is the server being unreachable, and
     // answering that with a lock screen teaches people their key stopped
@@ -69,10 +85,16 @@ async function openSession(): Promise<WorkspaceSnapshot> {
  * caller loops, so signing out lands back on the lock screen without a page
  * reload — and, more importantly, without a second WebGL context.
  */
-async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnapshot): Promise<void> {
+async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Promise<void> {
+  const { workspace: saved, guest } = session;
+
   // Starts silent: there is no toast system until the kernel is up, and a
   // save can fail before then. Upgraded to real toasts a few lines below.
-  const host = new ApiWorkspaceHost();
+  //
+  // A guest gets the same kernel over a host that keeps the snapshot in the
+  // tab. Everything downstream — the heartbeat, the unload flush, the signout
+  // path — calls the same two methods and never learns which one it has.
+  const host: ShellHost = guest ? new GuestWorkspaceHost() : new ApiWorkspaceHost();
 
   // The panel overlay sits above the WebGL canvas, below the HUD. It ignores
   // pointer events itself so drags on empty space reach the canvas; the panels
@@ -90,6 +112,12 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
   // Before register(), and so before any defineSetting() seeds a default over
   // a value the user actually chose.
   kernel.hydrate(saved);
+
+  // Also before register(), for a second reason: a module reads this in
+  // `activate` to decide what to call things. The shell publishes "sign out"
+  // as a settings action and a command, and in a session with no account
+  // behind it that label describes something that cannot happen.
+  if (guest) kernel.context().state.set(GUEST_KEY, true);
 
   /** Everything registered on the way up, undone on the way out. */
   const teardown = new AbortController();
@@ -160,8 +188,12 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
       [
         "# welcome to voidshell",
         "",
-        "This is a real filesystem. Your files here persist across reloads;",
-        "/projects is a read-only mount of the source on disk.",
+        guest
+          ? "This is a real filesystem, but you are a guest: it lives in this"
+          : "This is a real filesystem. Your files here persist across reloads;",
+        guest
+          ? "tab and goes when the tab does. /projects is a read-only mount."
+          : "/projects is a read-only mount of the source on disk.",
         "",
         "Try in the console:",
         "  ls /projects",
@@ -364,7 +396,27 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
   const autostarted = kernel.runAutostart();
 
   // Give the fresh void something to hold so it doesn't open empty.
-  if (!restored && !autostarted) kernel.launch("chronos");
+  if (!restored && !autostarted) {
+    kernel.launch("chronos");
+    // A guest's first boot is somebody's first sight of the whole project, and
+    // a single clock in an empty void undersells it badly. Files is the second
+    // window because it is the one that shows this is an OS and not a
+    // screensaver: a real tree, with the shell's own source mounted under
+    // /projects. Two, not six — an arc of windows reads as a place, and a wall
+    // of them reads as a mess somebody else made.
+    if (guest) {
+      kernel.launch("workspace");
+      ctx.arrange("arc");
+    }
+  }
+
+  if (guest) {
+    ctx.log("guest session \u2014 nothing is being saved");
+    ctx.notify("You\u2019re a guest \u2014 this void is yours until the tab closes.", {
+      kind: "info",
+      action: { label: "see every app", run: (c) => c.emit("shell.openDrawer") },
+    });
+  }
 
   const save = () => {
     if (resetting) return;
@@ -410,7 +462,9 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, saved: WorkspaceSnaps
       console.warn("[voidshell] could not save before signing out:", err);
     }
     try {
-      await api.signout();
+      // Nothing to end server-side, and the request would 401 into a warning
+      // about a session that never existed.
+      if (!guest) await api.signout();
     } catch (err) {
       // The local teardown happens regardless: a user who asked to sign out
       // should not be left staring at their dashboard because a request failed.
