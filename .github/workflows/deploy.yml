@@ -17,7 +17,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Is there anywhere to deploy to?
+  #
+  # There was not, for the last five pushes to main. With DEPLOY_TARGET unset
+  # the rsync step expands to `ssh :` and dies on `Could not resolve hostname`,
+  # but only after a full typecheck, a Vite build and an npm install — so every
+  # merge spent forty seconds earning a red X and a failure email for a droplet
+  # that was never configured.
+  #
+  # A repository with no deploy secrets is not a repository whose deploy is
+  # broken; it is one that does not deploy. Saying so up front turns that into
+  # a skipped job, which is quiet, and leaves the red X meaning what it should
+  # — that a deploy which was supposed to happen didn't.
+  #
+  # It has to be its own job because `secrets` is not readable from a job-level
+  # `if`. Only the presence is tested, and only as a boolean: printing any part
+  # of a secret to a log is how they stop being secrets.
+  #
+  # `environment: production` is load-bearing here and not copied by accident.
+  # These are environment secrets, not repository secrets, and a job that does
+  # not name the environment cannot see them — so a guard without this line
+  # would read three empty strings on a fully configured repository and skip
+  # every deploy forever.
+  guard:
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          TARGET: ${{ secrets.DEPLOY_TARGET }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          missing=
+          [ -n "$TARGET" ] || missing="$missing DEPLOY_TARGET"
+          [ -n "$KEY" ]    || missing="$missing DEPLOY_SSH_KEY"
+          [ -n "$HOSTS" ]  || missing="$missing DEPLOY_KNOWN_HOSTS"
+
+          if [ -n "$missing" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "### No deploy target configured" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Missing from the \`production\` environment:$missing" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing was built or shipped. Run \`npx voidshell setup\` to" >> "$GITHUB_STEP_SUMMARY"
+            echo "provision a droplet, then add the three secrets and push again." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::deploy skipped — no droplet configured ($missing)"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
+    needs: guard
+    if: needs.guard.outputs.configured == 'true'
     runs-on: ubuntu-latest
     environment: production
     steps:

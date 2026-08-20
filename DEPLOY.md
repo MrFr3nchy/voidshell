@@ -132,13 +132,20 @@ in `dist/`.
 ### From CI
 
 Push to `main`. `.github/workflows/deploy.yml` does the same thing on a runner.
-Three repository secrets:
+Three secrets, set either on the repository or on its `production` environment:
 
 | Secret | What |
 |---|---|
 | `DEPLOY_SSH_KEY` | private key with access to the droplet |
 | `DEPLOY_KNOWN_HOSTS` | output of `ssh-keyscan YOUR_DROPLET` |
 | `DEPLOY_TARGET` | `root@1.2.3.4` |
+
+**With none of them set, the workflow skips instead of failing.** A fork or a
+fresh clone has no droplet, and a deploy that cannot possibly succeed should
+not spend a build proving it and then mail you about it — so a guard job checks
+the three are present and the deploy job doesn't run otherwise. The run goes
+green with a note saying which are missing. A red Deploy therefore means a
+deploy that was meant to happen didn't, which is the only thing it should mean.
 
 Host keys are pinned rather than using `StrictHostKeyChecking=no`, because a
 deploy that accepts any host key is a deploy that hands its SSH key to whatever
