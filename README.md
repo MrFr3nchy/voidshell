@@ -241,8 +241,28 @@ rather than the browser, the same key on another machine is the same dashboard.
 A dashboard is several windows that agree to be one thing. Drag any member and
 the whole group travels; light threads draw between them; the compass reports
 them once, by name. Bind them with the **⁙** handle or from the Dashboards app,
-and save the arrangement — a saved dashboard is just a name and a list of apps,
-so it survives a reload and re-assembles itself on demand.
+and save the arrangement.
+
+**A saved dashboard remembers where things sat**, not just which apps were in
+it. What is stored is each window's offset from the group's own centre, plus
+its size, whether it was collapsed and what shape it was wearing — so reopening
+one rebuilds the formation rather than handing you four windows in four
+arbitrary places.
+
+Offsets rather than absolute positions, for two reasons. A constellation saved
+at the far end of the void is the *same* constellation, and storing where it
+happened to be would make it a different one. And a layout is applied at
+wherever you are looking now, so a dashboard opens in front of you rather than
+behind you if the camera has turned since.
+
+**A layout also records which compositor made it, and one from another world is
+refused.** `anchor` is a point in a 3D world under `three-projected` and a point
+on a plane under `dom-flat`, in units that do not correspond — there is no
+honest conversion between a sphere and a plane. So the dashboard still opens, it
+just opens unarranged and says so, which is what it did before layouts existed.
+A constellation that reopened scattered across the void would be worse than one
+that reopened unarranged, because the second is obviously unarranged and the
+first looks broken.
 
 **The thread is a control.** Click one to harden or loosen that bond, or use the
 window menu. A hard bond *translates*: every member moves by the same vector, so
@@ -900,6 +920,14 @@ optative mood. There are two now.
 **Try it: [`?compositor=dom`](https://mrfr3nchy.github.io/voidshell/?compositor=dom).**
 Same shell, same windows, same files, flat.
 
+![The same shell on the flat backend: three glass panels — a file manager, a live orrery, a clock — over a dark grid instead of a nebula, with the same title bars, the same desktop icon and the same status bar](docs/media/flat.webp)
+
+<sub>Not a screenshot of a different app. That is the same file manager, the
+same orrery still running its own animation, the same window chrome and the
+same `readme.md` on the desktop — over a plane instead of a sphere, with **no
+WebGL context on the page at all**. Nothing in `modules/` knows which one it is
+drawing into.</sub>
+
 ### What the second one proved
 
 Everything shared between them was already written to know nothing about 3D,
@@ -1037,7 +1065,6 @@ about it.
 
 ## What's next
 
-- Constellation *layouts* — remembering relative positions, not just membership.
 - Multi-user: the store is already the only source of truth worth syncing.
 - Syntax highlighting in the file viewer (the language is already detected).
 - Multi-select on the *desktop* (marquee drag, shift-click). The file list has

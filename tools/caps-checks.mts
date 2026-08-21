@@ -281,6 +281,15 @@ section("a module granted nothing");
   throws("state.set is refused", () => ctx.state.set("k", 1), "state.write");
   throws("openSurface is refused", () => ctx.openSurface({ title: "t", render: () => {} }), "surface");
   throws("spawnBody is refused", () => ctx.spawnBody("sun"), "world");
+  // Both halves of the layout pair, because gating only one of them is how a
+  // fence acquires a gap: reading where every window sits is a survey of the
+  // void, and applying a layout moves other modules' windows through it.
+  throws("captureLayout is refused", () => ctx.captureLayout(["a"]), "world");
+  throws(
+    "applyLayout is refused",
+    () => ctx.applyLayout({ backend: "x", slots: [] }, ["a"]),
+    "world"
+  );
   throws("launch is refused", () => ctx.launch("editor"), "launch");
   throws("kill is refused", () => ctx.kill(3), "process");
   throws("notify is refused", () => ctx.notify("hi"), "shell");

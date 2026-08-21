@@ -22,6 +22,12 @@ import {
   type WorkspaceSnapshot,
 } from "./persistence";
 import {
+  captureLayout,
+  layoutFits,
+  placementsFor,
+  type WindowLayout,
+} from "./layout";
+import {
   AUTOSTART_KEY,
   buildDev,
   buildEtc,
@@ -193,6 +199,15 @@ export class Kernel {
    * `[]` and is treated differently — see `grantsFor`.
    */
   private declared = new Map<string, Capability[] | null>();
+  /**
+   * Runtime modules that came from somewhere else, by id.
+   *
+   * Presence is the whole of the fact — see `grantsFor`, where having an origin
+   * at all is what stops "declared nothing" meaning "trusted". The URL is kept
+   * so `/proc/permissions` can say where, since a fence nobody can see the
+   * reason for is a fence people work around.
+   */
+  private origins = new Map<string, string>();
   /** True once boot() has activated everything registered up front. */
   private booted = false;
   private surfaces = new Map<string, Surface>();
@@ -261,6 +276,38 @@ export class Kernel {
   }
 
   /** The current dashboard, as it would be persisted. */
+  /**
+   * Where these windows sit relative to one another.
+   *
+   * The arithmetic is in `kernel/layout.ts` and deliberately not here: it is
+   * the part worth testing exhaustively, and it has no business knowing what a
+   * compositor is. All this does is ask the render backend for placements and
+   * stamp its name on the answer.
+   */
+  captureLayout(ids: string[]): WindowLayout | null {
+    const places = this.compositor.snapshot?.();
+    if (!places) return null;
+    return captureLayout(this.compositor.name, ids, places);
+  }
+
+  /**
+   * Put windows back into a captured arrangement, centred on the view.
+   *
+   * Centred on `focalPoint` rather than on where the group used to be, so a
+   * dashboard opens in front of you rather than behind you if the camera has
+   * turned since it was saved.
+   */
+  applyLayout(layout: WindowLayout, ids: string[]): boolean {
+    if (!layoutFits(layout, this.compositor.name)) return false;
+    const place = this.compositor.placeSurface;
+    if (!place) return false;
+    const centre = this.compositor.focalPoint?.() ?? { x: 0, y: 0, z: 0 };
+    for (const row of placementsFor(layout, ids, centre)) {
+      place.call(this.compositor, row.id, row.place);
+    }
+    return true;
+  }
+
   snapshot(): WorkspaceSnapshot {
     return { state: this.store.snapshot(), fs: this.fs.serializeHome() };
   }
@@ -312,7 +359,18 @@ export class Kernel {
     if (!this.runtime.has(id)) return null;
     const declared = this.declared.get(id);
     if (declared) return new Set(declared);
+    // A module that declared nothing is trusted, which is a defensible default
+    // for a file the user wrote and an indefensible one for a file they
+    // downloaded. Somebody else's code does not get the benefit of the doubt,
+    // and does not get it back by the user leaving strict mode off — that
+    // setting is about the code they wrote.
+    if (this.origins.has(id)) return new Set(SAFE_DEFAULT);
     return this.store.get<boolean>(STRICT_KEY, false) ? new Set(SAFE_DEFAULT) : null;
+  }
+
+  /** Where a runtime module came from, for anything not written here. */
+  origin(id: string): string | null {
+    return this.origins.get(id) ?? null;
   }
 
   /**
@@ -331,6 +389,7 @@ export class Kernel {
         runtime: this.runtime.has(m.id),
         declared: this.declared.get(m.id) ?? null,
         granted: granted ? [...granted] : null,
+        ...(this.origins.has(m.id) ? { origin: this.origins.get(m.id) } : {}),
       };
     });
   }
@@ -412,6 +471,8 @@ export class Kernel {
       unlinkGroup: (id) => this.compositor.unlinkGroup?.(id),
       listGroups: (): GroupInfo[] => this.compositor.listGroups?.() ?? [],
       arrange: (mode: ArrangeMode) => this.compositor.arrange?.(mode),
+      captureLayout: (ids) => this.captureLayout(ids),
+      applyLayout: (layout, ids) => this.applyLayout(layout, ids),
       launch: (id, args) => this.launch(id, args),
       launchAt: (id, x, y) => {
         this.compositor.setSpawnHint?.(x, y);
@@ -481,7 +542,7 @@ export class Kernel {
    * and carrying on would leave the author looking at a launcher tile that
    * runs somebody else's code.
    */
-  install(mod: VoidModule): string {
+  install(mod: VoidModule, opts: { origin?: string } = {}): string {
     const { id, name, kind } = mod.manifest;
     if (this.modules.has(id)) {
       throw new Error(`a module called "${id}" is already registered`);
@@ -496,6 +557,9 @@ export class Kernel {
     this.modules.set(id, mod);
     this.runtime.add(id);
     this.declared.set(id, permissions);
+    // Before activate(), because activate() is handed a context whose grants
+    // are resolved against exactly this.
+    if (opts.origin) this.origins.set(id, opts.origin);
 
     // Before boot, installing is only registering: boot() activates everything
     // in the table, and doing it here as well would activate twice. A module
@@ -525,9 +589,15 @@ export class Kernel {
   /** How an install reads in the journal, so a fence is visible without asking. */
   private grantNote(id: string): string {
     const declared = this.declared.get(id) ?? null;
-    if (declared === null) return " — declared no permissions, running unrestricted";
-    if (!declared.length) return " — asked for nothing";
-    return ` — allowed ${declared.join(", ")}`;
+    const from = this.origins.get(id);
+    if (declared === null) {
+      return from
+        ? ` — from ${from}, declared nothing, fenced to ${SAFE_DEFAULT.join(", ")}`
+        : " — declared no permissions, running unrestricted";
+    }
+    const where = from ? ` from ${from}` : "";
+    if (!declared.length) return `${where} — asked for nothing`;
+    return `${where} — allowed ${declared.join(", ")}`;
   }
 
   /**
@@ -586,6 +656,7 @@ export class Kernel {
     // Dropped with the module: a stale grant would let the *next* module to
     // claim this id inherit permissions its own manifest never asked for.
     this.declared.delete(id);
+    this.origins.delete(id);
 
     this.journal.write("kernel", `uninstalled ${id}`);
     // The settings app redraws off this, and it has just lost some controls.

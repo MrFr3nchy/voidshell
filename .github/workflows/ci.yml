@@ -134,6 +134,27 @@ jobs:
             --format=esm --outfile=workspace-file-checks.mjs --log-level=error
           node workspace-file-checks.mjs
 
+      # Mostly plain data: the centroid-and-offsets arithmetic is pure and lives
+      # apart from the compositor on purpose. The last block runs a real round
+      # trip through the flat backend, because "the numbers are right" and "a
+      # window lands where it was" are different claims.
+      - name: checks — constellation layouts
+        run: |
+          npx esbuild tools/layout-checks.mts --bundle --platform=node \
+            --format=esm --outfile=layout-checks.mjs --external:jsdom \
+            --log-level=error
+          node layout-checks.mjs
+          
+      # No DOM and no network: the fetch path is a URL parser, a size cap and a
+      # set of refusals, and what is asserted is mostly that each refusal names
+      # what was wrong. The fence a fetched module actually gets is checked
+      # against a real kernel in the client smoke run.
+      - name: checks — fetching a module
+        run: |
+          npx esbuild tools/fetch-module-checks.mts --bundle --platform=node \
+            --format=esm --outfile=fetch-module-checks.mjs --log-level=error
+          node fetch-module-checks.mjs
+
       - name: smoke — projects root
         run: |
           npx esbuild tools/projects-root-smoke.mts --bundle --platform=node \
