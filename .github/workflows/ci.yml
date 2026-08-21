@@ -124,6 +124,16 @@ jobs:
             --log-level=error
           node dom-compositor-checks.mjs
 
+      # Plain data, so no DOM at all. Most of what this asserts is not that a
+      # bad file is refused but that the refusal names what was wrong: an
+      # import replaces an entire workspace, which makes it the one operation
+      # where "that didn't work" is an unacceptable answer.
+      - name: checks — workspace file
+        run: |
+          npx esbuild tools/workspace-file-checks.mts --bundle --platform=node \
+            --format=esm --outfile=workspace-file-checks.mjs --log-level=error
+          node workspace-file-checks.mjs
+
       # Mostly plain data: the centroid-and-offsets arithmetic is pure and lives
       # apart from the compositor on purpose. The last block runs a real round
       # trip through the flat backend, because "the numbers are right" and "a

@@ -96,6 +96,34 @@ the way in — and the modules that would otherwise lie about it read
 becomes *start over*, because there is no account to leave and no key to come
 back with.
 
+## A void you can keep
+
+`Settings → System → export this workspace` writes the whole void out as one
+`.json`: every setting, the launcher bindings, the window layout, and every
+file in your home folder. `open a workspace file` reads one back.
+
+Guest sessions are why this exists rather than merely being nice. A guest gets
+the whole shell over a workspace that lives in the tab — which is honest, and
+which means anyone who opens the demo, arranges something and writes a few
+notes loses all of it on close. Browser storage is banned in the client for a
+good reason and this is not the exception that proves it: a file is *better*
+than `localStorage` here, because a file moves to another machine, keeps in a
+repository, and can be handed to somebody else.
+
+**Importing asks first.** Picking a file only reads and validates it; nothing
+is replaced until you take the offer in the notice, which tells you what is in
+the file and how much is about to be discarded. And every refusal names what
+was wrong — an import is the one operation where "that didn't work" is an
+unacceptable answer, because the person is holding the only copy of something.
+Hand it a `package.json` and it says so, by name.
+
+An import is a *reboot*, not a reload: it tears the kernel down and builds
+another one through the same path signing out takes. That is what makes it work
+for a guest at all, since a guest who reloaded would land in a fresh empty void
+having imported nothing — and it is why importing does not sign an account out,
+which would leave you inside a workspace your cookie no longer authorises you
+to save.
+
 ## The mental model
 
 Three things, and they barely know about each other:
