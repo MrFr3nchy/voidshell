@@ -548,19 +548,21 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
   const autostarted = kernel.runAutostart();
 
   // Give the fresh void something to hold so it doesn't open empty.
-  if (!restored && !autostarted) {
-    kernel.launch("chronos");
-    // A guest's first boot is somebody's first sight of the whole project, and
-    // a single clock in an empty void undersells it badly. Files is the second
-    // window because it is the one that shows this is an OS and not a
-    // screensaver: a real tree, with the shell's own source mounted under
-    // /projects. Two, not six — an arc of windows reads as a place, and a wall
-    // of them reads as a mess somebody else made.
-    if (guest) {
-      kernel.launch("workspace");
-      ctx.arrange("arc");
-    }
-  }
+  //
+  // A guest gets Files instead of the clock, because their first boot is
+  // somebody's first sight of the whole project and Files is the window that
+  // shows this is an OS rather than a screensaver: a real tree, a console, and
+  // the shell's own source mounted under /projects.
+  //
+  // One window, not two. An earlier version opened both and arranged them in an
+  // arc, which reads fine as a description and not at all on a screen — the
+  // formations in `arrange` space windows by a fixed angle, so they assume
+  // every window is roughly one size. Files opens at 960px and projects to
+  // ~1170 at a 1600px viewport, so the arc put the clock behind it and the
+  // first thing anyone saw was one window bleeding through another's backdrop
+  // blur. There is no placement that fits both on a laptop; there is a good
+  // one that fits either.
+  if (!restored && !autostarted) kernel.launch(guest ? "workspace" : "chronos");
 
   if (guest) {
     ctx.log("guest session \u2014 nothing is being saved");
