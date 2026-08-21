@@ -7,6 +7,13 @@ no taskbar; you summon a constellation of apps and pick one.
 This is the kernel and its first render backend, built to be torn apart and
 extended. Rename it, gut the modules, replace the compositor — that's the point.
 
+[![The void with the launcher ring open: a shader-lit nebula, a file icon floating in space, and a radial arc of apps rising from the bottom of the screen](docs/media/launcher.webp)](https://mrfr3nchy.github.io/voidshell/)
+
+<sub>**Space** summons the ring. There is no taskbar and no dock — the launcher
+is a constellation you pull up wherever you happen to be looking, and the
+`readme.md` off to the left is a real file on the desktop, which is a real
+directory.</sub>
+
 **[Open the demo →](https://mrfr3nchy.github.io/voidshell/)** — the whole
 client, in your browser, with nothing to install. Not a video: the same kernel,
 the same compositor and the same modules, over a workspace that lives in the
@@ -313,6 +320,13 @@ kill init for the same reason, and reports `EPERM` rather than pretending it
 worked.
 
 ## The system is a filesystem
+
+![The Files window: a directory tree on the left, a file listing in the middle, and a live console on the right, floating as one glass panel in the void](docs/media/void.webp)
+
+<sub>One window, two halves: browse on the left, type on the right, both over the
+same directory. `dev`, `etc`, `proc` and `var/log` are generated per read —
+and on the demo, `projects` is voidshell's own source, so you can read the OS
+from inside itself.</sub>
 
 voidshell already decided that the desktop is a directory. This is that bet
 taken all the way. Processes, devices, configuration and the log are all
