@@ -6,6 +6,7 @@ import {
   HOSTNAME_KEY,
   USER_KEY,
 } from "../../kernel/sysfs";
+import { AUTO, BACKENDS, BACKEND_KEY } from "../../compositor/select";
 import { GUEST_KEY } from "../../kernel/guest";
 import { emptyTrash, TRASH_DIR } from "../../kernel/trash";
 import {
@@ -279,6 +280,42 @@ export const shell: VoidModule = {
       run: (c) => c.emit("shell.signOut"),
     });
 
+    /**
+     * Which world to build.
+     *
+     * Published here rather than by Horizon, which owns the rest of the World
+     * tab, for a reason the contract checks enforce: Horizon is one of the
+     * modules that ships as source and is loaded at runtime, so it may not
+     * import anything at all. The shell is OS furniture and already reaches
+     * into the kernel by design.
+     *
+     * It lands in the World group regardless, because that is where somebody
+     * looking for it would look — settings are a registry, and which module
+     * publishes a knob has never had to match which tab it appears on.
+     *
+     * The one setting here that cannot take effect where it is set: the
+     * compositor is chosen once, before the kernel is constructed. So changing
+     * it is a promise about the next boot, which is worth saying with a button
+     * rather than a footnote nobody reads.
+     */
+    ctx.defineSetting({
+      key: BACKEND_KEY,
+      label: "render backend",
+      kind: "select",
+      group: "World",
+      order: 0,
+      hint: "the flat one needs no WebGL \u2014 takes effect when you reload",
+      default: AUTO,
+      options: BACKENDS,
+    });
+
+    const offBackend = ctx.state.subscribe(BACKEND_KEY, () => {
+      ctx.notify("Render backend changed.", {
+        kind: "info",
+        action: { label: "reload now", run: () => location.reload() },
+      });
+    });
+
     ctx.defineSetting({
       key: "system.reset",
       label: "wipe everything and start over",
@@ -393,6 +430,7 @@ export const shell: VoidModule = {
 
     const blip = makeBlipper(() => ctx.state.get<boolean>(SOUND_KEY, false));
     const offs = [
+      offBackend,
       ctx.on("surface.opened", () => blip(660, 0.05)),
       ctx.on("surface.closed", () => blip(220, 0.06)),
       ctx.on("system.notify", () => blip(880, 0.03)),

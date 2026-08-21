@@ -17,6 +17,7 @@ import { showContextMenu } from "../ui/contextMenu";
 import {
   GROUP_COLORS,
   RESIZE_AXES,
+  closeSurfaceById,
   createPanelChrome,
   panelMenuItems,
   type ResizeAxis,
@@ -2135,12 +2136,6 @@ export class ThreeCompositor implements Compositor {
 }
 
 /* ---------------------------------------------------------------- */
-
-function closeSurfaceById(id: string): void {
-  window.dispatchEvent(
-    new CustomEvent("voidshell:close-surface", { detail: { id } })
-  );
-}
 
 /** Unit vector for a yaw/pitch pair, matching the camera's YXZ convention. */
 function dirFromYawPitch(yaw: number, pitch: number): THREE.Vector3 {

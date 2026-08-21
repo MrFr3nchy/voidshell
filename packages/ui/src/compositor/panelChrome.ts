@@ -5,6 +5,24 @@ import { FORMS, PLAIN } from "./surfaceForms";
 export const GROUP_COLORS = ["#4fe3d0", "#c05cff", "#ff8a5c", "#7ea8ff", "#5fd6a8"];
 
 /**
+ * Ask the shell to close a window.
+ *
+ * A compositor owns the chrome and therefore owns the close button, but it does
+ * not own the surface table — the kernel does, and it is the only thing that
+ * can run the module's teardown. So the button publishes an intent and
+ * `main.ts` routes it home; the same split as the power veil and the factory
+ * reset.
+ *
+ * Here rather than private to a backend because every compositor needs it and
+ * none of them should each grow their own copy. It was private to the Three
+ * one, which made it the single line the flat backend could not have been
+ * written without reaching into another compositor's file.
+ */
+export function closeSurfaceById(id: string): void {
+  window.dispatchEvent(new CustomEvent("voidshell:close-surface", { detail: { id } }));
+}
+
+/**
  * The glass shell around a module's DOM.
  *
  * This used to be dead code. `ThreeCompositor.mountSurface` built its own panel
