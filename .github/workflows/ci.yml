@@ -123,6 +123,17 @@ jobs:
             --format=esm --outfile=dom-compositor-checks.mjs --external:jsdom \
             --log-level=error
           node dom-compositor-checks.mjs
+      # The property that matters is that the text survives: a highlighter is a
+      # pure re-presentation, so the concatenated textContent of what comes out
+      # must equal what went in. The last block runs every source file in the
+      # repository through it and asserts exactly that, which is what lets the
+      # tokenizer afford to be regexes.
+      - name: checks — syntax highlighter
+        run: |
+          npx esbuild tools/highlight-checks.mts --bundle --platform=node \
+            --format=esm --outfile=highlight-checks.mjs --external:jsdom \
+            --log-level=error
+          node highlight-checks.mjs
 
       # Plain data, so no DOM at all. Most of what this asserts is not that a
       # bad file is refused but that the refusal names what was wrong: an
