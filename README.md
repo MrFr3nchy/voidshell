@@ -892,6 +892,14 @@ optative mood. There are two now.
 **Try it: [`?compositor=dom`](https://mrfr3nchy.github.io/voidshell/?compositor=dom).**
 Same shell, same windows, same files, flat.
 
+![The same shell on the flat backend: three glass panels — a file manager, a live orrery, a clock — over a dark grid instead of a nebula, with the same title bars, the same desktop icon and the same status bar](docs/media/flat.webp)
+
+<sub>Not a screenshot of a different app. That is the same file manager, the
+same orrery still running its own animation, the same window chrome and the
+same `readme.md` on the desktop — over a plane instead of a sphere, with **no
+WebGL context on the page at all**. Nothing in `modules/` knows which one it is
+drawing into.</sub>
+
 ### What the second one proved
 
 Everything shared between them was already written to know nothing about 3D,
