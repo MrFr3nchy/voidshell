@@ -3,6 +3,7 @@ import { basename } from "../../kernel/vfs";
 import { tildify } from "../../kernel/fsutil";
 import { extensionOf } from "../../kernel/filetypes";
 import { createProgram, isRunnable, type Program } from "../../runtime/program";
+import { highlight } from "./highlight";
 import { renderMarkdown } from "./markdown";
 import { openStartPane, rememberRecent } from "./start";
 import { isModulePath, requestReload } from "../devkit/protocol";
@@ -150,7 +151,13 @@ export const editor: VoidModule = {
           const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
           const prose = ext === "md" || ext === "txt";
           pre.className = `ed-pre${prose ? " wrap" : ""}`;
-          pre.textContent = text;
+          // Colour where there is something to colour, plain text otherwise.
+          // `highlight` answers null for an unknown language and for anything
+          // too large to be worth a span per token, and null is deliberately
+          // the same single assignment the viewer always did.
+          const lit = prose ? null : highlight(text, ext);
+          if (lit) pre.appendChild(lit);
+          else pre.textContent = text;
           wrap.append(gutter, pre);
         } else {
           ta = document.createElement("textarea");

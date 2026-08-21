@@ -997,6 +997,35 @@ mistake, and the calendar writes one per day into `~/notes/journal`. Existing
 notes are migrated into files on first boot and the old keys are left alone —
 tidying up a storage model is not a reason to lose what somebody wrote.
 
+### Source, coloured
+
+A read-only file opens highlighted. It is ~300 lines in
+`modules/editor/highlight.ts` rather than a dependency, for the same reason the
+Markdown renderer is: Prism and highlight.js are each larger than this module
+directory, for a feature whose job is making a source file readable in a
+window.
+
+It is one regex alternation per language, not a parser, and it will get things
+wrong a parser would not. That is the right trade for a *viewer* — being wrong
+about a colour costs a moment, being a parser costs a dependency and a language
+server's worth of edge cases. Where it cannot do a decent job it colours
+nothing, which is what every file did before.
+
+Three hues, all of them theme variables: strings ember, keywords magenta,
+numbers and constants cyan, comments dimmed *below* the body text rather than
+across from it — the thing a reader scanning code wants is for the prose to get
+out of the way, not to compete in a new colour. Aurora repaints the shell by
+rewriting those variables, and a highlighter with its own palette would be the
+one surface that ignored the theme.
+
+Like the Markdown renderer it builds nodes and sets `textContent`, never
+`innerHTML`. The files it colours come from a scan of whatever is on the
+machine's disk, so "the input is trusted" is not a claim worth making. The
+check that matters is in `tools/highlight-checks.mts`: **every source file in
+the repository goes through it and must come back character-for-character
+identical.** A highlighter that drops a line looks like a corrupted file, not
+like a colouring mistake.
+
 ### Markdown, rendered
 
 The editor previews `.md` (⌘P, or the button), and read-only Markdown — every
@@ -1011,7 +1040,6 @@ about it.
 
 - Constellation *layouts* — remembering relative positions, not just membership.
 - Multi-user: the store is already the only source of truth worth syncing.
-- Syntax highlighting in the file viewer (the language is already detected).
 - Multi-select on the *desktop* (marquee drag, shift-click). The file list has
   it; desktop icons are still one at a time.
 - Undo for *edits*. Deletions are recoverable from the trash now, but a bad

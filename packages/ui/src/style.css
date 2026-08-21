@@ -996,6 +996,45 @@ body.vs-dropping #void::after {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/*
+ * Syntax colours.
+ *
+ * Every one is a theme variable, never a literal — Aurora repaints the shell
+ * by rewriting these, and a highlighter with its own palette would be the one
+ * surface that ignored the theme. Three hues is the whole scheme, which is
+ * deliberate: the void is already a lot to look at, and a viewer that turns a
+ * source file into a fruit salad is harder to read than one that leaves it
+ * alone.
+ *
+ * Comments go *down* rather than across — dimmed to well under the body text,
+ * because the one thing a reader scanning code wants is for prose to get out
+ * of the way of the code, not compete with it in a new colour.
+ */
+.ed-pre .hl-com {
+  color: var(--text-dim);
+  opacity: 0.72;
+  font-style: italic;
+}
+.ed-pre .hl-str {
+  color: var(--ember);
+}
+.ed-pre .hl-num,
+.ed-pre .hl-con {
+  color: var(--cyan);
+}
+.ed-pre .hl-kw {
+  color: var(--magenta);
+}
+/* Structure rather than syntax: a config key, an element, an attribute. */
+.ed-pre .hl-key,
+.ed-pre .hl-tag {
+  color: var(--cyan);
+}
+.ed-pre .hl-att {
+  color: var(--magenta);
+  opacity: 0.85;
+}
 .ed-bar {
   display: flex;
   align-items: center;
