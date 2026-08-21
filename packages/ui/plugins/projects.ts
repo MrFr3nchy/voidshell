@@ -285,8 +285,42 @@ export function voidshellProjects(opts: ProjectsPluginOptions = {}): Plugin {
           `mounted ${snap.projects.length} projects from ${root}, ` +
             `${snap.entries.length} entries, ${kb}KB text`
         );
-        return `const snapshot = ${JSON.stringify(snap)};
-export function loadProjects() { return Promise.resolve(snapshot); }`;
+        /**
+         * Emitted as a JSON asset, not inlined into the bundle.
+         *
+         * It used to be a `const snapshot = {...}` in this module, which put
+         * the entire scanned source tree in the entry chunk: 3.5MB raw and
+         * ~970KB gzipped, roughly four times the size of the shell itself, all
+         * of it on the critical path before a single pixel is drawn. Nothing
+         * needs it until a window asks for a file in /projects.
+         *
+         * A separate *asset* rather than a dynamic import chunk, for two
+         * reasons. JSON.parse is substantially faster than the engine parsing
+         * an equivalent object literal, and a file whose contents change on
+         * every scan should not share a cache entry with a bundle that mostly
+         * does not.
+         *
+         * `ROLLUP_FILE_URL_` resolves against the configured `base`, which is
+         * what keeps this working on a project page served from a
+         * subdirectory rather than 404ing next to a bundle that loaded fine.
+         */
+        const ref = this.emitFile({
+          type: "asset",
+          name: "projects.json",
+          source: JSON.stringify(snap),
+        });
+        return `const url = import.meta.ROLLUP_FILE_URL_${ref};
+const EMPTY = { generatedAt: "", root: "", projects: [], entries: [], embeddedBytes: 0 };
+export function loadProjects() {
+  return fetch(url)
+    .then((r) => { if (!r.ok) throw new Error("projects scan failed: " + r.status); return r.json(); })
+    .catch((err) => {
+      // Never fatal. A shell without /projects is a shell; a shell that
+      // refuses to boot because a side mount is missing is a bug.
+      console.warn("[voidshell] /projects unavailable:", err);
+      return EMPTY;
+    });
+}`;
       }
 
       // Dev: fetch live so disk edits appear on reload.
