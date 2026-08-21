@@ -32,12 +32,27 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 /**
+ * A way into the void, with or without an account behind it.
+ *
+ * `guest` is the difference between a dashboard that is saved and one that
+ * lives in the tab, and it is carried out of here rather than inferred later
+ * because this screen is the only place that knows which door was used.
+ */
+export interface Session {
+  workspace: WorkspaceSnapshot;
+  guest: boolean;
+}
+
+/** An empty dashboard, for a session that starts from nothing. */
+const EMPTY: WorkspaceSnapshot = { state: {}, fs: null };
+
+/**
  * Blocks until there is a session, and answers with the dashboard behind it.
  *
  * Resolves exactly once. Everything the shell needs to boot is in the return
  * value, so the caller never has to ask the server a second time.
  */
-export function runLockScreen(initial?: { unreachable: boolean }): Promise<WorkspaceSnapshot> {
+export function runLockScreen(initial?: { unreachable: boolean }): Promise<Session> {
   return new Promise((resolve) => {
     const veil = el("div", "lock-veil");
     const card = el("div", "lock-card");
@@ -45,10 +60,29 @@ export function runLockScreen(initial?: { unreachable: boolean }): Promise<Works
     document.body.appendChild(veil);
     requestAnimationFrame(() => veil.classList.add("up"));
 
-    const done = (workspace: WorkspaceSnapshot) => {
+    const done = (workspace: WorkspaceSnapshot, guest = false) => {
       veil.classList.remove("up");
       window.setTimeout(() => veil.remove(), 420);
-      resolve(workspace);
+      resolve({ workspace, guest });
+    };
+
+    /**
+     * The way in for somebody who has not decided yet.
+     *
+     * Offered on both screens, and for different reasons. On the locked one it
+     * is the answer to being asked for a credential before being shown what it
+     * unlocks. On the unreachable one it is the difference between a dead page
+     * and a working shell — nothing behind this screen needs the server except
+     * the saving, and refusing to boot over that means an outage costs the user
+     * the whole OS rather than one of its properties.
+     */
+    const guestOffer = (label: string, hint: string) => {
+      const wrap = el("div", "lock-guest");
+      const btn = el("button", "lock-btn lock-btn-ghost", label);
+      btn.type = "button";
+      btn.onclick = () => done(EMPTY, true);
+      wrap.append(btn, el("div", "lock-guest-hint", hint));
+      return wrap;
     };
 
     /* ---------------- the server is not answering ---------------- */
@@ -73,6 +107,13 @@ export function runLockScreen(initial?: { unreachable: boolean }): Promise<Works
         void probe();
       };
       card.appendChild(retry);
+      card.appendChild(
+        guestOffer(
+          "go in without it",
+          "The whole shell runs from here — only the saving needs the server. " +
+            "Anything you do is gone when the tab closes."
+        )
+      );
     };
 
     /**
@@ -178,6 +219,13 @@ export function runLockScreen(initial?: { unreachable: boolean }): Promise<Works
         }
       };
       card.appendChild(create);
+      card.appendChild(
+        guestOffer(
+          "look around first",
+          "A real session with nothing behind it \u2014 every app, every window, " +
+            "your own files. It just isn\u2019t saved when the tab closes."
+        )
+      );
       card.appendChild(dismissibleWarning());
 
       input.focus();

@@ -56,6 +56,17 @@ export default defineConfig(({ mode }) => {
   const root = createRootHandle(resolved);
 
   return {
+    /**
+     * Where the built site will be served from.
+     *
+     * `/` for a droplet, which owns its domain. A project page on GitHub is
+     * served from a subdirectory, and every asset URL Vite writes is absolute
+     * — so without this the demo loads index.html and then 404s on its own
+     * bundle. Read from the environment rather than hardcoded because the two
+     * deploy targets disagree and both are real.
+     */
+    base: env.VOIDSHELL_BASE ?? "/",
+
     // Mounts the project directories at /projects inside the shell: live
     // during dev, frozen into the bundle at build.
     // voidshellHost is `apply: "serve"` — it exists only while the dev server

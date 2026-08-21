@@ -7,6 +7,11 @@ no taskbar; you summon a constellation of apps and pick one.
 This is the kernel and its first render backend, built to be torn apart and
 extended. Rename it, gut the modules, replace the compositor — that's the point.
 
+**[Open the demo →](https://mrfr3nchy.github.io/voidshell/)** — the whole
+client, in your browser, with nothing to install. Not a video: the same kernel,
+the same compositor and the same modules, over a workspace that lives in the
+tab. See [Guest sessions](#guest-sessions).
+
 ## Run it
 
 ```bash
@@ -14,9 +19,10 @@ npm install
 npx voidshell dev      # API on :3000, client on :5173, one Ctrl-C stops both
 ```
 
-Dashboards live on the server now, so the client alone gets you a lock screen
-and nothing behind it. `voidshell dev` runs both halves against a throwaway
-database in `.voidshell-dev/`; `--fresh` empties it, `--api-only` skips Vite.
+Dashboards live on the server, so the client alone gets you a lock screen —
+with *look around first* on it, which opens a real session that simply isn't
+saved. `voidshell dev` runs both halves against a throwaway database in
+`.voidshell-dev/`; `--fresh` empties it, `--api-only` skips Vite.
 
 `npm run dev` still starts just the client if that's what you want.
 
@@ -57,6 +63,38 @@ two commands to run it.
 Nothing is ever lost. Any window that drifts out of view puts a chevron on the
 edge of the screen pointing at it — click it and the void rotates until you're
 facing it again. Constellations report as one destination instead of four.
+
+## Guest sessions
+
+The lock screen used to be the whole story: no account, no void. Which meant
+the first thing anyone was asked to do was create a credential to find out what
+they were creating it for — and it is the reason this could not be linked to.
+
+A guest session is not a demo mode. It is the kernel, the compositor and every
+module, over a `WorkspaceHost` that keeps the snapshot in the tab instead of on
+the server. Nothing is stubbed, nothing is read-only, and the code path is the
+one real sessions take; the only difference is where the save goes.
+
+It is offered in three places, for three different reasons:
+
+- **On the key screen**, as *look around first* — the answer to being asked for
+  a credential before being shown what it unlocks.
+- **On the can't-reach-the-server screen**, as *go in without it*. Nothing
+  behind that screen needs the server except the saving, so refusing to boot
+  over an outage costs you the whole OS rather than one of its properties.
+- **As a whole build.** `VITE_VOIDSHELL_GUEST=1 npm run build` produces a
+  bundle that never probes `/api` at all — that's what's on the demo link, a
+  static site with no server half to talk to.
+
+**It is not written down anywhere, on purpose.** `localStorage` would survive a
+reload, and browser storage is banned in the client by a CI guard for a reason
+worth keeping: a dashboard that lives in the browser is a dashboard that
+doesn't follow the account. Rather than carve an exception into that rule for
+the one case where it would be convenient, a guest session says what it is on
+the way in — and the modules that would otherwise lie about it read
+`tmp.sys.guest` and change what they call things. The shell's *sign out*
+becomes *start over*, because there is no account to leave and no key to come
+back with.
 
 ## The mental model
 

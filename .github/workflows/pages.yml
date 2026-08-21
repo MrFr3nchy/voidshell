@@ -1,0 +1,83 @@
+name: Demo
+
+# Publishes a guest-mode build to GitHub Pages.
+#
+# The shell has never been linkable. `npm run dev` alone gets you a lock screen
+# and a void it will not open, so the only way to see any of this was to clone
+# it, install it and run two servers — which is a lot to ask of somebody
+# deciding whether it is worth cloning.
+#
+# What ships here is not a screenshot or a video. It is the whole client: the
+# same kernel, the same Three.js compositor, the same nineteen modules, over a
+# workspace that lives in the tab. The only thing missing is the half that
+# saves it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages needs to be enabled on the repository with "GitHub Actions" as the
+# source. Until it is, deploy-pages fails with a 404 that does not say so.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One at a time, and never cancel a deploy midway: Pages serves whatever landed
+# last, so an interrupted upload is a half-published site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Into a subdirectory on purpose. /projects is a scan of the directory
+      # *containing* the checkout, so this is what makes the demo mount
+      # voidshell's own source and let you read the OS from inside itself.
+      - uses: actions/checkout@v4
+        with:
+          path: voidshell
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: voidshell/package-lock.json
+
+      - run: npm ci
+        working-directory: voidshell
+
+      - name: build the guest bundle
+        working-directory: voidshell
+        env:
+          # Skips the /api probe entirely. There is no API half on Pages, so
+          # asking is a request with one possible answer and a "can't reach the
+          # server" screen to hear it.
+          VITE_VOIDSHELL_GUEST: "1"
+          # A project page lives under /<repo>/, and Vite writes absolute asset
+          # URLs. Without this the page loads and then 404s on its own bundle.
+          VOIDSHELL_BASE: /${{ github.event.repository.name }}/
+        run: npm run build
+
+      # Vite's output directory is `assets`, so Jekyll would not eat anything
+      # today. It is one empty file against a class of bug that presents as a
+      # missing asset with no explanation.
+      - run: touch voidshell/packages/ui/dist/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: voidshell/packages/ui/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

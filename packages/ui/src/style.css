@@ -3037,6 +3037,35 @@ body.vs-dropping #void::after {
   background: transparent;
   color: var(--text-dim);
 }
+/*
+ * The way in for somebody who hasn't decided yet.
+ *
+ * Set below the two real choices and separated by a rule, because it is not a
+ * third peer option — it is the answer to "what am I creating an account for",
+ * and it should read like an aside rather than compete with the primary action.
+ */
+.lock-guest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.lock-guest .lock-btn {
+  width: auto;
+  padding: 6px 14px;
+  font-size: 11px;
+}
+.lock-guest-hint {
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  text-align: center;
+  opacity: 0.75;
+  max-width: 34ch;
+}
 .lock-error {
   font-size: 11px;
   line-height: 1.6;

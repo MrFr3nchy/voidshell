@@ -1,3 +1,5 @@
+import type { NotifyOptions } from "./types";
+
 /**
  * Where a dashboard lives between sessions.
  *
@@ -36,6 +38,25 @@ export interface WorkspaceHost {
    * the points where "later" isn't available — signout, tab hidden, unload.
    */
   flush(): Promise<void>;
+}
+
+/**
+ * What the *shell* needs from a host, on top of what the kernel needs.
+ *
+ * The kernel only ever calls `save` and `flush`, and deliberately knows
+ * nothing else. `main.ts` calls two more — it hands the host real toasts once
+ * there is a toast system, and it takes one last shot at persisting from
+ * `beforeunload` — so the thing it holds is this, not `WorkspaceHost`. Stated
+ * as an interface so a second implementation is a type error away from being
+ * complete rather than a runtime error away.
+ */
+export interface ShellHost extends WorkspaceHost {
+  /** Swapped in once the kernel exists and notices can actually be shown. */
+  setNotifier(
+    notify: (message: string, opts: "warn" | "good" | NotifyOptions) => void
+  ): void;
+  /** Best effort from `beforeunload`, which cannot await anything. */
+  flushOnUnload(): void;
 }
 
 /**
