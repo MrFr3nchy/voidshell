@@ -13,6 +13,13 @@ import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { ShellHost } from "./kernel/persistence";
 import { GUEST_KEY, GuestWorkspaceHost } from "./kernel/guest";
 import {
+  ImportError,
+  parseWorkspaceFile,
+  serialiseWorkspace,
+  summarise,
+  workspaceFilename,
+} from "./kernel/workspaceFile";
+import {
   BACKEND_KEY,
   chooseBackend,
   createCompositor,
@@ -71,7 +78,26 @@ const GUEST_ONLY = import.meta.env?.VITE_VOIDSHELL_GUEST === "1";
  * the difference between a lock screen and a login form drawn over a running
  * OS that has already leaked what it contains.
  */
+/**
+ * A workspace waiting to be booted into, set by an import.
+ *
+ * Importing replaces everything, which is a soft reboot however it is done —
+ * hydrating a running kernel would mean settings subscribers firing under open
+ * windows that hold files about to be replaced. The shell already has a clean
+ * teardown-and-rebuild path, because signing out is one, so an import sets this
+ * and signs out; the loop in `main` comes straight back with the new workspace.
+ *
+ * That also makes import work for a *guest*, which a reload cannot: a guest who
+ * reloaded would land in a fresh empty void, having imported nothing.
+ */
+let pendingImport: Session | null = null;
+
 async function openSession(): Promise<Session> {
+  if (pendingImport) {
+    const next = pendingImport;
+    pendingImport = null;
+    return next;
+  }
   if (GUEST_ONLY) return { workspace: { state: {}, fs: null }, guest: true };
   try {
     return { workspace: (await api.session()).workspace, guest: false };
@@ -278,6 +304,79 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
   ctx.on("shell.reopenWindow", () => kernel.reopenLast());
   ctx.on("shell.signOut", () => void signOut());
 
+  /**
+   * Write this void out as a file.
+   *
+   * `saveSession` first: window positions live in the compositor until
+   * something asks for them, so an export taken without it describes the
+   * arrangement as of the last heartbeat rather than the one on screen.
+   */
+  ctx.on("shell.exportWorkspace", () => {
+    kernel.saveSession();
+    const snapshot = kernel.snapshot();
+    const blob = new Blob([serialiseWorkspace(snapshot)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = workspaceFilename();
+    a.click();
+    // Revoked on the next turn rather than immediately: the click is
+    // synchronous but the fetch the browser starts for it is not.
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+
+    const { files, settings } = summarise(snapshot);
+    ctx.notify(`exported ${files} file${files === 1 ? "" : "s"} and ${settings} settings`, "good");
+  });
+
+  /**
+   * Read one back.
+   *
+   * Two steps on purpose. Picking a file only *reads* it; nothing is replaced
+   * until the notice's offer is taken, and the notice says what is in the file
+   * and what is about to be lost. An import is the most destructive thing the
+   * shell can do that isn't called "wipe everything", and it is the one where a
+   * misclick costs somebody a workspace.
+   */
+  ctx.on("shell.importWorkspace", () => {
+    const picker = document.createElement("input");
+    picker.type = "file";
+    picker.accept = "application/json,.json";
+    picker.addEventListener("change", () => {
+      const file = picker.files?.[0];
+      if (!file) return;
+      void file
+        .text()
+        .then((text) => {
+          const parsed = parseWorkspaceFile(text);
+          const incoming = summarise(parsed.workspace);
+          const current = summarise(kernel.snapshot());
+          ctx.notify(
+            `“${file.name}” holds ${incoming.files} file${incoming.files === 1 ? "" : "s"} ` +
+              `and ${incoming.settings} settings. Replacing this void discards ` +
+              `${current.files} file${current.files === 1 ? "" : "s"} here.`,
+            {
+              kind: "warn",
+              action: {
+                label: "replace this void",
+                run: () => {
+                  pendingImport = { workspace: parsed.workspace, guest };
+                  // A reboot, not a logout — see signOut.
+                  void signOut(false);
+                },
+              },
+            }
+          );
+        })
+        .catch((err: unknown) => {
+          // The message is the whole point: an import that fails without
+          // saying why leaves somebody holding their only copy of something
+          // and no idea what is wrong with it.
+          ctx.notify(err instanceof ImportError ? err.message : `Couldn't read that file: ${String(err)}`, "warn");
+        });
+    });
+    picker.click();
+  });
+
   ctx.on("shell.factoryReset", () => {
     resetting = true;
     // Awaited: the reload would otherwise outrun the write and leave the old
@@ -477,7 +576,17 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
   );
   const heartbeat = window.setInterval(save, 15000);
 
-  async function signOut(): Promise<void> {
+  /**
+   * End this session and let the loop in `main` start the next one.
+   *
+   * `endSession` separates the two callers, and the distinction is not
+   * cosmetic. Signing out means "end my session on the server". An *import*
+   * means "throw this kernel away and build another one" — a local reboot,
+   * with the account left exactly as it was. Calling `api.signout` for an
+   * import would leave somebody imported into a workspace their cookie no
+   * longer authorises them to save.
+   */
+  async function signOut(endSession = true): Promise<void> {
     // Order matters. Flush first, because after signout the session is gone
     // and the write would 401 into a warning about losing work that was in
     // fact already lost.
@@ -487,9 +596,9 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
       console.warn("[voidshell] could not save before signing out:", err);
     }
     try {
-      // Nothing to end server-side, and the request would 401 into a warning
-      // about a session that never existed.
-      if (!guest) await api.signout();
+      // Nothing to end server-side for a guest, and the request would 401 into
+      // a warning about a session that never existed.
+      if (endSession && !guest) await api.signout();
     } catch (err) {
       // The local teardown happens regardless: a user who asked to sign out
       // should not be left staring at their dashboard because a request failed.

@@ -316,6 +316,40 @@ export const shell: VoidModule = {
       });
     });
 
+    /**
+     * A void you can keep.
+     *
+     * Above the destructive pair below on purpose: the answer to "I am about
+     * to wipe this" and to "this session dies with the tab" is the same
+     * button, and it should be the one you meet first.
+     *
+     * A file rather than browser storage, and not only because the client is
+     * forbidden browser storage — a file is genuinely better here. It moves to
+     * another machine, keeps in a repository, and can be handed to somebody
+     * else, none of which localStorage does.
+     */
+    ctx.defineSetting({
+      key: "system.export",
+      label: guest ? "save this void to a file" : "export this workspace",
+      hint: guest
+        ? "the only way to keep a guest session \u2014 settings, layout and every file"
+        : "settings, layout and every file in your home folder, as one .json",
+      kind: "action",
+      group: "System",
+      order: 40,
+      run: (c) => c.emit("shell.exportWorkspace"),
+    });
+
+    ctx.defineSetting({
+      key: "system.import",
+      label: "open a workspace file",
+      hint: "replaces everything here \u2014 it asks before it does",
+      kind: "action",
+      group: "System",
+      order: 41,
+      run: (c) => c.emit("shell.importWorkspace"),
+    });
+
     ctx.defineSetting({
       key: "system.reset",
       label: "wipe everything and start over",
