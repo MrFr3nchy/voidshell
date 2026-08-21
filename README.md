@@ -490,8 +490,20 @@ a real read-only mount does, rather than silently no-op'ing.
 
 - **dev** — serves a live scan at `/__vs/projects.json`, so editing a file on
   disk shows up in the shell on reload.
-- **build** — freezes the same scan into the bundle, because the deployed site
-  is static and has no disk to read.
+- **build** — writes the same scan to a JSON asset beside the bundle, because
+  the deployed site is static and has no disk to read.
+
+It used to be *inlined into* the bundle, as a `const snapshot = {...}` in the
+virtual module. That put the whole scanned tree in the entry chunk — 3.5MB raw,
+~970KB gzipped, about four times the size of the shell itself — and every byte
+of it sat on the critical path in front of the first pixel. Splitting it out
+took the entry chunk from **4.7MB to 1.2MB** (1,320KB → 349KB gzipped), and the
+shell now fetches it while it is building a WebGL context rather than before.
+
+An *asset* rather than a dynamic-import chunk, for two reasons: `JSON.parse` is
+substantially faster than the engine parsing an equivalent object literal, and a
+file whose contents change on every scan should not share a cache entry with a
+bundle that mostly does not.
 
 Text files are embedded whole under a 128KB cap. Binaries are indexed by name
 and size but never embedded — that's what keeps a 27MB asset folder from

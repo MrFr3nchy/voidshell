@@ -157,20 +157,42 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
     // by devkit like anything else the user wrote — see tools/emit-modules.mts.
     .register(copilot);
 
-  // Mount the real project directory. This is deliberately not fatal: if the
-  // scan is unavailable the shell still boots, just without /projects.
-  try {
-    const snapshot = await loadProjects();
-    if (snapshot.projects.length) {
-      kernel.fs.mount("/projects", buildProjectsTree(snapshot));
-      console.info(
-        `[voidshell] mounted /projects — ${snapshot.projects.length} projects, ` +
-          `${snapshot.entries.length} entries`
-      );
-    }
-  } catch (err) {
+  /**
+   * Start fetching the project scan, but do not wait for it here.
+   *
+   * This used to be awaited before `boot()`, which made a source tree the
+   * first thing between the user and a compositor — and on the demo that tree
+   * is voidshell's own, several megabytes of it. Nothing up to the point where
+   * a session is restored needs /projects, so the download now overlaps
+   * building a WebGL context and activating nineteen modules instead of
+   * queueing in front of them.
+   *
+   * Deliberately not fatal, exactly as before: a shell without /projects is
+   * still a shell, and one that refuses to boot over a missing side mount is a
+   * bug. Caught here rather than at the await so a rejection can never race
+   * ahead of its handler and surface as an unhandled rejection.
+   */
+  const projectsScan = loadProjects().catch((err: unknown) => {
     console.warn("[voidshell] /projects not mounted:", err);
-  }
+    return null;
+  });
+
+  /**
+   * Graft it into the tree, whenever it turns up.
+   *
+   * Mounting fires the filesystem's change event, so a Files window that
+   * opened before this resolves picks /projects up on its own rather than
+   * showing a tree it will never refresh.
+   */
+  const mountProjects = async (): Promise<void> => {
+    const snapshot = await projectsScan;
+    if (!snapshot?.projects.length) return;
+    kernel.fs.mount("/projects", buildProjectsTree(snapshot));
+    console.info(
+      `[voidshell] mounted /projects — ${snapshot.projects.length} projects, ` +
+        `${snapshot.entries.length} entries`
+    );
+  };
 
   // Panels emit a DOM event when their close button is hit; route it home.
   window.addEventListener("voidshell:close-surface", (e) => {
@@ -378,6 +400,12 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
   // that finishes asks the kernel for a module it does not have yet, and the
   // user's first sight of the shell is `no module "chronos"`.
   await whenReady(ctx);
+
+  // Before anything reopens a window. A restored editor holding a file under
+  // /projects, or an autostart entry pointing at one, has to find it there —
+  // this is the last moment that is true, which is why the wait is here and
+  // not next to the fetch.
+  await mountProjects();
 
   const restore = ctx.state.get<boolean>(RESTORE_KEY, true);
   let restored = false;
