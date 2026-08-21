@@ -384,6 +384,56 @@ opens.** Nothing listens to `module.installed`, and nothing needs to. The
 launcher *ring* is the exception, and correctly so — its nodes are bound slots,
 not a listing, so a new module shows up there once you bind it to one.
 
+### Fetching somebody else's
+
+`⌘K → fetch a module from a URL` downloads one into `~/modules` and **opens it
+in the editor**. Nothing is evaluated and nothing is installed; the Reload
+button that has always been how you load a module is still how you load this
+one.
+
+That is the whole design, and the reason is worth saying. Copying a module in
+by hand was tedious — and it was also the entire review step. You read a module
+while you paste it. This removes the tedium and keeps the review, rather than
+removing both and calling it an app store.
+
+It is not a package manager. No registry, no signature, no integrity hash, and
+nothing here can tell a useful module from a hostile one. What it does do is
+refuse the obvious mistakes before touching the network:
+
+| | |
+|---|---|
+| a GitHub `/blob/` URL | rewritten to `raw.githubusercontent.com` |
+| a scheme that isn't http(s) | refused, with a note that a local file already works |
+| a path with no `.js`/`.mjs`/`.ts`/`.mts` | refused, listing what would work |
+| a name that could escape `~/modules` | flattened — `../../etc/passwd` cannot be a filename |
+| an HTML page | caught, and told to use the raw link |
+| over 512KB | refused: a bundle is not a module |
+
+Every refusal names what was wrong. Somebody pasting a link believes in it, and
+"invalid URL" tells them nothing about which part this disagrees with.
+
+### A fetched module is never trusted
+
+A runtime module that declares no permissions is trusted (see
+[PERMISSIONS.md](PERMISSIONS.md)). That is a defensible default for a file you
+wrote and an indefensible one for a file you downloaded, so the kernel records
+where a module's source came from, and **having an origin is what stops an
+absent `permissions` list meaning "trusted"** — it is held to `surface`
+whatever the strict-mode setting says.
+
+An origin decides what an *absent* list means. It does not override one that is
+present: a fetched module declaring `["surface", "fs.read"]` gets exactly that.
+
+The practical consequence, stated rather than discovered: most modules publish
+a setting or a command in `activate`, which needs `shell`. So a fetched module
+that declared nothing does not merely run with less — it **refuses to install**,
+with an error naming the capability and where to add it. That is the intended
+pressure. **If you write a module for other people, declare what it needs.**
+
+The fence covers the kernel — the filesystem, the window table, the settings
+registry. It is not a sandbox and does not cover `fetch` or `document`. Reading
+the thing is still the real defence, which is why the editor opens.
+
 ### The stock modules
 
 Nineteen modules — the ambient apps and the accessories — **ship as source, not

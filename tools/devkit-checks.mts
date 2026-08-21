@@ -389,6 +389,112 @@ export async function devkitChecks(
     check("the buffer was saved before loading", ctx.fs.read(modPath) === "export default { oops");
   }
 
+  /* ---------------- a module that came from somewhere else ---------------- */
+
+  /**
+   * The whole thesis of fetching, in one condition.
+   *
+   * A runtime module that declares no permissions is *trusted*, which is a
+   * defensible default for a file the user wrote and an indefensible one for a
+   * file they downloaded. So having an origin is what stops "declared nothing"
+   * meaning "trusted" — and it must not be reachable by the user leaving
+   * strict mode off, because that setting is about the code they wrote.
+   */
+  {
+    const grantsOf = (id: string) => kernel.permissions().find((r) => r.id === id);
+
+    /**
+     * Publishes nothing on activate, so it survives being fenced to `surface`.
+     *
+     * `SOURCE` defines a setting and a command, which need `shell` — a fenced
+     * module built from it refuses to install, correctly, and that case gets
+     * its own check further down rather than getting in the way of these.
+     */
+    const MINIMAL = (id: string) => `
+export default {
+  manifest: { id: ${JSON.stringify(id)}, name: ${JSON.stringify(id)}, kind: "app", glyph: "*" },
+  activate() { return () => {}; },
+  launch(ctx) { ctx.openSurface({ title: ${JSON.stringify(id)}, render: () => {} }); },
+};
+`;
+
+    // Baseline, with strict mode off: an ordinary runtime module is trusted.
+    ctx.state.set("security.strictModules", false);
+    kernel.install(await loadModuleSource(MINIMAL("rt-local")));
+    check("a module written here is trusted", grantsOf("rt-local")?.granted === null);
+
+    kernel.install(await loadModuleSource(MINIMAL("rt-remote")), {
+      origin: "https://example.test/m.js",
+    });
+    const remote = grantsOf("rt-remote");
+    check("a fetched module is not", remote?.granted !== null);
+    check(
+      "it is held to the safe default",
+      JSON.stringify(remote?.granted) === JSON.stringify(["surface"])
+    );
+    check("and the origin is reported", remote?.origin === "https://example.test/m.js");
+    check("while the local one has none", grantsOf("rt-local")?.origin === undefined);
+
+    // The fence must not be a rendering of the strict-mode setting. Turning it
+    // on changes nothing here, because it was never what was holding this.
+    ctx.state.set("security.strictModules", true);
+    check(
+      "strict mode does not change a fetched module",
+      JSON.stringify(grantsOf("rt-remote")?.granted) === JSON.stringify(["surface"])
+    );
+    ctx.state.set("security.strictModules", false);
+    check(
+      "and neither does turning it back off",
+      JSON.stringify(grantsOf("rt-remote")?.granted) === JSON.stringify(["surface"])
+    );
+
+    // A declaration is still honoured. Origin decides what an *absent* list
+    // means; it does not override one that is present, or fetching a module
+    // would make its manifest meaningless.
+    const declaring = await loadModuleSource(
+      MINIMAL("rt-declared").replace('kind: "app"', 'kind: "app", permissions: ["surface", "fs.read"]')
+    );
+    kernel.install(declaring, { origin: "https://example.test/c.js" });
+    check(
+      "a fetched module still gets what it declared",
+      JSON.stringify(grantsOf("rt-declared")?.granted) === JSON.stringify(["fs.read", "surface"])
+    );
+
+    /**
+     * And the consequence, stated rather than discovered.
+     *
+     * Most modules publish a setting or a command on activate, which needs
+     * `shell`. A fetched one that declared nothing therefore does not merely
+     * run with less — it *refuses to install*, with an error naming the
+     * capability and where to add it. That is the intended pressure: a module
+     * meant to be shared should say what it needs.
+     */
+    let refused = "";
+    try {
+      kernel.install(await loadModuleSource(SOURCE("rt-greedy")), {
+        origin: "https://example.test/d.js",
+      });
+    } catch (err) {
+      refused = err instanceof Error ? err.message : String(err);
+    }
+    check("a fetched module that publishes without asking is refused", refused !== "");
+    check("the refusal names the capability", refused.includes("shell"));
+    check("and where to declare it", refused.includes("manifest.permissions"));
+    // A failed install must leave nothing behind, or the id is permanently
+    // taken by a module that is not running.
+    check("and nothing is left half-installed", !kernel.runtimeModules().includes("rt-greedy"));
+
+    // Uninstalling must forget where it came from, or re-installing the same
+    // id from a local file inherits a fence nothing is imposing any more.
+    kernel.uninstall("rt-remote");
+    kernel.install(await loadModuleSource(MINIMAL("rt-remote")));
+    check("uninstalling forgets the origin", grantsOf("rt-remote")?.granted === null);
+
+    kernel.uninstall("rt-remote");
+    kernel.uninstall("rt-local");
+    kernel.uninstall("rt-declared");
+  }
+
   ctx.fs.rm(modPath);
   for (const s of ctx.openSurfaces()) kernel.closeSurface(s.id);
 }
