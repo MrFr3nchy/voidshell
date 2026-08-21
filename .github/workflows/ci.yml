@@ -113,6 +113,17 @@ jobs:
             --outfile=caps-checks.mjs --log-level=error
           node caps-checks.mjs
 
+      # The flat backend is the one that can be checked at all: no WebGL means
+      # jsdom can hold the whole thing. What is asserted is the *contract* —
+      # snapshot round-trips, a reversible overview, and the unsupported half
+      # declining the way the kernel's callers already expect.
+      - name: checks — flat compositor
+        run: |
+          npx esbuild tools/dom-compositor-checks.mts --bundle --platform=node \
+            --format=esm --outfile=dom-compositor-checks.mjs --external:jsdom \
+            --log-level=error
+          node dom-compositor-checks.mjs
+
       - name: smoke — projects root
         run: |
           npx esbuild tools/projects-root-smoke.mts --bundle --platform=node \

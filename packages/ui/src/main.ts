@@ -1,5 +1,6 @@
 import "./style.css";
 import "./ui/canvasStage.css";
+import "./compositor/domCompositor.css";
 import "./ui/appShelves.css";
 import "./ui/surfaceForms.css";
 import "./modules/devkit/devkit.css";
@@ -11,7 +12,12 @@ import { Kernel } from "./kernel/Kernel";
 import { ApiWorkspaceHost, ApiError, api } from "./kernel/apiWorkspace";
 import type { ShellHost } from "./kernel/persistence";
 import { GUEST_KEY, GuestWorkspaceHost } from "./kernel/guest";
-import { ThreeCompositor } from "./compositor/ThreeCompositor";
+import {
+  BACKEND_KEY,
+  chooseBackend,
+  createCompositor,
+  webglAvailable,
+} from "./compositor/select";
 import { runBootSequence } from "./boot/bootSequence";
 import { createSpawner } from "./ui/spawner";
 import { createAppDrawer } from "./ui/appDrawer";
@@ -103,10 +109,18 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
   overlay.id = "panel-layer";
   document.body.insertBefore(overlay, hud);
 
-  // Pick your render backend here. This one line is the whole "renderer is a
-  // plugin" story: swap ThreeCompositor for a DomCompositor and every module
-  // above renders unchanged in a flat 2D world instead.
-  const compositor = new ThreeCompositor();
+  // Pick your render backend. This used to be a literal `new ThreeCompositor()`
+  // under a comment promising that swapping it for a DomCompositor would make
+  // every module render unchanged in a flat world. There is a DomCompositor
+  // now, so the promise is code instead of a comment — and the choice moved out
+  // of the source, because the person who most needs the flat one is the person
+  // whose browser cannot run the other, and they are not holding a checkout.
+  //
+  // Read off `saved.state` rather than the kernel's store because the kernel
+  // does not exist yet: it is constructed *with* a compositor. The snapshot is
+  // the same data, one hydrate earlier.
+  const backend = chooseBackend(saved.state ?? {}, location.search, webglAvailable());
+  const compositor = createCompositor(backend.id);
   const kernel = new Kernel(compositor, host);
 
   // Before register(), and so before any defineSetting() seeds a default over
@@ -225,6 +239,17 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
 
   createToasts(hud, ctx);
   createStatusBar(hud, ctx);
+
+  ctx.log(`compositor: ${compositor.name} (${backend.reason})`);
+  // Said out loud only when the machine overrode a choice the user made. A
+  // default is not news, and a URL override is something you did on purpose
+  // one second ago.
+  if (backend.reason === "fallback" && (saved.state ?? {})[BACKEND_KEY] === "three") {
+    ctx.notify("No WebGL here \u2014 opened the flat compositor instead.", {
+      kind: "warn",
+      action: { label: "see the render setting", run: (c) => c.launch("settings") },
+    });
+  }
 
   host.setNotifier((message, opts) => ctx.notify(message, opts));
 

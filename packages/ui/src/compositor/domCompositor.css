@@ -1,0 +1,73 @@
+/*
+ * The flat void.
+ *
+ * Everything here draws the *ground* — the thing you pan over. The panels
+ * themselves are the same `.vs-panel` chrome the Three backend mounts, styled
+ * once in style.css, and nothing below touches them. That is the point: two
+ * render backends, one set of windows.
+ */
+
+.vs-flat-ground {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /*
+   * The nebula shader reduced to two stops and a vignette. Not an attempt at
+   * the same picture — a flat backend that tried to fake volumetric lighting
+   * with gradients would look like a flat backend trying to fake volumetric
+   * lighting. It reads as depth-less on purpose, and calm because of it.
+   */
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(79, 227, 208, 0.09), transparent 62%),
+    radial-gradient(90% 70% at 80% 100%, rgba(192, 92, 255, 0.1), transparent 58%),
+    linear-gradient(180deg, var(--void-1) 0%, var(--void-0) 70%);
+  cursor: grab;
+  touch-action: none;
+}
+
+body.vs-panning .vs-flat-ground {
+  cursor: grabbing;
+}
+
+/*
+ * The grid is the only thing that tells you the plane moved.
+ *
+ * A flat background under a moving window is ambiguous — you cannot tell
+ * whether the window travelled or the view did, and on an infinite plane that
+ * distinction is the entire navigation model. Two crossed repeating gradients
+ * at low contrast are enough; the compositor pans them at 40% of the plane's
+ * rate, so they read as ground rather than as a layer stuck to the glass.
+ */
+.vs-flat-grid {
+  position: absolute;
+  /*
+   * Deliberately larger than the viewport. `background-position` is animated
+   * every frame and a tile straddling the edge would otherwise pop as it wraps.
+   */
+  inset: -200px;
+  background-image:
+    linear-gradient(rgba(150, 185, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 185, 255, 0.055) 1px, transparent 1px);
+  background-size: 72px 72px;
+  /* Fades out toward the edges so the grid never competes with the compass. */
+  mask-image: radial-gradient(115% 115% at 50% 50%, #000 40%, transparent 88%);
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+/*
+ * A window that has drifted off the edge.
+ *
+ * The Three backend fades panels by distance, which a plane has no equivalent
+ * for. What it does have is the same underlying fact — this window is not
+ * where you are looking — and the compass is already pointing at it, so all
+ * this has to do is stop it painting over the chrome on its way out.
+ */
+.vs-flat-ground ~ #panel-layer .vs-panel.offscreen,
+#panel-layer .vs-panel.offscreen {
+  opacity: 0.55;
+}
+
+#panel-layer .vs-panel.offscreen.focused {
+  opacity: 1;
+}

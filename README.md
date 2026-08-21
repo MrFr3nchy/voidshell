@@ -853,13 +853,60 @@ target. Everything else runs, though a project still needs its own setup —
 `hero-nexus` starts and serves but returns 500 until its Firebase environment
 variables are set, and the error shows up in the console like any other.
 
-## Swapping the renderer
+## Two renderers
 
-Write a `DomCompositor implements Compositor` that mounts surfaces as flat
-draggable divs, swap it in for `new ThreeCompositor()` in `packages/ui/src/main.ts`, and
-every module above renders unchanged in a 2D world. The optional methods
-(`linkSurfaces`, `lookAtSurface`, `arrange`…) degrade to no-ops, so a minimal
-backend is genuinely minimal.
+This section used to be an instruction: *write a `DomCompositor`, swap it in
+for `new ThreeCompositor()`, and every module renders unchanged in a 2D world.*
+That was a claim about an interface with exactly one implementation, which is
+another way of saying it was a description of `ThreeCompositor` written in the
+optative mood. There are two now.
+
+| | `three-projected` | `dom-flat` |
+| --- | --- | --- |
+| world | an infinite sphere you turn inside | an infinite plane you pan over |
+| draws | WebGL nebula, dust, celestial bodies | a gradient and a grid |
+| depth | distance from the camera, panels scale with it | stacking order; zoom is global |
+| bodies | suns, moons, planets, singularities | none — `spawnBody` returns `""` |
+| needs | a working GPU context | nothing |
+
+**Try it: [`?compositor=dom`](https://mrfr3nchy.github.io/voidshell/?compositor=dom).**
+Same shell, same windows, same files, flat.
+
+### What the second one proved
+
+Everything shared between them was already written to know nothing about 3D,
+and it turns out those files meant it. `createPanelChrome`, `panelMenuItems`,
+`TetherLayer`, `Compass`, the window shapes and the context menu are used by
+both backends **unchanged** — so a flat window has the same title bar, the same
+right-click menu, the same silhouettes and the same constellation threads,
+because it is literally the same code. Exactly one thing had to move:
+`closeSurfaceById`, four lines, private to the Three backend and needed by
+both.
+
+Nothing in `modules/` changed. Not one line.
+
+### Choosing one
+
+`?compositor=dom` in the URL beats a saved preference, which beats a WebGL
+probe. That last one is the point of the whole exercise: a void that needs a
+GPU context is a black rectangle on a locked-down laptop, in a VM with no
+passthrough, over a remote desktop, on driver-blocklisted Android, and in every
+headless browser. When the probe fails, the shell opens flat and says so,
+rather than opening a void you cannot see.
+
+Settings → World → **render backend** makes it stick. It takes effect on
+reload, because the compositor is chosen once before the kernel is built —
+which the setting says, with a reload button, rather than in a footnote.
+
+### Writing a third
+
+The optional methods (`linkSurfaces`, `lookAtSurface`, `arrange`…) degrade to
+no-ops, so a minimal backend is genuinely minimal. `spawnBody` returning `""`
+is the contract's own word for "this world has no such thing", and every caller
+in the kernel already treats it that way. `tools/dom-compositor-checks.mts` is
+the shape of a test for one: it asserts the contract — snapshots round-trip,
+the overview is reversible, the unsupported half declines honestly — in jsdom,
+with no browser.
 
 ## The apps that come with it
 
@@ -962,7 +1009,6 @@ about it.
 
 ## What's next
 
-- A `DomCompositor` as the pragmatic fallback backend.
 - Constellation *layouts* — remembering relative positions, not just membership.
 - Multi-user: the store is already the only source of truth worth syncing.
 - Syntax highlighting in the file viewer (the language is already detected).
