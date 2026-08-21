@@ -237,20 +237,70 @@ let cookie = "";
     });
     return Number(process.hrtime.bigint() - t) / 1e6;
   };
+  /**
+   * Interleaved, and compared by median against a *relative* bound.
+   *
+   * This was five samples each, compared by mean, against a fixed 20ms. Every
+   * one of those three choices was wrong for a ~250ms operation on a shared CI
+   * runner, and together they failed an unrelated pull request: a single 400ms
+   * outlier — a GC pause, another job on the same box — moves a mean of five by
+   * 30ms, and 30 > 20. The observed failure was `hit 283ms, miss 221ms`, which
+   * is noise wearing the costume of a security finding.
+   *
+   * The property being defended is real and worth keeping: signin must not
+   * reveal whether a key exists by answering faster when it doesn't. But that
+   * is a claim about *work done*, and the failure it guards against is not
+   * subtle — a server that skipped the KDF on a miss would answer in about a
+   * millisecond against a quarter second, a gap of ~99%. Nothing about
+   * catching that needs 20ms of precision.
+   *
+   * So: the median, which an outlier cannot move, and a bound proportional to
+   * the faster of the two. If a miss ever stops doing the work, its median
+   * collapses toward zero, the bound collapses to the floor with it, and the
+   * check fails by an enormous margin — which is the only way it should ever
+   * fail.
+   */
+  const SAMPLES = 7;
   const hits: number[] = [];
   const misses: number[] = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < SAMPLES; i++) {
+    // Alternating, so any drift over the run — a runner warming up, a CPU
+    // scaling down — lands on both series rather than on whichever went first.
     hits.push(await time({ key: timingKey }));
     misses.push(await time({ key: generateKey() }));
   }
   await timed.close();
-  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const gap = Math.abs(mean(hits) - mean(misses));
+
+  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  /** 35% of the faster path, with a floor so a fast machine isn't held to microseconds. */
+  const bound = (h: number, m: number) => Math.max(40, Math.min(h, m) * 0.35);
+  const leaks = (h: number, m: number) => Math.abs(h - m) > bound(h, m);
+
+  const h = median(hits);
+  const m = median(misses);
+
   check(
-    `hit and miss take the same time to ~20ms (hit ${mean(hits).toFixed(0)}ms, miss ${mean(misses).toFixed(0)}ms)`,
-    gap < 20
+    `a miss costs what a hit costs (hit ${h.toFixed(0)}ms, miss ${m.toFixed(0)}ms, ` +
+      `gap ${Math.abs(h - m).toFixed(0)}ms, allowed ${bound(h, m).toFixed(0)}ms)`,
+    !leaks(h, m)
   );
-  check("both are held to the floor", mean(hits) >= 200 && mean(misses) >= 200);
+  check("both are held to the floor", h >= 200 && m >= 200);
+
+  /**
+   * And the threshold itself, against numbers rather than against a clock.
+   *
+   * A looser bound has to answer one question: does it still catch the bug? So
+   * the shapes the real failure takes are asserted directly. A server that
+   * skipped the KDF on a miss would answer in about a millisecond, and that
+   * must fail by a mile no matter how noisy the runner was — the bound
+   * collapses toward its floor exactly when the measurement it is bounding
+   * collapses, which is what keeps "tolerant of noise" from becoming "tolerant
+   * of the vulnerability".
+   */
+  check("a miss that skips the work is caught", leaks(250, 1));
+  check("so is a hit that does extra work", leaks(1, 250));
+  check("a half-cost miss is caught", leaks(250, 120));
+  check("ordinary runner noise is not", !leaks(250, 285) && !leaks(283, 221));
 }
 
 /* ---------------- signout ---------------- */
