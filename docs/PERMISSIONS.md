@@ -12,6 +12,10 @@ nothing, it is trusted — exactly as before capabilities existed — unless the
 user turns on **Settings › System › Fence modules that ask for nothing**.
 Modules compiled into the shell are never fenced.
 
+**A module that was fetched from a URL is the exception, and never gets that
+benefit of the doubt.** With no declaration it is held to `surface` whatever
+that setting says. See [Fetched modules](#fetched-modules).
+
 ```ts
 export default {
   manifest: {
@@ -88,6 +92,27 @@ Deliberately open to every module, including one granted nothing:
 is what every manifest written before this existed says by saying nothing.
 `permissions: []` is a module actively claiming it needs nothing, and the kernel
 holds it to that claim in every mode.
+
+**Fetched modules are held to the safe default.** <a id="fetched-modules"></a>
+"Declared nothing, so trusted" is a defensible default for a file you wrote and
+an indefensible one for a file you downloaded. The kernel records where a
+runtime module's source came from, and having an origin at all is what stops an
+absent `permissions` list meaning "trusted" — see `Kernel.grantsFor`. This is
+*not* reachable by leaving the strict-mode setting off, because that setting is
+about the code you wrote.
+
+An origin decides what an **absent** list means. It does not override one that
+is present: a fetched module that declares `["surface", "fs.read"]` gets exactly
+that, or fetching one would make its manifest meaningless.
+
+The practical consequence is worth stating rather than discovering. Most modules
+publish a setting or a command in `activate`, which needs `shell` — so a fetched
+module that declared nothing does not merely run with less, it **refuses to
+install**, with an error naming the capability and where to add it. That is the
+intended pressure: a module meant to be shared should say what it needs.
+
+`/proc/permissions` labels such a module `fetched` and prints the URL under it,
+because a fence whose reason cannot be seen is one people work around.
 
 **A typo throws at install.** `["fs.reed"]` fails loudly rather than quietly
 becoming "no permission" — an author who believes they are protected by

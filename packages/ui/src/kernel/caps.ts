@@ -150,6 +150,13 @@ export interface ModulePermissions {
   declared: Capability[] | null;
   /** What it gets, or null when it is trusted outright. */
   granted: Capability[] | null;
+  /**
+   * Where the source came from, when it did not come from here.
+   *
+   * Reported because it is the *reason* for the fence around a fetched module,
+   * and a fence whose reason cannot be seen is one people work around.
+   */
+  origin?: string;
 }
 
 /**
@@ -165,7 +172,7 @@ export function formatPermissions(rows: ModulePermissions[]): string {
   const width = Math.max(6, ...rows.map((r) => r.id.length)) + 2;
 
   const body = rows.map((r) => {
-    const origin = r.runtime ? "runtime" : "built-in";
+    const origin = r.origin ? "fetched" : r.runtime ? "runtime" : "built-in";
     const what =
       r.granted === null
         ? r.runtime
@@ -174,7 +181,8 @@ export function formatPermissions(rows: ModulePermissions[]): string {
         : r.granted.length
           ? r.granted.join(" ")
           : "(nothing)";
-    return `${pad(r.id, width)}${pad(origin, 10)}${what}`;
+    const from = r.origin ? `\n${" ".repeat(width)}          from ${r.origin}` : "";
+    return `${pad(r.id, width)}${pad(origin, 10)}${what}${from}`;
   });
 
   return [
@@ -184,6 +192,8 @@ export function formatPermissions(rows: ModulePermissions[]): string {
     "# built-in modules are the shell and are never restricted.",
     "# a runtime module with no manifest.permissions is trusted unless",
     `# ${STRICT_KEY} is on, which drops it to: ${SAFE_DEFAULT.join(" ")}`,
+    "# a *fetched* module never gets that benefit of the doubt: with no",
+    `# declaration it is held to ${SAFE_DEFAULT.join(" ")} whatever that setting says.`,
     "#",
     ...CAPABILITIES.map((c) => `# ${pad(c, 14)}${CAPABILITY_BLURBS[c]}`),
     "",
