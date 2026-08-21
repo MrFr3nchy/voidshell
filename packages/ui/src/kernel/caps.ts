@@ -309,6 +309,16 @@ export function restrict(ctx: KernelContext, opts: RestrictOptions): KernelConte
     unlinkGroup: (id) => need("world", "unlink a constellation", () => ctx.unlinkGroup(id)),
     listGroups: () => need("world", "list constellations", () => ctx.listGroups()),
     arrange: (mode) => need("world", "rearrange every window", () => ctx.arrange(mode)),
+    // Reading a layout is as much "where is everything" as `listGroups`, but
+    // applying one moves other modules' windows through space, and gating only
+    // half of a pair is how a fence acquires a gap. Both sit under `world`,
+    // which is already what "rearrange the void" means.
+    captureLayout: (ids) =>
+      need("world", "read where windows sit", () => ctx.captureLayout(ids)),
+    applyLayout: (layout, ids) =>
+      need("world", "move windows into a saved arrangement", () =>
+        ctx.applyLayout(layout, ids)
+      ),
 
     /* ---------------- running other things ---------------- */
 

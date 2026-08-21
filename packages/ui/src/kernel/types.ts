@@ -8,11 +8,12 @@
  */
 
 import type { Capability } from "./caps";
+import type { LayoutSlot, WindowLayout } from "./layout";
 import type { LogEntry, LogLevel } from "./journal";
 import type { ProcInfo } from "./procs";
 import type { MountInfo } from "./vfs";
 
-export type { Capability, LogEntry, LogLevel, MountInfo, ProcInfo };
+export type { Capability, LayoutSlot, LogEntry, LogLevel, MountInfo, ProcInfo, WindowLayout };
 
 /** A 3D-ish position in the void. Compositors decide what the units mean. */
 export interface Vec3 {
@@ -77,6 +78,15 @@ export interface SavedDashboard {
   id: string;
   name: string;
   moduleIds: string[];
+  /**
+   * How they sat relative to one another, if the compositor could say.
+   *
+   * Optional, and its absence is normal rather than an error: dashboards saved
+   * before layouts existed have none, and one captured under a different
+   * render backend is refused at open time. Either way the dashboard still
+   * opens — it just opens unarranged, which is what it always did.
+   */
+  layout?: WindowLayout;
 }
 
 /** What the compositor is willing to admit about its own performance. */
@@ -469,6 +479,24 @@ export interface KernelContext {
   listGroups(): GroupInfo[];
   /** Re-lay-out every open window into a formation. */
   arrange(mode: ArrangeMode): void;
+  /**
+   * Remember where these windows sit relative to one another.
+   *
+   * `null` when there is nothing worth remembering — a compositor that does
+   * not track placements, or fewer than two free windows, since one window has
+   * no arrangement. Offsets rather than absolute positions, so a restored
+   * constellation lands where you are looking rather than where you were.
+   */
+  captureLayout(surfaceIds: string[]): WindowLayout | null;
+  /**
+   * Put windows back into a captured arrangement, centred on the view.
+   *
+   * Returns false when the layout cannot be honoured — most often because it
+   * was captured under a different render backend, where the coordinates mean
+   * something else entirely. Refused rather than approximated: there is no
+   * honest conversion between a sphere and a plane.
+   */
+  applyLayout(layout: WindowLayout, surfaceIds: string[]): boolean;
   /**
    * Launch another module by id, optionally with arguments — the OS's exec.
    * Args reach the module's `launch(ctx, args)`, which is how "open this file

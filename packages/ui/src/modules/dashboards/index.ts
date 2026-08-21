@@ -117,13 +117,25 @@ export const dashboards: VoidModule = {
 
             const go = mini("go", () => ctx.lookAtGroup(g.id));
             const keep = mini("save", () => {
-              const moduleIds = g.members
-                .map((m) => ctx.openSurfaces().find((s) => s.id === m)?.moduleId)
+              // Members that are still open, in the order the constellation
+              // holds them. That order is what pairs a module with its slot in
+              // the layout, so the two must be built from the same walk.
+              const open = ctx.openSurfaces();
+              const alive = g.members.filter((m) => open.some((s) => s.id === m));
+              const moduleIds = alive
+                .map((m) => open.find((s) => s.id === m)?.moduleId)
                 .filter((x): x is string => Boolean(x));
+              // Null is normal, not a failure: a compositor that does not track
+              // placements, or a constellation of one. The dashboard is worth
+              // saving either way — it just reopens unarranged.
+              const layout = ctx.captureLayout(alive) ?? undefined;
               const list = readSaved();
-              list.push({ id: `dash-${Date.now()}`, name: g.name, moduleIds });
+              list.push({ id: `dash-${Date.now()}`, name: g.name, moduleIds, layout });
               writeSaved(list);
-              ctx.notify(`saved "${g.name}"`, "good");
+              ctx.notify(
+                layout ? `saved "${g.name}" and its layout` : `saved "${g.name}"`,
+                "good"
+              );
               refresh();
             });
             const cut = mini("dissolve", () => {
@@ -156,7 +168,22 @@ export const dashboards: VoidModule = {
                 if (surface) ids.push(surface.id);
               }
               if (ids.length > 1) ctx.linkSurfaces(ids, d.name);
-              ctx.notify(`opened "${d.name}"`, "good");
+              // After linking, not before: binding a constellation tidies it
+              // into a ring, which would undo the arrangement being restored.
+              //
+              // False is an expected answer, most often because the layout was
+              // captured under the other render backend — where the numbers
+              // mean something else entirely and are refused rather than
+              // approximated. The dashboard still opened; it just opened the
+              // way it did before layouts existed, so that is worth saying
+              // once rather than failing.
+              const arranged = d.layout ? ctx.applyLayout(d.layout, ids) : false;
+              ctx.notify(
+                d.layout && !arranged
+                  ? `opened "${d.name}" \u2014 its layout was saved in another world`
+                  : `opened "${d.name}"`,
+                d.layout && !arranged ? "info" : "good"
+              );
               refresh();
             });
             const drop = mini("forget", () => {

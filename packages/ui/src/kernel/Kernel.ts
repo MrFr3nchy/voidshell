@@ -22,6 +22,12 @@ import {
   type WorkspaceSnapshot,
 } from "./persistence";
 import {
+  captureLayout,
+  layoutFits,
+  placementsFor,
+  type WindowLayout,
+} from "./layout";
+import {
   AUTOSTART_KEY,
   buildDev,
   buildEtc,
@@ -261,6 +267,38 @@ export class Kernel {
   }
 
   /** The current dashboard, as it would be persisted. */
+  /**
+   * Where these windows sit relative to one another.
+   *
+   * The arithmetic is in `kernel/layout.ts` and deliberately not here: it is
+   * the part worth testing exhaustively, and it has no business knowing what a
+   * compositor is. All this does is ask the render backend for placements and
+   * stamp its name on the answer.
+   */
+  captureLayout(ids: string[]): WindowLayout | null {
+    const places = this.compositor.snapshot?.();
+    if (!places) return null;
+    return captureLayout(this.compositor.name, ids, places);
+  }
+
+  /**
+   * Put windows back into a captured arrangement, centred on the view.
+   *
+   * Centred on `focalPoint` rather than on where the group used to be, so a
+   * dashboard opens in front of you rather than behind you if the camera has
+   * turned since it was saved.
+   */
+  applyLayout(layout: WindowLayout, ids: string[]): boolean {
+    if (!layoutFits(layout, this.compositor.name)) return false;
+    const place = this.compositor.placeSurface;
+    if (!place) return false;
+    const centre = this.compositor.focalPoint?.() ?? { x: 0, y: 0, z: 0 };
+    for (const row of placementsFor(layout, ids, centre)) {
+      place.call(this.compositor, row.id, row.place);
+    }
+    return true;
+  }
+
   snapshot(): WorkspaceSnapshot {
     return { state: this.store.snapshot(), fs: this.fs.serializeHome() };
   }
@@ -412,6 +450,8 @@ export class Kernel {
       unlinkGroup: (id) => this.compositor.unlinkGroup?.(id),
       listGroups: (): GroupInfo[] => this.compositor.listGroups?.() ?? [],
       arrange: (mode: ArrangeMode) => this.compositor.arrange?.(mode),
+      captureLayout: (ids) => this.captureLayout(ids),
+      applyLayout: (layout, ids) => this.applyLayout(layout, ids),
       launch: (id, args) => this.launch(id, args),
       launchAt: (id, x, y) => {
         this.compositor.setSpawnHint?.(x, y);

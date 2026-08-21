@@ -124,6 +124,17 @@ jobs:
             --log-level=error
           node dom-compositor-checks.mjs
 
+      # Mostly plain data: the centroid-and-offsets arithmetic is pure and lives
+      # apart from the compositor on purpose. The last block runs a real round
+      # trip through the flat backend, because "the numbers are right" and "a
+      # window lands where it was" are different claims.
+      - name: checks — constellation layouts
+        run: |
+          npx esbuild tools/layout-checks.mts --bundle --platform=node \
+            --format=esm --outfile=layout-checks.mjs --external:jsdom \
+            --log-level=error
+          node layout-checks.mjs
+
       - name: smoke — projects root
         run: |
           npx esbuild tools/projects-root-smoke.mts --bundle --platform=node \
