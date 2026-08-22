@@ -81,6 +81,7 @@ const { cartograph } = await import("../packages/ui/src/modules/cartograph");
 const { pawnageddon } = await import("../packages/ui/src/modules/pawnageddon");
 const { cartographChecks } = await import("./cartograph-checks.mts");
 const { pawnageddonChecks } = await import("./pawnageddon-checks.mts");
+const { snakesfoxesChecks } = await import("./snakesfoxes-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { STOCK_MODULES } = await import("../packages/ui/src/modules/stock.generated");
@@ -1215,6 +1216,15 @@ check("its places are listed", (cg?.querySelectorAll(".cg-marker").length ?? 0) 
  * all three of which produce a perfectly valid-looking window.
  */
 cartographChecks(check);
+
+/**
+ * ---------------- snakes & foxes ----------------
+ *
+ * The board is a directed graph, and every way it can be wrong renders as a
+ * normal-looking web: a rim you cannot reach, a centre you cannot return to, a
+ * hunter that never closes. Launching the module cannot see any of it.
+ */
+snakesfoxesChecks(check);
 
 /* ---------------- pawnageddon ---------------- */
 
