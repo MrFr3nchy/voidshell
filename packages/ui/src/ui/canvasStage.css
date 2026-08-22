@@ -42,7 +42,8 @@
   cursor: crosshair;
 }
 .bubble-canvas,
-.orrery-canvas {
+.orrery-canvas,
+.web-canvas {
   cursor: pointer;
 }
 
@@ -75,6 +76,25 @@
   color: var(--text);
   border-color: var(--cyan);
   background: color-mix(in srgb, var(--cyan) 14%, transparent);
+}
+
+/* A disabled stage button used to be indistinguishable from a live one, and
+   worse, it still lit up under :hover — so an action that could not be taken
+   invited the click anyway. */
+.stage-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.stage-btn:disabled:hover {
+  color: var(--text-dim);
+  border-color: var(--edge);
+}
+
+/* Used up, as opposed to merely unavailable right now. Snakes & Foxes gives
+   each of its four rule-breaks exactly one use, and "spent" and "not your turn"
+   are different answers that dimming alone cannot tell apart. */
+.stage-btn.spent {
+  text-decoration: line-through;
 }
 
 /* ---------- Readout rows (lunaria, orrery, chaos, sunclock) ---------- */

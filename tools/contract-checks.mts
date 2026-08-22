@@ -29,7 +29,8 @@ const PORTABLE = [
   "aurora", "bell", "bubblewrap", "chaos", "chronos", "cosmos", "cradle",
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
   "lavalamp",
-  "lunaria", "orrery", "portal", "ripple", "sandbox", "settings", "sunclock",
+  "lunaria", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
+  "sunclock",
   "timer", "turmite",
 ];
 
@@ -160,4 +161,28 @@ export function contractChecks(check: Check): void {
   });
   check("every emitted module imports nothing and exports a default", withImports.length === 0);
   if (withImports.length) for (const id of withImports) console.log(`      ${id}`);
+
+  /* ---------------- the drawer's shelf defaults ---------------- */
+
+  // `appShelves.ts` says of its own lookup table that "a lookup table that must
+  // be edited in lockstep with the module list is a lookup table that will
+  // silently rot", and then keeps one anyway — correctly, because the fallback
+  // means a *missing* entry is harmless. A **stale** one is not: rename or
+  // delete a module and the leftover key files nothing, forever, with the
+  // drawer looking entirely normal.
+  //
+  // Only the keys are checked. Absence is the designed behaviour, not a bug —
+  // anything unlisted falls back on `kind` and lands in tools, which is right
+  // for a tool and wrong only for the kinds of thing the author has to name.
+  const shelves = readFileSync("packages/ui/src/ui/appShelves.ts", "utf8");
+  const table = /const DEFAULTS[^{]*\{([\s\S]*?)\n\};/.exec(shelves)?.[1] ?? "";
+  const keys = [...table.matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+  const phantom = keys.filter(
+    (id) => !existsSync(join(MODULES, id)) || !statSync(join(MODULES, id)).isDirectory()
+  );
+  check(
+    `all ${keys.length} shelf defaults name a module that exists`,
+    keys.length > 0 && phantom.length === 0
+  );
+  if (phantom.length) for (const id of phantom) console.log(`      no such module: ${id}`);
 }

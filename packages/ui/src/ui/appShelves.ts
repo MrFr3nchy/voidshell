@@ -82,6 +82,8 @@ const DEFAULTS: Record<string, string> = {
   chaos: "toys",
 
   arcade: "games",
+  pawnageddon: "games",
+  snakesfoxes: "games",
 
   aurora: "system",
   horizon: "system",
