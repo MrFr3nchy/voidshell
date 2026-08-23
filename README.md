@@ -1068,6 +1068,13 @@ greyscale heightmap and that is the honest way in.
 
 ### Mycelia: the road nobody planned
 
+![A dark field crossed by a network of glowing roads: thick magenta-and-cyan veins meeting at junctions, with fine cyan filaments spanning the dark cells between them](docs/media/mycelia.webp)
+
+<sub>Not a screenshot: the module's own simulation code, run headlessly by the
+same file the checks import and written straight out as a PNG. Which is the
+point of it being a pure function of a field and a swarm — the thing in the
+panel and the thing above are the same code.</sub>
+
 Physarum polycephalum is one cell with no brain and no neurons, and it finds
 the shortest path through a maze. Lay food out in the shape of the towns around
 Tokyo and it grows, in a day, a network an engineer would recognise as the rail
@@ -1089,6 +1096,10 @@ trap: once a road is bright enough that all three sensors read it, nothing can
 leave, and every preset ends its life as one thick arc in an empty field —
 beautiful for a minute and dead for the afternoon. Immigration is what keeps
 the fine exploratory hairs between the veins being redrawn.
+
+![Three frames of the same maze, side by side: perfect maze corridors filling with glowing mould over time while the walls stay dark](docs/media/mycelia-maze.webp)
+
+<sub>The same maze at 2, 10 and 40 seconds. It floods; it does not retract.</sub>
 
 Drag with **brush: wall** and you are building obstacles the mould has to route
 around; **maze** cuts a perfect one — depth-first backtracking straight into the
