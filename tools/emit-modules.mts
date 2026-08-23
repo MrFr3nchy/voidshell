@@ -55,6 +55,7 @@ export const STOCK_IDS = [
   "harmonograph",
   "lavalamp",
   "lunaria",
+  "mycelia",
   "orrery",
   "ripple",
   "sandbox",

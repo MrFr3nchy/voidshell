@@ -38,6 +38,7 @@
 }
 .drift-canvas,
 .sand-canvas,
+.mycelia-canvas,
 .ripple-canvas {
   cursor: crosshair;
 }
