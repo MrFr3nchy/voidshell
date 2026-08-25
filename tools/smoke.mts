@@ -82,6 +82,7 @@ const { pawnageddon } = await import("../packages/ui/src/modules/pawnageddon");
 const { cartographChecks } = await import("./cartograph-checks.mts");
 const { pawnageddonChecks } = await import("./pawnageddon-checks.mts");
 const { snakesfoxesChecks } = await import("./snakesfoxes-checks.mts");
+const { myceliaChecks } = await import("./mycelia-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { STOCK_MODULES } = await import("../packages/ui/src/modules/stock.generated");
@@ -1225,6 +1226,16 @@ cartographChecks(check);
  * hunter that never closes. Launching the module cannot see any of it.
  */
 snakesfoxesChecks(check);
+
+/**
+ * ---------------- mycelia ----------------
+ *
+ * A swarm that never converges renders as an attractive cloud of noise, so
+ * launching the module says nothing about whether the physics is doing
+ * anything. The last two assertions run the simulation twice — once with the
+ * agents' nostrils switched off — and compare what the field looks like.
+ */
+myceliaChecks(check);
 
 /* ---------------- pawnageddon ---------------- */
 

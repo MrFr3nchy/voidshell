@@ -1066,6 +1066,73 @@ Newark Bay and the Hackensack are simply absent rather than badly
 approximated. If you want the real geometry, the import button reads a
 greyscale heightmap and that is the honest way in.
 
+### Mycelia: the road nobody planned
+
+![A dark field crossed by a network of glowing roads: thick magenta-and-cyan veins meeting at junctions, with fine cyan filaments spanning the dark cells between them](docs/media/mycelia.webp)
+
+<sub>Not a screenshot: the module's own simulation code, run headlessly by the
+same file the checks import and written straight out as a PNG. Which is the
+point of it being a pure function of a field and a swarm — the thing in the
+panel and the thing above are the same code.</sub>
+
+Physarum polycephalum is one cell with no brain and no neurons, and it finds
+the shortest path through a maze. Lay food out in the shape of the towns around
+Tokyo and it grows, in a day, a network an engineer would recognise as the rail
+map. Nobody is in charge of that, and the app is the proof: every agent sniffs
+ahead-left, ahead and ahead-right, turns towards whichever smelled strongest,
+walks a step and leaves a smell behind. The trail blurs and fades. That is the
+whole program — the roads are a standing wave in a field of decaying scent,
+which is why a broken link heals and an abandoned one disappears.
+
+Drag on the canvas to lay food; the network rewires to reach it within seconds.
+The five presets are the *same seven numbers* with different values and no
+other difference between them — no per-species code — which is the thing worth
+seeing: the sensor angle alone is most of the difference between a road network
+and a fingerprint.
+
+One number in there is not from the literature. Without a few agents per
+thousand being picked up each step and dropped somewhere new, the network is a
+trap: once a road is bright enough that all three sensors read it, nothing can
+leave, and every preset ends its life as one thick arc in an empty field —
+beautiful for a minute and dead for the afternoon. Immigration is what keeps
+the fine exploratory hairs between the veins being redrawn.
+
+![Three frames of the same maze, side by side: perfect maze corridors filling with glowing mould over time while the walls stay dark](docs/media/mycelia-maze.webp)
+
+<sub>The same maze at 2, 10 and 40 seconds. It floods; it does not retract.</sub>
+
+Drag with **brush: wall** and you are building obstacles the mould has to route
+around; **maze** cuts a perfect one — depth-first backtracking straight into the
+wall mask, exactly one route between any two rooms — and drops food at both
+ends. That is Nakagaki's 2000 experiment, and it is also where this model stops
+being the paper. The mould floods the corridors within a few seconds, but it
+does not then retract to the shortest path: pruning here *fragments* the
+network rather than thinning it, so the two ends come apart and rejoin as it
+goes. The famous retraction is a property of the flow model — tubes carrying a
+current, with conductivity feeding back on it — and agents laying scent have no
+current to reason about. So the panel reports what is true, which is whether
+the ends are joined right now and how much of the maze is lit, instead of
+announcing a solve that isn't happening.
+
+The checks are in `tools/mycelia-checks.mts`, and they exist because a swarm
+whose physics does nothing renders as an attractive cloud of noise. Launching
+the module cannot tell the difference; `concentration` can. It measures the
+share of the scent sitting in the brightest tenth of the field — 0.1 if the
+mould is a fog, several times that if it is a network — and the last assertion
+runs the simulation twice, once with the agents' nostrils switched off, because
+"it concentrated" would also pass on a decay bug that ate everything but the
+birth ring.
+
+Two of them found real bugs while this was being written. An agent nudged into
+a wall came back out at the same coordinates but as a *float32*, so "did not
+move" needed a representable number to compare against — which is a test bug,
+but the assertion that caught it is the one standing between a wall and a swarm
+that quietly walks through it. The other was in the maze readout: a road two
+cells wide running at 40° is a staircase of diagonal neighbours, and the
+four-connected flood fill walked up to it and stopped, so every maze reported
+itself broken while the picture plainly showed a road from one end to the
+other.
+
 ### Notes are files
 
 Notes used to live in the settings store under `notes.doc.<id>` keys. It worked,
