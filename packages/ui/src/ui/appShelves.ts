@@ -82,6 +82,7 @@ const DEFAULTS: Record<string, string> = {
   lavalamp: "toys",
   turmite: "toys",
   mycelia: "toys",
+  loom: "toys",
   chaos: "toys",
   warp: "toys",
 

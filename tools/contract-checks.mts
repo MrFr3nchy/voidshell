@@ -28,7 +28,7 @@ const MODULES = "packages/ui/src/modules";
 const PORTABLE = [
   "aurora", "bell", "bubblewrap", "chaos", "chronos", "constellation", "cosmos", "cradle",
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
-  "lavalamp",
+  "lavalamp", "loom",
   "lunaria", "meteors", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
   "sunclock",
   "timer", "turmite", "warp",

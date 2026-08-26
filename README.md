@@ -1133,6 +1133,73 @@ four-connected flood fill walked up to it and stopped, so every maze reported
 itself broken while the picture plainly showed a road from one end to the
 other.
 
+### Loom: sixteen tiles and no plan
+
+![Four grids side by side, each woven from the same sixteen tiles: a circuit board of cyan traces with orange pads, a field of closed cyan loops, a dense labyrinth of thick corridors, and a purple landmass with a cyan shoreline](docs/media/loom.webp)
+
+<sub>Not a screenshot: `drawWeave` is a pure function of a wave and a palette,
+so `tools/loom-preview.mts` hands it an SVG canvas instead of a real one and
+gets the same picture the panel draws.</sub>
+
+Wave function collapse borrows its name from quantum mechanics and nothing
+else — there is no wavefunction in here and nothing is quantum. What is true is
+the shape of it. Every cell starts holding all sixteen tiles at once, and the
+solver only ever does two things, in a loop, until there is nothing left to do:
+**observe** the cell with the fewest options left and pick one of them at
+random, then **propagate** — tell that cell's neighbours which tiles are now
+impossible, and tell theirs, until the news stops being news.
+
+That is the whole program. There is no pass that adds junctions or checks that
+a road connects. A road connects because a tile with a wire leaving its east
+edge cannot sit next to one without a wire on its west, and every tile in the
+grid is downstream of that single rule.
+
+Three of the four presets are the *same sixteen tiles and the same drawing
+code*, and differ only in which tiles are allowed to exist at all. Banning the
+one-socket tiles removes every dead end, and a thread with nowhere to stop has
+to come back and meet itself: that one zero is the entire difference between a
+circuit board and a bowl of closed loops. Banning the no-socket tile removes
+the background, so every cell has to carry thread and the field packs itself
+into a labyrinth. Neither preset knows what a loop or a corridor is. `coast` is
+the one structural change — its four bits are corners rather than sides, so
+neighbours agree about *land* rather than about wires, and marching squares
+turns the same solver into a shoreline.
+
+![Three frames of one grid: sparse tiles with large dark unobserved regions, then most of the grid woven with a bright band of half-decided cells across it, then nearly complete](docs/media/loom-frontier.webp)
+
+<sub>The same weave at 90, 170 and 260 observations. The lit cells are the ones
+that have not decided yet, drawn by how nearly decided they are.</sub>
+
+**Drag on the canvas to unpick a patch** and watch it fill back in. This is the
+one thing about the algorithm a finished grid cannot show you: the hole is
+re-solved with no memory of what used to be there, and it still joins up with
+the roads on its rim, because the cells left standing around it are the only
+constraint the new tiles ever see. **drift** does the same thing on its own
+every second and a half, which is what makes it something to leave open rather
+than a picture.
+
+Which cell you observe next is the whole ball game, and it is the one design
+decision here with a number attached. `rails` bans dead ends and tees, which
+leaves *half of all socket arrangements with no legal tile at all* — a cell can
+genuinely run out of options. Over forty grids, minimum entropy ran out zero
+times; observing in random order, with the same tiles and the same propagator,
+ran out 2,512 times. Both orders produce a legal grid, so the difference is
+invisible in the picture and lives entirely in how much work got torn up and
+redone. `tools/loom-checks.mts` asserts both numbers.
+
+It also asserts the one that matters most, which is the control: run the solver
+with the propagation removed and 436 seams come out disagreeing where the real
+one has none. Sixteen hand-drawn tiles look like a circuit board *however* they
+are laid out — a grid filled by rolling a die per cell renders as a plausible,
+busy, completely wrong picture, and no screenshot of it will ever tell you the
+solver is switched off.
+
+When a cell does run out of options, the textbook answer is to backtrack. This
+tears a hole around the failure instead and lets the solver refill it, which is
+the same code path the drag uses; it is not backtracking, it does not guarantee
+termination, and the panel counts the tears rather than hiding them. It has
+never fired under minimum entropy.
+
 ### Notes are files
 
 Notes used to live in the settings store under `notes.doc.<id>` keys. It worked,
