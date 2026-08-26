@@ -29,9 +29,9 @@ const PORTABLE = [
   "aurora", "bell", "bubblewrap", "chaos", "chronos", "constellation", "cosmos", "cradle",
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
   "lavalamp", "loom",
-  "lunaria", "meteors", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
+  "lunaria", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
   "sunclock",
-  "timer", "turmite", "warp",
+  "timer", "turmite",
 ];
 
 /** Every .ts file under a directory. */

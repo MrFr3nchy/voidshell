@@ -27,6 +27,7 @@ const KEYS = {
   nebulaSpin: "world.nebulaSpin",
   orbitSpeed: "world.orbitSpeed",
   driftAmount: "world.driftAmount",
+  meteorRate: "world.meteorRate",
 } as const;
 
 const TOGGLES: {
@@ -69,6 +70,22 @@ const TOGGLES: {
     def: false,
     order: 61,
   },
+  {
+    key: "world.meteors",
+    patch: "meteors",
+    label: "meteor shower",
+    hint: "occasional streaks across the real sky, on their own schedule",
+    def: false,
+    order: 63,
+  },
+  {
+    key: "world.warp",
+    patch: "warp",
+    label: "engage warp",
+    hint: "the dust stretches into streaks and the sky rushes past",
+    def: false,
+    order: 64,
+  },
 ];
 
 const KNOBS: Knob[] = [
@@ -80,6 +97,7 @@ const KNOBS: Knob[] = [
   { key: "nebulaSpin", patch: "nebulaSpin", label: "nebula rotation", min: 0, max: 4, step: 0.05, def: 1, order: 22 },
   { key: "orbitSpeed", patch: "orbitSpeed", label: "orbital speed", min: 0, max: 5, step: 0.05, def: 1, order: 23 },
   { key: "driftAmount", patch: "driftAmount", label: "drift amount", min: 0, max: 4, step: 0.05, def: 1, order: 62 },
+  { key: "meteorRate", patch: "meteorRate", label: "meteor rate", min: 1, max: 20, step: 1, def: 6, order: 65, hint: "meteors per minute, on average, while the shower is on" },
 ];
 
 const LINK_KNOBS: {

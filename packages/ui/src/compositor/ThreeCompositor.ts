@@ -94,6 +94,24 @@ interface AnchorEntry {
   anchor: THREE.Vector3;
 }
 
+/**
+ * One live meteor. Its own `Line` and `Material` rather than a shared buffer
+ * slot, because unlike `warpField` these are born and die continuously over a
+ * session — a shared-buffer approach would need slot bookkeeping to get that
+ * right, and a handful of short-lived draw calls costs nothing next to a scene
+ * that already draws 1400 dust points in one call.
+ */
+interface MeteorEntity {
+  obj: THREE.Line;
+  geo: THREE.BufferGeometry;
+  mat: THREE.LineBasicMaterial;
+  /** 0 at spawn, 1 at burnout. */
+  t: number;
+  life: number;
+  dirA: THREE.Vector3;
+  dirB: THREE.Vector3;
+}
+
 interface BodyEntry {
   id: string;
   kind: BodyKind;
@@ -198,6 +216,29 @@ export class ThreeCompositor implements Compositor {
   private tethers!: TetherLayer;
   private snapGhost!: HTMLElement;
 
+  /** Live streaks, each its own short Line so it can fade and be disposed independently. */
+  private meteors: MeteorEntity[] = [];
+  private meteorTimer = 4;
+  private static readonly METEOR_RADIUS = 5200;
+  private static readonly METEOR_MAX = 5;
+
+  /**
+   * One shared field of directional streaks for warp, distinct from `particles`
+   * (ordinary decorative dust) so engaging warp can never perturb the dust
+   * count or drift settings someone has already tuned. Each entry only ever
+   * moves along its own radius — direction is fixed once, picked fresh only on
+   * recycle — so the whole field is three parallel typed arrays rather than an
+   * array of objects, cheap enough to walk every frame at `WARP_COUNT` size.
+   */
+  private warpField!: THREE.LineSegments;
+  private warpDir!: Float32Array; // unit vectors, 3 per entry
+  private warpRadius!: Float32Array;
+  private warpCurrent = 0; // eased 0..1, never snaps straight to the target
+  private static readonly WARP_COUNT = 240;
+  private static readonly WARP_MIN_R = 200;
+  private static readonly WARP_MAX_R = 5200;
+  private static readonly WARP_SPEED = 5200; // px/sec of streak growth at warpCurrent = 1
+
   private uniforms = {
     uTime: { value: 0 },
     uIntensity: { value: 1.0 },
@@ -231,6 +272,9 @@ export class ThreeCompositor implements Compositor {
     drift: false,
     driftAmount: 1,
     storms: false,
+    meteors: false,
+    meteorRate: 6,
+    warp: false,
     compass: true,
     tethers: true,
     baseIntensity: 1,
@@ -295,6 +339,9 @@ export class ThreeCompositor implements Compositor {
     this.particles = this.makeParticles(this.cfg.dust);
     this.scene.add(this.particles);
 
+    this.warpField = this.makeWarpField(ThreeCompositor.WARP_COUNT);
+    this.scene.add(this.warpField);
+
     // Tethers live under the panels so a link line never eats a click. The
     // threads are also controls: clicking one hardens or loosens that bond.
     this.tethers = new TetherLayer(this.overlay, (gid) => {
@@ -336,6 +383,165 @@ export class ThreeCompositor implements Compositor {
       depthWrite: false,
     });
     return new THREE.Points(geo, mat);
+  }
+
+  /**
+   * `WARP_COUNT` streaks, each a two-point line segment that only ever moves
+   * along its own fixed direction. At `warpCurrent = 0` the material is fully
+   * transparent and the segments are never touched, so idling costs nothing
+   * beyond the one-time buffer this allocates.
+   */
+  private makeWarpField(count: number): THREE.LineSegments {
+    this.warpDir = new Float32Array(count * 3);
+    this.warpRadius = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const [dx, dy, dz] = randomUnitVector();
+      this.warpDir[i * 3] = dx;
+      this.warpDir[i * 3 + 1] = dy;
+      this.warpDir[i * 3 + 2] = dz;
+      this.warpRadius[i] =
+        ThreeCompositor.WARP_MIN_R + Math.random() * (ThreeCompositor.WARP_MAX_R - ThreeCompositor.WARP_MIN_R);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 2 * 3), 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: 0xdff3ff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    return new THREE.LineSegments(geo, mat);
+  }
+
+  /**
+   * Advance every warp streak by one frame. Each entry only ever grows its own
+   * radius — direction is fixed until a recycle picks a fresh one — which is
+   * what makes "how far it moved this frame" the whole streak: draw a segment
+   * from where it was to where it is.
+   *
+   * A recycled entry draws both ends at its fresh, small radius rather than at
+   * its old, far one — the two would otherwise span nearly the whole field in
+   * a single frame, a visible flash that has nothing to do with warp speed.
+   */
+  private stepWarpField(dt: number): void {
+    const mat = this.warpField.material as THREE.LineBasicMaterial;
+    mat.opacity = this.warpCurrent * 0.85;
+    if (this.warpCurrent < 0.002) return;
+
+    const speed = ThreeCompositor.WARP_SPEED * this.warpCurrent;
+    const pos = this.warpField.geometry.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const count = ThreeCompositor.WARP_COUNT;
+
+    for (let i = 0; i < count; i++) {
+      const prevR = this.warpRadius[i];
+      let r = prevR + speed * dt;
+      let drawFromR = prevR;
+
+      if (r > ThreeCompositor.WARP_MAX_R) {
+        const [dx, dy, dz] = randomUnitVector();
+        this.warpDir[i * 3] = dx;
+        this.warpDir[i * 3 + 1] = dy;
+        this.warpDir[i * 3 + 2] = dz;
+        r = ThreeCompositor.WARP_MIN_R + Math.random() * 150;
+        drawFromR = r; // this frame is a fresh spawn, not a jump across the sky
+      }
+      this.warpRadius[i] = r;
+
+      const dx = this.warpDir[i * 3];
+      const dy = this.warpDir[i * 3 + 1];
+      const dz = this.warpDir[i * 3 + 2];
+      const base = i * 6;
+      arr[base] = dx * drawFromR;
+      arr[base + 1] = dy * drawFromR;
+      arr[base + 2] = dz * drawFromR;
+      arr[base + 3] = dx * r;
+      arr[base + 4] = dy * r;
+      arr[base + 5] = dz * r;
+    }
+    pos.needsUpdate = true;
+  }
+
+  /**
+   * A meteor is a short chord across the far sky: pick a point, nudge it
+   * sideways by a random tangent to get a second point, and travel between
+   * them. Not a true geodesic — a linear blend renormalised each step — but
+   * over the small arc a meteor covers the difference is invisible and the
+   * maths is a fraction of the cost.
+   */
+  private spawnMeteor(): void {
+    if (this.meteors.length >= ThreeCompositor.METEOR_MAX) return;
+
+    const [ax, ay, az] = randomUnitVector();
+    const dirA = new THREE.Vector3(ax, ay, az);
+    const rand = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
+    const tangent = rand.sub(dirA.clone().multiplyScalar(rand.dot(dirA)));
+    if (tangent.lengthSq() < 1e-6) tangent.set(1, 0, 0); // the 1-in-a-billion parallel pick
+    tangent.normalize();
+    const spread = 0.35 + Math.random() * 0.55;
+    const dirB = dirA.clone().addScaledVector(tangent, spread).normalize();
+
+    const color = new THREE.Color().copy(this.uniforms.uColorWarm.value).lerp(new THREE.Color(0xffffff), 0.55);
+    const start = dirA.clone().multiplyScalar(ThreeCompositor.METEOR_RADIUS);
+    const geo = new THREE.BufferGeometry().setFromPoints([start, start.clone()]);
+    const mat = new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const obj = new THREE.Line(geo, mat);
+    this.scene.add(obj);
+    this.meteors.push({ obj, geo, mat, t: 0, life: 0.55 + Math.random() * 0.5, dirA, dirB });
+  }
+
+  /** Advance and cull every live meteor, and consider spawning a new one. */
+  private stepMeteors(dt: number): void {
+    this.meteorTimer -= dt;
+    if (this.cfg.meteors && this.meteorTimer <= 0) {
+      this.spawnMeteor();
+      const perMinute = Math.max(0.5, this.cfg.meteorRate);
+      const avgGap = 60 / perMinute;
+      this.meteorTimer = avgGap * (0.6 + Math.random() * 0.8);
+    }
+
+    for (let i = this.meteors.length - 1; i >= 0; i--) {
+      const m = this.meteors[i];
+      m.t += dt / m.life;
+      if (m.t >= 1) {
+        this.scene.remove(m.obj);
+        m.geo.dispose();
+        m.mat.dispose();
+        this.meteors.splice(i, 1);
+        continue;
+      }
+
+      const headT = m.t;
+      const tailT = Math.max(0, m.t - 0.12);
+      const head = m.dirA
+        .clone()
+        .lerp(m.dirB, headT)
+        .normalize()
+        .multiplyScalar(ThreeCompositor.METEOR_RADIUS);
+      const tail = m.dirA
+        .clone()
+        .lerp(m.dirB, tailT)
+        .normalize()
+        .multiplyScalar(ThreeCompositor.METEOR_RADIUS);
+
+      const pos = m.geo.attributes.position as THREE.BufferAttribute;
+      pos.setXYZ(0, tail.x, tail.y, tail.z);
+      pos.setXYZ(1, head.x, head.y, head.z);
+      pos.needsUpdate = true;
+
+      // In over the first 15% of its life, out over the last 20% — a hard cut
+      // at either end reads as a glitch rather than as a streak burning out.
+      const fadeIn = m.t < 0.15 ? m.t / 0.15 : 1;
+      const fadeOut = m.t > 0.8 ? (1 - m.t) / 0.2 : 1;
+      m.mat.opacity = Math.max(0, Math.min(1, fadeIn * fadeOut)) * 0.9;
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -810,6 +1016,7 @@ export class ThreeCompositor implements Compositor {
       "nebulaSpin",
       "orbitSpeed",
       "driftAmount",
+      "meteorRate",
       "linkOpacity",
       "linkWidth",
       "linkGlow",
@@ -820,6 +1027,8 @@ export class ThreeCompositor implements Compositor {
     for (const key of [
       "drift",
       "storms",
+      "meteors",
+      "warp",
       "compass",
       "tethers",
       "linkLabels",
@@ -1363,6 +1572,16 @@ export class ThreeCompositor implements Compositor {
         const pulse = 0.72 + 0.28 * (Math.sin(t * 0.11) * 0.5 + 0.5);
         this.uniforms.uIntensity.value = this.cfg.baseIntensity * pulse;
       }
+
+      this.stepMeteors(dt);
+
+      // Eased toward its target rather than snapped, the same reasoning as the
+      // camera's own smoothing just above: engaging warp should read as a
+      // spool-up, not a cut.
+      const warpTarget = this.cfg.warp ? 1 : 0;
+      this.warpCurrent += (warpTarget - this.warpCurrent) * (1 - Math.exp(-dt * 2.2));
+      if (Math.abs(this.warpCurrent - warpTarget) < 0.001) this.warpCurrent = warpTarget;
+      this.stepWarpField(dt);
 
       for (const b of this.bodies.values()) {
         b.phase += dt * b.speed * this.cfg.orbitSpeed;
@@ -2130,12 +2349,29 @@ export class ThreeCompositor implements Compositor {
     window.removeEventListener("resize", this.onResize);
     for (const a of this.anchors) a.el.remove();
     this.anchors.clear();
+    // Unlike the nebula and the dust, meteors are created continuously over
+    // the life of a session rather than once at boot — leaving them for the
+    // GC would leak a Line and a Material every few seconds a shower runs.
+    for (const m of this.meteors) {
+      this.scene.remove(m.obj);
+      m.geo.dispose();
+      m.mat.dispose();
+    }
+    this.meteors = [];
     this.compass?.dispose();
     this.renderer.dispose();
   }
 }
 
 /* ---------------------------------------------------------------- */
+
+/** A uniformly random point on the unit sphere — the standard z-symmetric trick. */
+function randomUnitVector(): [number, number, number] {
+  const u = Math.random() * 2 - 1;
+  const th = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(1 - u * u);
+  return [r * Math.cos(th), u, r * Math.sin(th)];
+}
 
 /** Unit vector for a yaw/pitch pair, matching the camera's YXZ convention. */
 function dirFromYawPitch(yaw: number, pitch: number): THREE.Vector3 {
