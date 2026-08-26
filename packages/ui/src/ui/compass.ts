@@ -25,6 +25,9 @@ export class Compass {
   private nodes = new Map<string, HTMLButtonElement>();
   private onSelect: (kind: CompassItem["kind"], id: string) => void;
   private enabled = true;
+  /** Bearing at the previous sync, per item — the basis for its trail glow. */
+  private lastAngle = new Map<string, number>();
+  private lastSyncAt = performance.now();
 
   constructor(
     host: HTMLElement,
@@ -47,6 +50,9 @@ export class Compass {
     const rx = Math.max(60, w / 2 - MARGIN);
     const ry = Math.max(60, h / 2 - MARGIN);
     const seen = new Set<string>();
+    const now = performance.now();
+    const dt = Math.max(0.001, (now - this.lastSyncAt) / 1000);
+    this.lastSyncAt = now;
 
     for (const item of items) {
       seen.add(item.id);
@@ -79,11 +85,26 @@ export class Compass {
       node.style.top = `${y.toFixed(1)}px`;
       node.style.setProperty("--pip-rot", `${deg.toFixed(1)}deg`);
       node.style.setProperty("--pip-scale", scale.toFixed(3));
+
+      // A window swinging past fast behind you gets a trailing glow on its
+      // pip — the compass equivalent of a comet, and free once the bearing
+      // is already being tracked frame to frame.
+      const prev = this.lastAngle.get(item.id);
+      this.lastAngle.set(item.id, item.angle);
+      if (prev !== undefined) {
+        let delta = item.angle - prev;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        const speed = Math.max(0, Math.min(1, Math.abs(delta) / dt / 3));
+        node.classList.toggle("fast", speed > 0.1);
+        node.style.setProperty("--pip-speed", speed.toFixed(3));
+      }
     }
 
     for (const [id, node] of this.nodes) {
       if (seen.has(id)) continue;
       this.nodes.delete(id);
+      this.lastAngle.delete(id);
       node.classList.remove("live");
       setTimeout(() => node.remove(), 200);
     }
@@ -92,5 +113,6 @@ export class Compass {
   dispose(): void {
     for (const node of this.nodes.values()) node.remove();
     this.nodes.clear();
+    this.lastAngle.clear();
   }
 }

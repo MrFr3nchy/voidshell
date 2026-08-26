@@ -265,6 +265,9 @@ export class ThreeCompositor implements Compositor {
   private static readonly WARP_MAX_R = 5200;
   private static readonly WARP_SPEED = 5200; // px/sec of streak growth at warpCurrent = 1
 
+  /** Undisturbed star density; twinkle oscillates around this, not over it. */
+  private baseStars = 0.55;
+
   private uniforms = {
     uTime: { value: 0 },
     uIntensity: { value: 1.0 },
@@ -300,6 +303,13 @@ export class ThreeCompositor implements Compositor {
     storms: false,
     meteors: false,
     meteorRate: 6,
+    meteorColor: null as number | null,
+    starTwinkle: 0,
+    bloom: 1,
+    cameraRoll: true,
+    inertia: true,
+    clickEcho: true,
+    linkPulse: false,
     warp: false,
     compass: true,
     tethers: true,
@@ -336,6 +346,11 @@ export class ThreeCompositor implements Compositor {
     faceId: string;
     onArrive: () => void;
   } | null = null;
+  /** Eased bank angle, driven by how fast yaw is currently changing. */
+  private roll = 0;
+  private lastYaw = 0;
+  /** Thrown-window momentum: panel id -> world-units/sec, decayed each frame. */
+  private inertia = new Map<string, THREE.Vector3>();
   private raf = 0;
   private fps = 60;
 
@@ -520,7 +535,10 @@ export class ThreeCompositor implements Compositor {
     const spread = 0.35 + Math.random() * 0.55;
     const dirB = dirA.clone().addScaledVector(tangent, spread).normalize();
 
-    const color = new THREE.Color().copy(this.uniforms.uColorWarm.value).lerp(new THREE.Color(0xffffff), 0.55);
+    const color =
+      this.cfg.meteorColor !== null
+        ? new THREE.Color(this.cfg.meteorColor)
+        : new THREE.Color().copy(this.uniforms.uColorWarm.value).lerp(new THREE.Color(0xffffff), 0.55);
     const start = dirA.clone().multiplyScalar(ThreeCompositor.METEOR_RADIUS);
     const geo = new THREE.BufferGeometry().setFromPoints([start, start.clone()]);
     const mat = new THREE.LineBasicMaterial({
@@ -1032,9 +1050,13 @@ export class ThreeCompositor implements Compositor {
     if (typeof patch.warm === "number") this.uniforms.uColorWarm.value.setHex(patch.warm);
     if (typeof patch.voidColor === "number")
       this.uniforms.uColorVoid.value.setHex(patch.voidColor);
+    if (typeof patch.meteorColor === "number") this.cfg.meteorColor = patch.meteorColor;
 
     const stars = num("stars");
-    if (stars !== null) this.uniforms.uStars.value = stars;
+    if (stars !== null) {
+      this.baseStars = stars;
+      this.uniforms.uStars.value = stars;
+    }
     const grain = num("grain");
     if (grain !== null) this.uniforms.uGrain.value = grain;
 
@@ -1062,6 +1084,8 @@ export class ThreeCompositor implements Compositor {
       "orbitSpeed",
       "driftAmount",
       "meteorRate",
+      "starTwinkle",
+      "bloom",
       "linkOpacity",
       "linkWidth",
       "linkGlow",
@@ -1076,6 +1100,10 @@ export class ThreeCompositor implements Compositor {
       "warp",
       "compass",
       "tethers",
+      "cameraRoll",
+      "inertia",
+      "clickEcho",
+      "linkPulse",
       "linkLabels",
       "linkOrbit",
       "linkAutoTidy",
@@ -1840,17 +1868,51 @@ export class ThreeCompositor implements Compositor {
       const k = Math.max(0.01, Math.min(0.5, this.cfg.smoothing));
       this.yaw += (this.targetYaw - this.yaw) * k;
       this.pitch += (this.targetPitch - this.pitch) * k;
-      this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+
+      // A slight bank into a fast turn — the same ease the camera itself uses,
+      // so it reads as inertia rather than as a wobble bolted on afterwards.
+      const yawVel = dt > 0 ? (this.yaw - this.lastYaw) / dt : 0;
+      const targetRoll = this.cfg.cameraRoll
+        ? Math.max(-0.22, Math.min(0.22, -yawVel * 0.12))
+        : 0;
+      this.roll += (targetRoll - this.roll) * Math.min(1, dt * 6);
+      this.lastYaw = this.yaw;
+      this.camera.rotation.set(this.pitch, this.yaw, this.roll, "YXZ");
 
       // The void turns, not the viewer.
       this.nebula.rotation.y += dt * 0.015 * this.cfg.nebulaSpin;
       this.particles.rotation.y += dt * 0.01 * this.cfg.nebulaSpin;
 
-      if (this.cfg.storms) {
-        // Slow aurora weather: the sky breathes instead of sitting still.
+      // Slow aurora weather (when storms is on) times bloom (always) — one
+      // multiply, written every frame, rather than a value that only moves
+      // when storms happens to be the thing touching it.
+      const stormPulse = this.cfg.storms
+        ? 0.72 + 0.28 * (Math.sin(this.uniforms.uTime.value * 0.11) * 0.5 + 0.5)
+        : 1;
+      this.uniforms.uIntensity.value = this.cfg.baseIntensity * this.cfg.bloom * stormPulse;
+
+      if (this.inertia.size) {
+        for (const [id, vel] of this.inertia) {
+          const p = this.panels.get(id);
+          if (!p || p.pinned || p.snap) {
+            this.inertia.delete(id);
+            continue;
+          }
+          p.anchor.addScaledVector(vel, dt);
+          vel.multiplyScalar(Math.exp(-dt * 2.6));
+          if (vel.lengthSq() < 25) this.inertia.delete(id);
+        }
+      }
+
+      if (this.cfg.starTwinkle > 0) {
         const t = this.uniforms.uTime.value;
-        const pulse = 0.72 + 0.28 * (Math.sin(t * 0.11) * 0.5 + 0.5);
-        this.uniforms.uIntensity.value = this.cfg.baseIntensity * pulse;
+        const osc = Math.sin(t * 1.7) * 0.6 + Math.sin(t * 4.3) * 0.4;
+        this.uniforms.uStars.value = Math.max(
+          0,
+          Math.min(1, this.baseStars + osc * 0.15 * this.cfg.starTwinkle)
+        );
+      } else if (this.uniforms.uStars.value !== this.baseStars) {
+        this.uniforms.uStars.value = this.baseStars;
       }
 
       this.stepMeteors(dt);
@@ -2100,6 +2162,10 @@ export class ThreeCompositor implements Compositor {
   private drawTethers(): void {
     if (!this.cfg.tethers) return;
 
+    const pulse = this.cfg.linkPulse
+      ? 0.78 + 0.22 * (Math.sin(this.uniforms.uTime.value * 1.3) * 0.5 + 0.5)
+      : 1;
+
     this.tethers.draw(
       [...this.groups.values()].map((g) => ({
         id: g.id,
@@ -2112,9 +2178,9 @@ export class ThreeCompositor implements Compositor {
           .map((p) => ({ sx: p.sx, sy: p.sy })),
       })),
       {
-        opacity: this.cfg.linkOpacity,
+        opacity: this.cfg.linkOpacity * pulse,
         width: this.cfg.linkWidth,
-        glow: this.cfg.linkGlow,
+        glow: this.cfg.linkGlow * this.cfg.bloom,
         labels: this.cfg.linkLabels,
       }
     );
@@ -2230,6 +2296,11 @@ export class ThreeCompositor implements Compositor {
     let pendingSnap: SnapMode | null = null;
     const start = new THREE.Vector3();
     const others: { p: PanelEntry; base: THREE.Vector3 }[] = [];
+    // Thrown-window momentum: the anchor's own velocity, resampled on every
+    // move so whatever it reads at release is the speed of the actual flick.
+    let lastMoveTime = 0;
+    const lastAnchor = new THREE.Vector3();
+    const velocity = new THREE.Vector3();
 
     bar.addEventListener("pointerdown", (e) => {
       if (tools.contains(e.target as Node) || link.contains(e.target as Node)) return;
@@ -2237,6 +2308,10 @@ export class ThreeCompositor implements Compositor {
       if (!p) return;
       this.setActive(id);
       pendingSnap = null;
+      this.inertia.delete(id);
+      lastMoveTime = performance.now();
+      lastAnchor.copy(p.anchor);
+      velocity.set(0, 0, 0);
 
       // Tearing a snapped window off its region. It comes back to its floating
       // size straight under the cursor, rather than leaping to wherever it used
@@ -2316,6 +2391,15 @@ export class ThreeCompositor implements Compositor {
         return;
       }
       this.anchorFromScreen(p.anchor, e.clientX - grabX, e.clientY - grabY, dist);
+
+      const now = performance.now();
+      const dt = (now - lastMoveTime) / 1000;
+      if (dt > 0.001) {
+        velocity.subVectors(p.anchor, lastAnchor).multiplyScalar(1 / dt);
+        lastAnchor.copy(p.anchor);
+        lastMoveTime = now;
+      }
+
       if (!others.length) return;
 
       // Per-constellation now: `linkOrbit` only seeds the default for new ones.
@@ -2346,7 +2430,12 @@ export class ThreeCompositor implements Compositor {
       const p = this.panels.get(id);
       p?.el.classList.remove("dragging");
       this.showSnapGhost(null);
-      if (p && pendingSnap) this.setSnap(p, pendingSnap);
+      if (p && pendingSnap) {
+        this.setSnap(p, pendingSnap);
+      } else if (p && !p.pinned && this.cfg.inertia && velocity.lengthSq() > 2500) {
+        velocity.clampLength(0, 6000);
+        this.inertia.set(id, velocity.clone());
+      }
       pendingSnap = null;
     };
     bar.addEventListener("pointerup", end);
@@ -2653,10 +2742,16 @@ export class ThreeCompositor implements Compositor {
   }
 
   private bindInput(el: HTMLElement): void {
+    let downX = 0;
+    let downY = 0;
+    let downTime = 0;
     el.addEventListener("pointerdown", (e) => {
       this.dragging = true;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
+      downX = e.clientX;
+      downY = e.clientY;
+      downTime = performance.now();
       el.setPointerCapture(e.pointerId);
     });
     el.addEventListener("pointermove", (e) => {
@@ -2669,9 +2764,31 @@ export class ThreeCompositor implements Compositor {
       this.targetYaw -= dx * s;
       this.targetPitch = Math.max(-1.2, Math.min(1.2, this.targetPitch - dy * s));
     });
-    const end = () => (this.dragging = false);
+    const end = (e: PointerEvent) => {
+      this.dragging = false;
+      // A tap rather than a drag: nothing moved, nothing took long. Click in
+      // open space and the void should still acknowledge you touched it.
+      if (
+        this.cfg.clickEcho &&
+        Math.hypot(e.clientX - downX, e.clientY - downY) < 6 &&
+        performance.now() - downTime < 400
+      ) {
+        this.spawnClickEcho(e.clientX, e.clientY);
+      }
+    };
     el.addEventListener("pointerup", end);
     el.addEventListener("pointercancel", end);
+  }
+
+  private spawnClickEcho(x: number, y: number): void {
+    const ring = document.createElement("div");
+    ring.className = "vs-click-echo";
+    ring.style.left = `${x.toFixed(1)}px`;
+    ring.style.top = `${y.toFixed(1)}px`;
+    this.overlay.appendChild(ring);
+    ring.addEventListener("animationend", () => ring.remove(), { once: true });
+    // Belt and braces: a backgrounded tab can drop the animationend entirely.
+    setTimeout(() => ring.remove(), 900);
   }
 
   private onResize = () => {
