@@ -889,7 +889,7 @@ export function createConsole(
 
         case "station": {
           const kinds: StationKind[] = ["rock", "giant", "ring"];
-          const kind = kinds.find((k) => k === arg);
+          const kind = kinds.find((k) => k === rest[0]);
           if (!kind) throw new Error(`usage: station <${kinds.join("|")}> [name]`);
           out(`→ ${ctx.spawnStation(kind, rest.slice(1).join(" "))}`, "muted");
           break;
