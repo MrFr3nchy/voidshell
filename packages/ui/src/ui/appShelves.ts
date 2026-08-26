@@ -76,6 +76,7 @@ const DEFAULTS: Record<string, string> = {
   harmonograph: "toys",
   bubblewrap: "toys",
   ripple: "toys",
+  meteors: "toys",
   flock: "toys",
   lavalamp: "toys",
   turmite: "toys",

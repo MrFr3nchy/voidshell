@@ -29,7 +29,7 @@ const PORTABLE = [
   "aurora", "bell", "bubblewrap", "chaos", "chronos", "cosmos", "cradle",
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
   "lavalamp",
-  "lunaria", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
+  "lunaria", "meteors", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
   "sunclock",
   "timer", "turmite",
 ];
