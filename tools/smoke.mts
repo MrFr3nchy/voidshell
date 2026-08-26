@@ -549,7 +549,7 @@ check("settings app rendered controls", (setBody?.children.length ?? 0) > 0);
 // Constellation controls must be published and default sanely.
 check(
   "link settings registered",
-  ctx.settings().filter((d) => d.group === "Links").length === 6
+  ctx.settings().filter((d) => d.group === "Links").length === 7
 );
 check("orbit drag is the default", ctx.state.get("links.orbit", false) === true);
 check(
