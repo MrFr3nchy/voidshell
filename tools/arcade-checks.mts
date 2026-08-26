@@ -24,6 +24,7 @@ export async function arcadeChecks(check: Check, CABINETS: GameDef[]): Promise<v
   const pacRules = await import("../packages/ui/src/modules/arcade/games/pacman/rules");
   const galagaRules = await import("../packages/ui/src/modules/arcade/games/galaga/rules");
   const missileRules = await import("../packages/ui/src/modules/arcade/games/missile/rules");
+  const asteroidsRules = await import("../packages/ui/src/modules/arcade/games/asteroids/rules");
 
   /**
    * Joust's rules, asserted directly.
@@ -442,5 +443,100 @@ export async function arcadeChecks(check: Check, CABINETS: GameDef[]): Promise<v
   check(
     "six cities and three batteries",
     missileRules.CITY_X.length === 6 && missileRules.BATTERY_X.length === 3
+  );
+
+  /* ---------------- asteroids ---------------- */
+
+  check(
+    // Same pattern Joust's own wrap check uses: a point ten pixels from one
+    // edge and a point ten pixels from the other are twenty apart the short
+    // way around, not the width of the screen apart.
+    "the field is a torus on both axes",
+    asteroidsRules.wrapDelta(10, asteroidsRules.GAME_W - 10, asteroidsRules.GAME_W) === -20 &&
+      asteroidsRules.wrapDelta(asteroidsRules.GAME_W - 10, 10, asteroidsRules.GAME_W) === 20 &&
+      asteroidsRules.wrapDelta(10, asteroidsRules.GAME_H - 10, asteroidsRules.GAME_H) === -20 &&
+      asteroidsRules.wrapX(-5) === asteroidsRules.GAME_W - 5 &&
+      asteroidsRules.wrapY(-5) === asteroidsRules.GAME_H - 5
+  );
+  check(
+    "a circle overlapping an edge draws its wrapped copy too",
+    (() => {
+      const near = asteroidsRules.wrapOffsets(2, 100, 10, asteroidsRules.GAME_W, asteroidsRules.GAME_H);
+      const clear = asteroidsRules.wrapOffsets(160, 100, 10, asteroidsRules.GAME_W, asteroidsRules.GAME_H);
+      return near.length === 2 && clear.length === 1;
+    })()
+  );
+  check(
+    "two rocks either side of the seam collide across it",
+    asteroidsRules.wrappedOverlap(
+      3,
+      100,
+      8,
+      asteroidsRules.GAME_W - 3,
+      100,
+      8,
+      asteroidsRules.GAME_W,
+      asteroidsRules.GAME_H
+    )
+  );
+  check(
+    "large splits to medium splits to small splits to nothing",
+    asteroidsRules.childSize("large") === "medium" &&
+      asteroidsRules.childSize("medium") === "small" &&
+      asteroidsRules.childSize("small") === null
+  );
+  check(
+    "the smaller the rock, the more it's worth, and the faster it moves",
+    asteroidsRules.SCORE_ASTEROID.small > asteroidsRules.SCORE_ASTEROID.medium &&
+      asteroidsRules.SCORE_ASTEROID.medium > asteroidsRules.SCORE_ASTEROID.large &&
+      asteroidsRules.ASTEROID_SPEED_RANGE.small[0] > asteroidsRules.ASTEROID_SPEED_RANGE.medium[0] &&
+      asteroidsRules.ASTEROID_SPEED_RANGE.medium[0] > asteroidsRules.ASTEROID_SPEED_RANGE.large[0]
+  );
+  check(
+    "a wave opens with four rocks and the count climbs, capped at eleven",
+    asteroidsRules.waveAsteroidCount(1) === 4 &&
+      asteroidsRules.waveAsteroidCount(8) > asteroidsRules.waveAsteroidCount(1) &&
+      asteroidsRules.waveAsteroidCount(40) === 11
+  );
+  check(
+    "the small saucer is worth five times the large one",
+    asteroidsRules.SAUCER_SCORE.small === asteroidsRules.SAUCER_SCORE.large * 5
+  );
+  check(
+    // The stupidity goes in the choosing: the large saucer's spread is a full
+    // circle (it isn't aiming at all) while the small one has a real, and
+    // shrinking, aiming error.
+    "the large saucer doesn't aim and the small one does, better as score climbs",
+    asteroidsRules.saucerSpread("large", 0) === Math.PI &&
+      asteroidsRules.saucerSpread("small", 0) < asteroidsRules.saucerSpread("large", 0) &&
+      asteroidsRules.saucerSpread("small", 50000) < asteroidsRules.saucerSpread("small", 0)
+  );
+  check(
+    "saucers show up more often, and more of them are the dangerous kind, as score climbs",
+    asteroidsRules.saucerSpawnInterval(50000) < asteroidsRules.saucerSpawnInterval(0) &&
+      asteroidsRules.saucerKindChance(50000) > asteroidsRules.saucerKindChance(0)
+  );
+  check(
+    "an extra ship at ten thousand, then every ten thousand",
+    [0, 9999, 10000, 25000].map(asteroidsRules.livesEarned).join(",") === "0,0,1,2"
+  );
+  check(
+    // A real risk, not a free escape: neither a coin flip nor a rounding
+    // error away from zero.
+    "hyperspace has a real chance of killing you and a real chance of not",
+    asteroidsRules.HYPERSPACE_DEATH_CHANCE > 0.05 && asteroidsRules.HYPERSPACE_DEATH_CHANCE < 0.35
+  );
+  check(
+    "hyperspace lands somewhere on screen",
+    (() => {
+      let seed = 1;
+      const rand = () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return seed / 0x100000000;
+      };
+      return Array.from({ length: 50 }, () => asteroidsRules.hyperspaceDestination(rand)).every(
+        (p) => p.x >= 0 && p.x < asteroidsRules.GAME_W && p.y >= 0 && p.y < asteroidsRules.GAME_H
+      );
+    })()
   );
 }

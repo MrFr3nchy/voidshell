@@ -26,12 +26,12 @@ const MODULES = "packages/ui/src/modules";
  * into the kernel and the shell by design and is compiled in for that reason.
  */
 const PORTABLE = [
-  "aurora", "bell", "bubblewrap", "chaos", "chronos", "cosmos", "cradle",
+  "aurora", "bell", "bubblewrap", "chaos", "chronos", "constellation", "cosmos", "cradle",
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
   "lavalamp", "loom",
-  "lunaria", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
+  "lunaria", "meteors", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
   "sunclock",
-  "timer", "turmite",
+  "timer", "turmite", "warp",
 ];
 
 /** Every .ts file under a directory. */
