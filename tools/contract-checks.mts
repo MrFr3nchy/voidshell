@@ -31,7 +31,7 @@ const PORTABLE = [
   "lavalamp",
   "lunaria", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
   "sunclock",
-  "timer", "turmite",
+  "timer", "turmite", "warp",
 ];
 
 /** Every .ts file under a directory. */
