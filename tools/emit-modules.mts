@@ -54,6 +54,7 @@ export const STOCK_IDS = [
   "flock",
   "harmonograph",
   "lavalamp",
+  "loom",
   "lunaria",
   "mycelia",
   "orrery",

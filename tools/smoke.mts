@@ -71,6 +71,7 @@ const { flock } = await import("../packages/ui/src/modules/flock");
 const { orrery } = await import("../packages/ui/src/modules/orrery");
 const { lavalamp } = await import("../packages/ui/src/modules/lavalamp");
 const { turmite } = await import("../packages/ui/src/modules/turmite");
+const { loom } = await import("../packages/ui/src/modules/loom");
 const { chaos } = await import("../packages/ui/src/modules/chaos");
 const { sunclock } = await import("../packages/ui/src/modules/sunclock");
 const { bell } = await import("../packages/ui/src/modules/bell");
@@ -83,6 +84,7 @@ const { cartographChecks } = await import("./cartograph-checks.mts");
 const { pawnageddonChecks } = await import("./pawnageddon-checks.mts");
 const { snakesfoxesChecks } = await import("./snakesfoxes-checks.mts");
 const { myceliaChecks } = await import("./mycelia-checks.mts");
+const { loomChecks } = await import("./loom-checks.mts");
 const { createDevkit } = await import("../packages/ui/src/modules/devkit");
 const { copilot } = await import("../packages/ui/src/modules/copilot");
 const { STOCK_MODULES } = await import("../packages/ui/src/modules/stock.generated");
@@ -1236,6 +1238,17 @@ snakesfoxesChecks(check);
  * agents' nostrils switched off — and compare what the field looks like.
  */
 myceliaChecks(check);
+
+/**
+ * ---------------- loom ----------------
+ *
+ * Sixteen hand-drawn tiles look like a circuit board however they are laid
+ * out, so a grid filled by rolling a die per cell renders as a plausible and
+ * completely wrong picture that launching the module cannot tell from a
+ * solved one. These count the seams that disagree, with the propagator on and
+ * with it removed.
+ */
+loomChecks(check);
 
 /* ---------------- pawnageddon ---------------- */
 
