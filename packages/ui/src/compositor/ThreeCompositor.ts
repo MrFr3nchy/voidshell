@@ -239,6 +239,9 @@ export class ThreeCompositor implements Compositor {
   private static readonly WARP_MAX_R = 5200;
   private static readonly WARP_SPEED = 5200; // px/sec of streak growth at warpCurrent = 1
 
+  /** Undisturbed star density; twinkle oscillates around this, not over it. */
+  private baseStars = 0.55;
+
   private uniforms = {
     uTime: { value: 0 },
     uIntensity: { value: 1.0 },
@@ -274,6 +277,8 @@ export class ThreeCompositor implements Compositor {
     storms: false,
     meteors: false,
     meteorRate: 6,
+    meteorColor: null as number | null,
+    starTwinkle: 0,
     warp: false,
     compass: true,
     tethers: true,
@@ -482,7 +487,10 @@ export class ThreeCompositor implements Compositor {
     const spread = 0.35 + Math.random() * 0.55;
     const dirB = dirA.clone().addScaledVector(tangent, spread).normalize();
 
-    const color = new THREE.Color().copy(this.uniforms.uColorWarm.value).lerp(new THREE.Color(0xffffff), 0.55);
+    const color =
+      this.cfg.meteorColor !== null
+        ? new THREE.Color(this.cfg.meteorColor)
+        : new THREE.Color().copy(this.uniforms.uColorWarm.value).lerp(new THREE.Color(0xffffff), 0.55);
     const start = dirA.clone().multiplyScalar(ThreeCompositor.METEOR_RADIUS);
     const geo = new THREE.BufferGeometry().setFromPoints([start, start.clone()]);
     const mat = new THREE.LineBasicMaterial({
@@ -987,9 +995,13 @@ export class ThreeCompositor implements Compositor {
     if (typeof patch.warm === "number") this.uniforms.uColorWarm.value.setHex(patch.warm);
     if (typeof patch.voidColor === "number")
       this.uniforms.uColorVoid.value.setHex(patch.voidColor);
+    if (typeof patch.meteorColor === "number") this.cfg.meteorColor = patch.meteorColor;
 
     const stars = num("stars");
-    if (stars !== null) this.uniforms.uStars.value = stars;
+    if (stars !== null) {
+      this.baseStars = stars;
+      this.uniforms.uStars.value = stars;
+    }
     const grain = num("grain");
     if (grain !== null) this.uniforms.uGrain.value = grain;
 
@@ -1017,6 +1029,7 @@ export class ThreeCompositor implements Compositor {
       "orbitSpeed",
       "driftAmount",
       "meteorRate",
+      "starTwinkle",
       "linkOpacity",
       "linkWidth",
       "linkGlow",
@@ -1571,6 +1584,17 @@ export class ThreeCompositor implements Compositor {
         const t = this.uniforms.uTime.value;
         const pulse = 0.72 + 0.28 * (Math.sin(t * 0.11) * 0.5 + 0.5);
         this.uniforms.uIntensity.value = this.cfg.baseIntensity * pulse;
+      }
+
+      if (this.cfg.starTwinkle > 0) {
+        const t = this.uniforms.uTime.value;
+        const osc = Math.sin(t * 1.7) * 0.6 + Math.sin(t * 4.3) * 0.4;
+        this.uniforms.uStars.value = Math.max(
+          0,
+          Math.min(1, this.baseStars + osc * 0.15 * this.cfg.starTwinkle)
+        );
+      } else if (this.uniforms.uStars.value !== this.baseStars) {
+        this.uniforms.uStars.value = this.baseStars;
       }
 
       this.stepMeteors(dt);

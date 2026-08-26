@@ -28,6 +28,7 @@ const KEYS = {
   orbitSpeed: "world.orbitSpeed",
   driftAmount: "world.driftAmount",
   meteorRate: "world.meteorRate",
+  starTwinkle: "world.starTwinkle",
 } as const;
 
 const TOGGLES: {
@@ -98,6 +99,7 @@ const KNOBS: Knob[] = [
   { key: "orbitSpeed", patch: "orbitSpeed", label: "orbital speed", min: 0, max: 5, step: 0.05, def: 1, order: 23 },
   { key: "driftAmount", patch: "driftAmount", label: "drift amount", min: 0, max: 4, step: 0.05, def: 1, order: 62 },
   { key: "meteorRate", patch: "meteorRate", label: "meteor rate", min: 1, max: 20, step: 1, def: 6, order: 65, hint: "meteors per minute, on average, while the shower is on" },
+  { key: "starTwinkle", patch: "starTwinkle", label: "star twinkle", min: 0, max: 1, step: 0.05, def: 0, order: 68, hint: "a faint shimmer in the starfield behind the nebula" },
 ];
 
 const LINK_KNOBS: {
@@ -235,6 +237,122 @@ export const horizon: VoidModule = {
       ctx.state.subscribe("links.color", (v) => ctx.patchWorld({ linkColor: String(v) }))
     );
 
+    ctx.defineSetting({
+      key: "world.meteorColor",
+      label: "comet colour",
+      hint: "tints meteor streaks independent of the sky's warm pole",
+      kind: "color",
+      group: "World",
+      order: 67,
+      default: "#ffe6b0",
+    });
+    offs.push(
+      ctx.state.subscribe("world.meteorColor", (v) =>
+        ctx.patchWorld({ meteorColor: hexToNum(String(v)) })
+      )
+    );
+
+    // Warp hum: strung tone() bursts stand in for a loop the audio API
+    // deliberately doesn't offer — nothing here holds a context open past a
+    // click, it's just retriggered often enough to read as sustained.
+    ctx.defineSetting({
+      key: "world.warpSound",
+      label: "warp hum",
+      hint: "a low engine hum while warp is engaged",
+      kind: "toggle",
+      group: "World",
+      order: 66,
+      default: true,
+    });
+    let humTimer: number | undefined;
+    const stopHum = () => {
+      if (humTimer !== undefined) {
+        window.clearInterval(humTimer);
+        humTimer = undefined;
+      }
+    };
+    const syncHum = () => {
+      const on =
+        ctx.state.get<boolean>("world.warp", false) &&
+        ctx.state.get<boolean>("world.warpSound", true);
+      if (on && humTimer === undefined) {
+        humTimer = window.setInterval(() => {
+          ctx.audio.tone({
+            freq: 55 + Math.random() * 18,
+            toFreq: 34,
+            wave: "sawtooth",
+            gain: 0.05,
+            decay: 0.5,
+          });
+        }, 420);
+      } else if (!on) {
+        stopHum();
+      }
+    };
+    offs.push(ctx.state.subscribe("world.warp", syncHum));
+    offs.push(ctx.state.subscribe("world.warpSound", syncHum));
+    offs.push(stopHum);
+    syncHum();
+
+    // Screensaver: idles the ambient toggles on, remembers what they were,
+    // and puts them back the moment there's real input again.
+    ctx.defineSetting({
+      key: "world.screensaver",
+      label: "screensaver when idle",
+      hint: "storms, meteors and warp switch on after a stretch with no input, and back off the moment you touch anything",
+      kind: "toggle",
+      group: "World",
+      order: 70,
+      default: false,
+    });
+    ctx.defineSetting({
+      key: "world.screensaverMinutes",
+      label: "idle minutes",
+      kind: "slider",
+      group: "World",
+      order: 71,
+      default: 5,
+      min: 1,
+      max: 30,
+      step: 1,
+    });
+    const SCREENSAVER_TOGGLES = ["world.storms", "world.meteors", "world.warp"] as const;
+    let screensaverOn = false;
+    let saved: Record<string, boolean> | null = null;
+    let idleTimer: number | undefined;
+    const armIdleTimer = () => {
+      if (idleTimer !== undefined) {
+        window.clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+      if (!ctx.state.get<boolean>("world.screensaver", false) || screensaverOn) return;
+      const minutes = ctx.state.get<number>("world.screensaverMinutes", 5);
+      idleTimer = window.setTimeout(() => {
+        saved = Object.fromEntries(
+          SCREENSAVER_TOGGLES.map((k) => [k, ctx.state.get<boolean>(k, false)])
+        );
+        screensaverOn = true;
+        for (const k of SCREENSAVER_TOGGLES) ctx.state.set(k, true);
+      }, minutes * 60_000);
+    };
+    const wake = () => {
+      if (screensaverOn && saved) {
+        for (const k of SCREENSAVER_TOGGLES) ctx.state.set(k, saved[k]);
+        saved = null;
+        screensaverOn = false;
+      }
+      armIdleTimer();
+    };
+    const ACTIVITY_EVENTS = ["pointermove", "pointerdown", "keydown", "wheel"] as const;
+    for (const ev of ACTIVITY_EVENTS) window.addEventListener(ev, wake, { passive: true });
+    offs.push(() => {
+      for (const ev of ACTIVITY_EVENTS) window.removeEventListener(ev, wake);
+      if (idleTimer !== undefined) window.clearTimeout(idleTimer);
+    });
+    offs.push(ctx.state.subscribe("world.screensaver", wake));
+    offs.push(ctx.state.subscribe("world.screensaverMinutes", armIdleTimer));
+    armIdleTimer();
+
     for (const a of ARRANGEMENTS) {
       ctx.defineCommand({
         id: `horizon.arrange.${a.mode}`,
@@ -285,6 +403,7 @@ export const horizon: VoidModule = {
       for (const k of LINK_KNOBS) patch[k.patch] = ctx.state.get<number>(k.key, k.def);
       for (const t of LINK_TOGGLES) patch[t.patch] = ctx.state.get<boolean>(t.key, t.def);
       patch.linkColor = ctx.state.get<string>("links.color", "#4fe3d0");
+      patch.meteorColor = hexToNum(ctx.state.get<string>("world.meteorColor", "#ffe6b0"));
       ctx.patchWorld(patch);
     };
     flush();
@@ -292,3 +411,8 @@ export const horizon: VoidModule = {
     return () => offs.forEach((off) => off());
   },
 };
+
+function hexToNum(hex: string): number {
+  const n = Number.parseInt(hex.replace("#", ""), 16);
+  return Number.isFinite(n) ? n : 0x000000;
+}
