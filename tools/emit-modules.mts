@@ -57,7 +57,6 @@ export const STOCK_IDS = [
   "lavalamp",
   "loom",
   "lunaria",
-  "meteors",
   "mycelia",
   "orrery",
   "ripple",
@@ -66,7 +65,6 @@ export const STOCK_IDS = [
   "sunclock",
   "timer",
   "turmite",
-  "warp",
 ];
 
 const OUT = "packages/ui/src/modules/stock.generated.ts";
