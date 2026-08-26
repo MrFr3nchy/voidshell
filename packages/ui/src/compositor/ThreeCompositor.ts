@@ -343,7 +343,8 @@ export class ThreeCompositor implements Compositor {
     to: THREE.Vector3;
     t: number;
     duration: number;
-    faceId: string;
+    targetYaw: number;
+    targetPitch: number;
     onArrive: () => void;
   } | null = null;
   /** Eased bank angle, driven by how fast yaw is currently changing. */
@@ -1399,6 +1400,17 @@ export class ThreeCompositor implements Compositor {
     const to = b.position.clone().addScaledVector(dir, -standoff);
     to.y += b.radius * 0.9;
 
+    // The bearing is fixed once, from where the camera will end up — not
+    // re-derived every frame from where it currently is. Chasing a moving
+    // target's bearing mid-flight is what made travel read as swinging
+    // around the viewer instead of flying toward the station: the angle to
+    // a point you're approaching off-axis sweeps hard near closest approach.
+    // A single target, eased by the same smoothing normal look-around uses,
+    // turns once and settles instead of tracking continuously.
+    const arriveDir = b.position.clone().sub(to).normalize();
+    const targetYaw = Math.atan2(-arriveDir.x, -arriveDir.z);
+    const targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, arriveDir.y)))));
+
     const prevWarp = this.cfg.warp;
     this.cfg.warp = true;
     this.travelState = {
@@ -1406,7 +1418,8 @@ export class ThreeCompositor implements Compositor {
       to,
       t: 0,
       duration: 1.9,
-      faceId: id,
+      targetYaw,
+      targetPitch,
       onArrive: () => {
         this.cfg.warp = prevWarp;
         this.atStation = id;
@@ -1445,7 +1458,8 @@ export class ThreeCompositor implements Compositor {
   orbitSurface(surfaceId: string, bodyId: string | null): void {
     const p = this.panels.get(surfaceId);
     if (!p) return;
-    if (bodyId && this.bodies.has(bodyId)) {
+    const target = bodyId ? this.bodies.get(bodyId) : null;
+    if (bodyId && target) {
       if (p.dockStationId) {
         this.worldOf(p, p.anchor);
         p.dockStationId = null;
@@ -1456,7 +1470,9 @@ export class ThreeCompositor implements Compositor {
       p.orbiting = true;
       p.orbitSpeed = 0.3 + Math.random() * 0.35;
       p.phase = Math.random() * Math.PI * 2;
-      p.offset.set(0, (Math.random() - 0.5) * 70, 0);
+      // Scaled to the body: a decorative moon's tilt should be a fraction of
+      // its own small radius, not the same fixed wobble a station gets.
+      p.offset.set(0, (Math.random() - 0.5) * target.radius * 0.5, 0);
       p.el.classList.add("merged");
     } else {
       this.freeFromBody(p);
@@ -1948,14 +1964,12 @@ export class ThreeCompositor implements Compositor {
         const eased = u * u * (3 - 2 * u);
         this.camera.position.lerpVectors(s.from, s.to, eased);
 
-        const b = this.bodies.get(s.faceId);
-        if (b) {
-          const dir = b.position.clone().sub(this.camera.position).normalize();
-          this.targetYaw = Math.atan2(-dir.x, -dir.z);
-          this.yaw = this.targetYaw;
-          this.targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, dir.y)))));
-          this.pitch = this.targetPitch;
-        }
+        // The turn is a fixed target, eased the ordinary way (picked up by
+        // next frame's smoothing pass above) — not re-aimed at a moving
+        // point every frame, which is what used to make travel feel like it
+        // was swinging around the viewer instead of flying to the station.
+        this.targetYaw = s.targetYaw;
+        this.targetPitch = s.targetPitch;
 
         if (u >= 1) {
           this.camera.position.copy(s.to);
@@ -2024,7 +2038,10 @@ export class ThreeCompositor implements Compositor {
       if (b) {
         if (p.orbiting) {
           const ang = p.phase + this.uniforms.uTime.value * p.orbitSpeed;
-          const r = 190;
+          // Comfortably clear of the body's own silhouette — a moon that
+          // orbits inside its planet's radius just reads as glued to it,
+          // since a DOM panel has no real depth occlusion against the mesh.
+          const r = b.radius * 2.2 + 70;
           return out.set(
             b.position.x + Math.cos(ang) * r,
             b.position.y + p.offset.y,
@@ -2134,7 +2151,23 @@ export class ThreeCompositor implements Compositor {
       // class rules are more specific and so still win during those animations.
       const fade =
         1 - Math.min(this.cfg.fade, Math.max(0, (dist - FADE_START) / FADE_RANGE));
-      p.el.style.setProperty("--vs-depth-fade", fade.toFixed(3));
+
+      // A moon swinging around the far side of its body has no real depth
+      // test against the mesh to hide behind — panels are DOM, composited
+      // over the WebGL canvas — so this fades it out as an approximation,
+      // rather than letting it float in front of a planet it should be
+      // behind for half of every orbit.
+      let occl = 1;
+      if (p.orbiting && p.bodyId) {
+        const b = this.bodies.get(p.bodyId);
+        if (b) {
+          const toPanel = this.tmpCam.copy(this.tmpWorld).sub(b.position).normalize();
+          const toCam = this.tmpNdc.copy(camPos).sub(b.position).normalize();
+          const facing = toPanel.dot(toCam);
+          occl = facing > 0 ? 1 : Math.max(0.2, 1 + facing * 1.4);
+        }
+      }
+      p.el.style.setProperty("--vs-depth-fade", (fade * occl).toFixed(3));
     }
   }
 

@@ -2430,7 +2430,8 @@ body.vs-dropping #void::after {
   letter-spacing: 0.18em;
 }
 .sb-procs,
-.sb-bell {
+.sb-bell,
+.sb-stations {
   border: 0;
   background: none;
   padding: 0;
@@ -2443,8 +2444,13 @@ body.vs-dropping #void::after {
 }
 .sb-procs:hover,
 .sb-bell:hover,
-.sb-bell.open {
+.sb-bell.open,
+.sb-stations:hover,
+.sb-stations.open {
   color: var(--cyan);
+}
+.sb-stations {
+  font-size: 12px;
 }
 .sb-bell {
   position: relative;
@@ -2549,6 +2555,79 @@ body.vs-dropping #void::after {
 .sb-pop-more:hover {
   color: var(--cyan);
   background: var(--glass-hi);
+}
+
+.sb-station-found {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px 10px;
+}
+.sb-station-kind {
+  flex: 1;
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 0;
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sb-station-kind:hover {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 8%, transparent);
+}
+.sb-station-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  font-size: 11px;
+  border-top: 1px solid rgba(150, 185, 255, 0.08);
+  color: var(--text);
+}
+.sb-station-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-station-travel {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sb-station-travel:hover {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 8%, transparent);
+}
+.sb-station-travel:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.sb-station-kill {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 1px;
+}
+.sb-station-kill:hover {
+  color: var(--ember);
 }
 
 /* ---------- Lock / power ---------- */

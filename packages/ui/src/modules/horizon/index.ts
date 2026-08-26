@@ -1,4 +1,4 @@
-import type { ArrangeMode, KernelContext, VoidModule } from "../../kernel/types";
+import type { ArrangeMode, KernelContext, StationKind, VoidModule } from "../../kernel/types";
 
 /**
  * Horizon owns how the void *behaves*: how fast it turns, how far you can see,
@@ -176,6 +176,12 @@ const ARRANGEMENTS: { mode: ArrangeMode; label: string; glyph: string }[] = [
   { mode: "wall", label: "arrange \u2014 wall", glyph: "\u25a6" },
   { mode: "ring", label: "arrange \u2014 ring around you", glyph: "\u25cb" },
   { mode: "scatter", label: "arrange \u2014 scatter", glyph: "\u2237" },
+];
+
+const STATION_KINDS: { kind: StationKind; label: string; glyph: string }[] = [
+  { kind: "rock", label: "found a station \u2014 rocky outpost", glyph: "\u25c9" },
+  { kind: "giant", label: "found a station \u2014 gas giant", glyph: "\u25d5" },
+  { kind: "ring", label: "found a station \u2014 ring waystation", glyph: "\u29b8" },
 ];
 
 export const horizon: VoidModule = {
@@ -448,6 +454,23 @@ export const horizon: VoidModule = {
       glyph: "\u2316",
       run: (c) => c.resetView(),
     });
+
+    // Creation and travel live in the command palette, the void's own
+    // right-click menu, and the status bar's stations pill \u2014 never behind a
+    // window that has to stay open, which is what made travelling anywhere
+    // a second time mean reopening the thing that sent you there.
+    for (const s of STATION_KINDS) {
+      ctx.defineCommand({
+        id: `horizon.station.${s.kind}`,
+        label: s.label,
+        hint: "a fixed place, out where you're looking \u2014 travel to it later from the status bar",
+        glyph: s.glyph,
+        run: (c) => {
+          c.spawnStation(s.kind);
+          c.notify("founded \u2014 travel to it from the stations pill", "good");
+        },
+      });
+    }
 
     ctx.defineSetting({
       key: "world.arrange",
