@@ -81,6 +81,7 @@ const DEFAULTS: Record<string, string> = {
   turmite: "toys",
   mycelia: "toys",
   chaos: "toys",
+  warp: "toys",
 
   arcade: "games",
   pawnageddon: "games",
