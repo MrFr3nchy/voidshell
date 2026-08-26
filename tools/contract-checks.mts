@@ -26,7 +26,7 @@ const MODULES = "packages/ui/src/modules";
  * into the kernel and the shell by design and is compiled in for that reason.
  */
 const PORTABLE = [
-  "aurora", "bell", "bubblewrap", "chaos", "chronos", "cosmos", "cradle",
+  "aurora", "bell", "bubblewrap", "chaos", "chronos", "constellation", "cosmos", "cradle",
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
   "lavalamp",
   "lunaria", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",

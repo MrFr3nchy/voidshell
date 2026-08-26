@@ -71,6 +71,7 @@ const DEFAULTS: Record<string, string> = {
   bell: "instruments",
 
   cradle: "toys",
+  constellation: "toys",
   driftfield: "toys",
   sandbox: "toys",
   harmonograph: "toys",
