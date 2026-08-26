@@ -25,6 +25,13 @@ export interface Vec3 {
 /** The kinds of celestial body the world can hold. */
 export type BodyKind = "sun" | "moon" | "planet" | "singularity";
 
+/**
+ * A station is a place, not a decoration: it holds a fixed position instead
+ * of orbiting the origin, so it's something you can travel *to* rather than
+ * just something that drifts past.
+ */
+export type StationKind = "rock" | "giant" | "ring";
+
 /** How `arrange` should re-lay-out every open window at once. */
 export type ArrangeMode = "arc" | "ring" | "wall" | "scatter";
 
@@ -145,6 +152,27 @@ export interface Compositor {
   attachSurface?(surfaceId: string, bodyId: string | null): void;
   /** Everything currently orbiting out there. */
   listBodies?(): { id: string; kind: BodyKind }[];
+  /** Found a station at a fixed point in the void. Returns its id. */
+  spawnStation?(kind: StationKind, name?: string): string;
+  /** Every station that's been founded. */
+  listStations?(): { id: string; kind: StationKind; name: string }[];
+  renameStation?(id: string, name: string): void;
+  /** Remove a station and release anything docked or orbiting it. */
+  destroyStation?(id: string): void;
+  /** Ease the camera to a station, warping for the trip. */
+  travelTo?(id: string): void;
+  /**
+   * Fix a surface onto a station's surface, seen from orbit rather than
+   * riding along — pass null to release it.
+   */
+  dockSurface?(surfaceId: string, stationId: string | null): void;
+  /**
+   * Like `attachSurface`, but the window actually orbits the body instead of
+   * sitting at a fixed offset from it — a moon, not a decoration.
+   */
+  orbitSurface?(surfaceId: string, bodyId: string | null): void;
+  /** The station last arrived at, or null if you've never travelled. */
+  currentStation?(): string | null;
   /**
    * Mount arbitrary DOM at a world position — desktop icons, labels, markers.
    * Lighter than a Surface: no chrome, no depth control, just projection.
@@ -473,6 +501,31 @@ export interface KernelContext {
   attachSurface(surfaceId: string, bodyId: string | null): void;
   /** The bodies currently in the sky. */
   listBodies(): { id: string; kind: BodyKind }[];
+  /**
+   * Found a station: unlike `spawnBody`'s decorative orbiters, it holds a
+   * fixed position, so it's a place you can `travelTo` rather than something
+   * that drifts past. Returns its id (empty string if unsupported).
+   */
+  spawnStation(kind: StationKind, name?: string): string;
+  /** Every station that's been founded. */
+  listStations(): { id: string; kind: StationKind; name: string }[];
+  renameStation(id: string, name: string): void;
+  /** Remove a station and release anything docked or orbiting it. */
+  destroyStation(id: string): void;
+  /** Ease the camera to a station over a few seconds, warping for the trip. */
+  travelTo(id: string): void;
+  /**
+   * Fix a window onto a station's surface — seen from orbit, not riding
+   * along with it — or pass null to release it.
+   */
+  dockSurface(surfaceId: string, stationId: string | null): void;
+  /**
+   * Like `attachSurface`, but the window genuinely orbits the body instead
+   * of sitting at a fixed offset from it: a moon, not a decoration.
+   */
+  orbitSurface(surfaceId: string, bodyId: string | null): void;
+  /** The station last arrived at via `travelTo`, or null. */
+  currentStation(): string | null;
   /** Constellations: windows that move and travel as one. */
   linkSurfaces(ids: string[], name?: string, style?: GroupStyle): string;
   unlinkGroup(id: string): void;

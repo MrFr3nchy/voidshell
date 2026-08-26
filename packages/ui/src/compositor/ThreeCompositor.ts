@@ -7,11 +7,13 @@ import type {
   CompositorStats,
   GroupInfo,
   GroupStyle,
+  StationKind,
   Surface,
   SurfacePlacement,
   Vec3,
 } from "../kernel/types";
 import { nebulaFragment, nebulaVertex } from "../world/nebulaShader";
+import { giantFragment, planetVertex, rockFragment } from "../world/planetShader";
 import { Compass, type CompassItem } from "../ui/compass";
 import { showContextMenu } from "../ui/contextMenu";
 import {
@@ -44,6 +46,14 @@ interface PanelEntry {
   bodyId: string | null;
   /** World-space offset from a body when merged. */
   offset: THREE.Vector3;
+  /** True when riding `bodyId` as an actual moon rather than a fixed offset. */
+  orbiting: boolean;
+  /** Radians/sec around the body, only meaningful while `orbiting`. */
+  orbitSpeed: number;
+  /** Fixed onto a station's surface, seen from orbit — mutually exclusive with bodyId. */
+  dockStationId: string | null;
+  dockLat: number;
+  dockLon: number;
   groupId: string | null;
   /** Pinned panels leave the world and stick to the glass of the screen. */
   pinned: boolean;
@@ -114,7 +124,7 @@ interface MeteorEntity {
 
 interface BodyEntry {
   id: string;
-  kind: BodyKind;
+  kind: BodyKind | StationKind;
   group: THREE.Group;
   position: THREE.Vector3;
   radius: number;
@@ -122,9 +132,17 @@ interface BodyEntry {
   phase: number;
   speed: number;
   spin: number;
+  /** Accumulated self-rotation. Tracked separately from `group.rotation.y` so
+   *  docked panels can apply the same turn to their surface position. */
+  spinAngle: number;
   sx: number;
   sy: number;
   onScreen: boolean;
+  /** A station: skips the origin-orbit update, holds still where it was founded. */
+  fixed: boolean;
+  /** A station, as opposed to one of Cosmos's decorative orbiters. */
+  station: boolean;
+  name: string;
 }
 
 interface GroupEntry {
@@ -213,6 +231,14 @@ export class ThreeCompositor implements Compositor {
 
   private nebula!: THREE.Mesh;
   private particles!: THREE.Points;
+  /**
+   * The nebula, dust and warp field all live under here instead of directly
+   * in the scene, and this group re-centres on the camera every frame. They
+   * were built assuming the camera never moves — true right up until travel
+   * — so without this, arriving at a station would leave the "ambient sky"
+   * sitting back near the origin instead of around the viewer.
+   */
+  private voidGroup = new THREE.Group();
   private tethers!: TetherLayer;
   private snapGhost!: HTMLElement;
 
@@ -299,6 +325,17 @@ export class ThreeCompositor implements Compositor {
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
+  /** The station last arrived at via travelTo, or null. */
+  private atStation: string | null = null;
+  /** An in-flight camera translation between stations, or null when parked. */
+  private travelState: {
+    from: THREE.Vector3;
+    to: THREE.Vector3;
+    t: number;
+    duration: number;
+    faceId: string;
+    onArrive: () => void;
+  } | null = null;
   private raf = 0;
   private fps = 60;
 
@@ -334,13 +371,14 @@ export class ThreeCompositor implements Compositor {
         uniforms: this.uniforms,
       })
     );
-    this.scene.add(this.nebula);
+    this.scene.add(this.voidGroup);
+    this.voidGroup.add(this.nebula);
 
     this.particles = this.makeParticles(this.cfg.dust);
-    this.scene.add(this.particles);
+    this.voidGroup.add(this.particles);
 
     this.warpField = this.makeWarpField(ThreeCompositor.WARP_COUNT);
-    this.scene.add(this.warpField);
+    this.voidGroup.add(this.warpField);
 
     // Tethers live under the panels so a link line never eats a click. The
     // threads are also controls: clicking one hardens or loosens that bond.
@@ -493,7 +531,7 @@ export class ThreeCompositor implements Compositor {
       depthWrite: false,
     });
     const obj = new THREE.Line(geo, mat);
-    this.scene.add(obj);
+    this.voidGroup.add(obj);
     this.meteors.push({ obj, geo, mat, t: 0, life: 0.55 + Math.random() * 0.5, dirA, dirB });
   }
 
@@ -511,7 +549,7 @@ export class ThreeCompositor implements Compositor {
       const m = this.meteors[i];
       m.t += dt / m.life;
       if (m.t >= 1) {
-        this.scene.remove(m.obj);
+        this.voidGroup.remove(m.obj);
         m.geo.dispose();
         m.mat.dispose();
         this.meteors.splice(i, 1);
@@ -583,6 +621,11 @@ export class ThreeCompositor implements Compositor {
       anchor,
       bodyId: null,
       offset: new THREE.Vector3(),
+      orbiting: false,
+      orbitSpeed: 0,
+      dockStationId: null,
+      dockLat: 0,
+      dockLon: 0,
       groupId: null,
       pinned: false,
       pinX: 0,
@@ -933,7 +976,7 @@ export class ThreeCompositor implements Compositor {
           pinned: p.pinned,
           minimized: p.minimized,
           snapped: Boolean(p.snap),
-          merged: Boolean(p.bodyId),
+          merged: Boolean(p.bodyId) || Boolean(p.dockStationId),
           form: p.form,
           group: g ? { color: g.color, rigid: g.rigid } : null,
         },
@@ -944,6 +987,8 @@ export class ThreeCompositor implements Compositor {
           snapLeft: () => this.toggleSnap(id, "left"),
           snapRight: () => this.toggleSnap(id, "right"),
           nudge: (dir) => this.nudgeDepth(id, dir),
+          // Clears bodyId, orbiting and dockStationId together — whichever
+          // of the three this window was actually in.
           release: () => this.attachSurface(id, null),
           setForm: (formId) => this.setSurfaceForm(id, formId),
           setRigid: (rigid) => this.setGroupRigid(p.groupId, rigid),
@@ -1003,10 +1048,10 @@ export class ThreeCompositor implements Compositor {
     const dust = num("dust");
     if (dust !== null && Math.round(dust) !== this.cfg.dust) {
       this.cfg.dust = Math.round(dust);
-      this.scene.remove(this.particles);
+      this.voidGroup.remove(this.particles);
       this.particles.geometry.dispose();
       this.particles = this.makeParticles(this.cfg.dust);
-      this.scene.add(this.particles);
+      this.voidGroup.add(this.particles);
     }
 
     for (const key of [
@@ -1149,9 +1194,13 @@ export class ThreeCompositor implements Compositor {
       phase,
       speed: 0.02 + Math.random() * 0.04,
       spin: 0.12 + Math.random() * 0.25,
+      spinAngle: 0,
       sx: 0,
       sy: 0,
       onScreen: false,
+      fixed: false,
+      station: false,
+      name: "",
     };
     this.positionBody(entry);
     this.scene.add(group);
@@ -1165,6 +1214,225 @@ export class ThreeCompositor implements Compositor {
     for (const p of this.panels.values()) if (p.bodyId === id) this.freeFromBody(p);
     this.scene.remove(b.group);
     this.bodies.delete(id);
+  }
+
+  /* ---------------- stations: fixed places you can travel to ---------------- */
+
+  private makeStation(kind: StationKind): THREE.Group {
+    const g = new THREE.Group();
+    const seed = Math.random() * 1000;
+
+    if (kind === "ring") {
+      // A hub with a wide habitat ring, not a shaded sphere — the geometry
+      // alone reads as built rather than natural, no shader needed.
+      g.add(sphere(70, 0x8fa4c8));
+      g.add(glowSphere(96, 0x9fd8ff, 0.16));
+      for (const [inner, outer, color, tilt] of [
+        [190, 260, 0xbcd6ff, 0.06],
+        [230, 236, 0xffe6b0, 0.06],
+      ] as const) {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(inner, outer, 96),
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.7,
+            side: THREE.DoubleSide,
+          })
+        );
+        ring.rotation.x = Math.PI * 0.5 + tilt;
+        g.add(ring);
+      }
+      return g;
+    }
+
+    const rock = kind === "rock";
+    const palette = rock
+      ? { a: 0x3d5a80, b: 0x8ea888, accent: 0xdfe9c4 }
+      : { a: 0xb9793f, b: 0xe8c27a, accent: 0xffe9b0 };
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: planetVertex,
+      fragmentShader: rock ? rockFragment : giantFragment,
+      uniforms: {
+        uTime: { value: 0 },
+        uSeed: { value: seed },
+        uColorA: { value: new THREE.Color(palette.a) },
+        uColorB: { value: new THREE.Color(palette.b) },
+        uColorAccent: { value: new THREE.Color(palette.accent) },
+        uLightDir: { value: new THREE.Vector3(0.6, 0.45, 0.65).normalize() },
+      },
+    });
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(rock ? 240 : 320, 48, 48),
+      mat
+    );
+    // `userData` carries the material back to the per-frame time update and
+    // to disposal, without a parallel map keyed by body id.
+    body.userData.shaderMat = mat;
+    g.add(body);
+    if (!rock) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(400, 480, 96),
+        new THREE.MeshBasicMaterial({
+          color: palette.accent,
+          transparent: true,
+          opacity: 0.28,
+          side: THREE.DoubleSide,
+        })
+      );
+      ring.rotation.x = Math.PI * 0.44;
+      g.add(ring);
+    }
+    return g;
+  }
+
+  private stationRadius(kind: StationKind): number {
+    return kind === "giant" ? 320 : kind === "ring" ? 260 : 240;
+  }
+
+  spawnStation(kind: StationKind, name?: string): string {
+    const id = `station-${++this.bodyCounter}`;
+    const group = this.makeStation(kind);
+    const dist = 3200 + Math.random() * 900;
+    const position = this.forward().multiplyScalar(dist).add(this.camera.position);
+
+    const entry: BodyEntry = {
+      id,
+      kind,
+      group,
+      position,
+      radius: this.stationRadius(kind),
+      elevation: 0,
+      phase: 0,
+      speed: 0,
+      spin: 0.025 + Math.random() * 0.02,
+      spinAngle: Math.random() * Math.PI * 2,
+      sx: 0,
+      sy: 0,
+      onScreen: false,
+      fixed: true,
+      station: true,
+      name: name?.trim() || defaultStationName(kind, this.bodyCounter),
+    };
+    group.position.copy(position);
+    group.rotation.y = entry.spinAngle;
+    this.scene.add(group);
+    this.bodies.set(id, entry);
+    return id;
+  }
+
+  listStations(): { id: string; kind: StationKind; name: string }[] {
+    return [...this.bodies.values()]
+      .filter((b) => b.station)
+      .map((b) => ({ id: b.id, kind: b.kind as StationKind, name: b.name }));
+  }
+
+  renameStation(id: string, name: string): void {
+    const b = this.bodies.get(id);
+    if (!b?.station) return;
+    b.name = name.trim() || b.name;
+  }
+
+  destroyStation(id: string): void {
+    const b = this.bodies.get(id);
+    if (!b?.station) return;
+    for (const p of this.panels.values()) {
+      if (p.dockStationId === id) {
+        // Freeze it where it visually sat rather than snapping to a stale
+        // anchor from before it was ever docked.
+        this.worldOf(p, p.anchor);
+        p.dockStationId = null;
+        p.el.classList.remove("docked");
+      } else if (p.bodyId === id) {
+        this.freeFromBody(p);
+      }
+    }
+    this.scene.remove(b.group);
+    disposeGroup(b.group);
+    this.bodies.delete(id);
+    if (this.atStation === id) this.atStation = null;
+  }
+
+  currentStation(): string | null {
+    return this.atStation;
+  }
+
+  travelTo(id: string): void {
+    const b = this.bodies.get(id);
+    if (!b?.station) return;
+
+    let dir = b.position.clone().sub(this.camera.position);
+    if (dir.lengthSq() < 1) dir = this.forward();
+    dir.normalize();
+
+    // Back off along the approach line and lift a little, so arrival reads
+    // as pulling into orbit rather than flying straight into the globe.
+    const standoff = b.radius * 5.2;
+    const to = b.position.clone().addScaledVector(dir, -standoff);
+    to.y += b.radius * 0.9;
+
+    const prevWarp = this.cfg.warp;
+    this.cfg.warp = true;
+    this.travelState = {
+      from: this.camera.position.clone(),
+      to,
+      t: 0,
+      duration: 1.9,
+      faceId: id,
+      onArrive: () => {
+        this.cfg.warp = prevWarp;
+        this.atStation = id;
+      },
+    };
+  }
+
+  private freeDockSlot(stationId: string): { lat: number; lon: number } {
+    const count = [...this.panels.values()].filter(
+      (p) => p.dockStationId === stationId
+    ).length;
+    const GOLDEN = 2.399963; // golden angle, radians — spreads slots without overlap
+    const lat = 0.9 - (count % 5) * 0.42;
+    return { lat: Math.max(-1.1, Math.min(1.1, lat)), lon: count * GOLDEN };
+  }
+
+  dockSurface(surfaceId: string, stationId: string | null): void {
+    const p = this.panels.get(surfaceId);
+    if (!p) return;
+    if (stationId && this.bodies.get(stationId)?.station) {
+      p.bodyId = null;
+      p.orbiting = false;
+      p.el.classList.remove("merged");
+      const slot = this.freeDockSlot(stationId);
+      p.dockStationId = stationId;
+      p.dockLat = slot.lat;
+      p.dockLon = slot.lon;
+      p.el.classList.add("docked");
+    } else if (p.dockStationId) {
+      this.worldOf(p, p.anchor);
+      p.dockStationId = null;
+      p.el.classList.remove("docked");
+    }
+  }
+
+  orbitSurface(surfaceId: string, bodyId: string | null): void {
+    const p = this.panels.get(surfaceId);
+    if (!p) return;
+    if (bodyId && this.bodies.has(bodyId)) {
+      if (p.dockStationId) {
+        this.worldOf(p, p.anchor);
+        p.dockStationId = null;
+        p.el.classList.remove("docked");
+      }
+      this.freeFromBody(p);
+      p.bodyId = bodyId;
+      p.orbiting = true;
+      p.orbitSpeed = 0.3 + Math.random() * 0.35;
+      p.phase = Math.random() * Math.PI * 2;
+      p.offset.set(0, (Math.random() - 0.5) * 70, 0);
+      p.el.classList.add("merged");
+    } else {
+      this.freeFromBody(p);
+    }
   }
 
   private makeBody(kind: BodyKind): THREE.Group {
@@ -1224,18 +1492,27 @@ export class ThreeCompositor implements Compositor {
   attachSurface(surfaceId: string, bodyId: string | null): void {
     const p = this.panels.get(surfaceId);
     if (!p) return;
+    if (p.dockStationId) {
+      this.worldOf(p, p.anchor);
+      p.dockStationId = null;
+      p.el.classList.remove("docked");
+    }
     if (bodyId && this.bodies.has(bodyId)) {
       p.bodyId = bodyId;
+      p.orbiting = false;
       p.offset.set(150, 120, 0);
       p.el.classList.add("merged");
     } else {
       p.bodyId = null;
+      p.orbiting = false;
       p.el.classList.remove("merged");
     }
   }
 
   listBodies(): { id: string; kind: BodyKind }[] {
-    return [...this.bodies.values()].map((b) => ({ id: b.id, kind: b.kind }));
+    return [...this.bodies.values()]
+      .filter((b) => !b.station)
+      .map((b) => ({ id: b.id, kind: b.kind as BodyKind }));
   }
 
   /* ------------------------------------------------------------------ */
@@ -1427,8 +1704,11 @@ export class ThreeCompositor implements Compositor {
 
   arrange(mode: ArrangeMode): void {
     // Snapped and pinned windows aren't in the world, so a formation has
-    // nowhere to put them.
-    const list = [...this.panels.values()].filter((p) => !p.pinned && !p.snap);
+    // nowhere to put them. A docked window is a fixture of the station it's
+    // on, the same reasoning — it stays put rather than joining the sweep.
+    const list = [...this.panels.values()].filter(
+      (p) => !p.pinned && !p.snap && !p.dockStationId
+    );
     const n = list.length;
     if (!n) return;
 
@@ -1583,11 +1863,50 @@ export class ThreeCompositor implements Compositor {
       if (Math.abs(this.warpCurrent - warpTarget) < 0.001) this.warpCurrent = warpTarget;
       this.stepWarpField(dt);
 
+      // A station holds still — no phase update — but keeps spinning in
+      // place, and that spin is tracked as a number rather than left to
+      // `group.rotation.y` alone so a docked panel's surface position can
+      // apply the exact same turn.
       for (const b of this.bodies.values()) {
-        b.phase += dt * b.speed * this.cfg.orbitSpeed;
-        this.positionBody(b);
-        b.group.rotation.y += dt * b.spin * this.cfg.orbitSpeed;
+        if (!b.fixed) {
+          b.phase += dt * b.speed * this.cfg.orbitSpeed;
+          this.positionBody(b);
+        }
+        b.spinAngle += dt * b.spin * this.cfg.orbitSpeed;
+        b.group.rotation.y = b.spinAngle;
+        const mat = b.group.children.find((c) => c.userData.shaderMat)?.userData
+          .shaderMat as THREE.ShaderMaterial | undefined;
+        if (mat) mat.uniforms.uTime.value = this.uniforms.uTime.value;
       }
+
+      if (this.travelState) {
+        const s = this.travelState;
+        s.t += dt;
+        const u = Math.min(1, s.t / s.duration);
+        const eased = u * u * (3 - 2 * u);
+        this.camera.position.lerpVectors(s.from, s.to, eased);
+
+        const b = this.bodies.get(s.faceId);
+        if (b) {
+          const dir = b.position.clone().sub(this.camera.position).normalize();
+          this.targetYaw = Math.atan2(-dir.x, -dir.z);
+          this.yaw = this.targetYaw;
+          this.targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, dir.y)))));
+          this.pitch = this.targetPitch;
+        }
+
+        if (u >= 1) {
+          this.camera.position.copy(s.to);
+          this.travelState = null;
+          s.onArrive();
+        }
+      }
+
+      // The nebula, dust and warp field were built assuming the camera never
+      // left the origin — true until travel existed. Re-centring the group
+      // that holds them is what keeps the sky surrounding the viewer instead
+      // of it drifting toward wherever the origin happens to be.
+      this.voidGroup.position.copy(this.camera.position);
 
       this.renderer.render(this.scene, this.camera);
       this.projectBodies();
@@ -1630,9 +1949,28 @@ export class ThreeCompositor implements Compositor {
 
   /** Where a panel actually sits right now, body-ride and drift included. */
   private worldOf(p: PanelEntry, out: THREE.Vector3): THREE.Vector3 {
+    if (p.dockStationId) {
+      const b = this.bodies.get(p.dockStationId);
+      if (b) {
+        const local = sphericalOffset(p.dockLat, p.dockLon, b.radius + 46);
+        local.applyAxisAngle(UP_AXIS, b.spinAngle);
+        return out.copy(b.position).add(local);
+      }
+    }
     if (p.bodyId) {
       const b = this.bodies.get(p.bodyId);
-      if (b) return out.copy(b.position).add(p.offset);
+      if (b) {
+        if (p.orbiting) {
+          const ang = p.phase + this.uniforms.uTime.value * p.orbitSpeed;
+          const r = 190;
+          return out.set(
+            b.position.x + Math.cos(ang) * r,
+            b.position.y + p.offset.y,
+            b.position.z + Math.sin(ang) * r
+          );
+        }
+        return out.copy(b.position).add(p.offset);
+      }
     }
     out.copy(p.anchor);
     if (this.cfg.drift) {
@@ -2283,9 +2621,9 @@ export class ThreeCompositor implements Compositor {
    */
   private freeFromBody(p: PanelEntry): void {
     if (!p.bodyId) return;
-    const b = this.bodies.get(p.bodyId);
-    if (b) p.anchor.copy(b.position).add(p.offset);
+    if (this.bodies.has(p.bodyId)) this.worldOf(p, p.anchor);
     p.bodyId = null;
+    p.orbiting = false;
     p.el.classList.remove("merged");
   }
 
@@ -2353,11 +2691,13 @@ export class ThreeCompositor implements Compositor {
     // the life of a session rather than once at boot — leaving them for the
     // GC would leak a Line and a Material every few seconds a shower runs.
     for (const m of this.meteors) {
-      this.scene.remove(m.obj);
+      this.voidGroup.remove(m.obj);
       m.geo.dispose();
       m.mat.dispose();
     }
     this.meteors = [];
+    for (const b of this.bodies.values()) if (b.station) disposeGroup(b.group);
+    this.travelState = null;
     this.compass?.dispose();
     this.renderer.dispose();
   }
@@ -2397,4 +2737,40 @@ function glowSphere(r: number, color: number, opacity: number): THREE.Mesh {
       depthWrite: false,
     })
   );
+}
+
+const UP_AXIS = new THREE.Vector3(0, 1, 0);
+
+/** A point on a sphere of radius `r`, in the body's local (unrotated) frame. */
+function sphericalOffset(lat: number, lon: number, r: number): THREE.Vector3 {
+  const cl = Math.cos(lat);
+  return new THREE.Vector3(cl * Math.cos(lon) * r, Math.sin(lat) * r, cl * Math.sin(lon) * r);
+}
+
+const STATION_NAMES: Record<StationKind, string> = {
+  rock: "outpost",
+  giant: "refinery",
+  ring: "waystation",
+};
+
+function defaultStationName(kind: StationKind, n: number): string {
+  return `${STATION_NAMES[kind]}-${n}`;
+}
+
+/**
+ * Recursively free GPU resources for a group built by `makeStation`.
+ *
+ * `destroyBody`'s decorative spheres are never disposed — a pre-existing gap
+ * this doesn't attempt to close — but a station's `ShaderMaterial` is a
+ * heavier object worth not leaking, and stations are the one body kind a
+ * session is likely to create and destroy repeatedly while it's still open.
+ */
+function disposeGroup(g: THREE.Object3D): void {
+  g.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.geometry.dispose();
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) m.dispose();
+    }
+  });
 }

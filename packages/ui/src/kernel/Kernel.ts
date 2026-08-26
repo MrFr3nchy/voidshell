@@ -50,6 +50,7 @@ import type {
   NotifyOptions,
   SettingDef,
   StageApi,
+  StationKind,
   Surface,
   SurfacePlacement,
   SurfaceRequest,
@@ -466,6 +467,15 @@ export class Kernel {
       destroyBody: (id) => this.compositor.destroyBody?.(id),
       attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
       listBodies: () => this.compositor.listBodies?.() ?? [],
+      spawnStation: (kind: StationKind, name?: string) =>
+        this.compositor.spawnStation?.(kind, name) ?? "",
+      listStations: () => this.compositor.listStations?.() ?? [],
+      renameStation: (id, name) => this.compositor.renameStation?.(id, name),
+      destroyStation: (id) => this.compositor.destroyStation?.(id),
+      travelTo: (id) => this.compositor.travelTo?.(id),
+      dockSurface: (sid, stid) => this.compositor.dockSurface?.(sid, stid),
+      orbitSurface: (sid, bid) => this.compositor.orbitSurface?.(sid, bid),
+      currentStation: () => this.compositor.currentStation?.() ?? null,
       linkSurfaces: (ids, name) =>
         this.compositor.linkSurfaces?.(ids, name) ?? "",
       unlinkGroup: (id) => this.compositor.unlinkGroup?.(id),

@@ -62,6 +62,7 @@ export const STOCK_IDS = [
   "ripple",
   "sandbox",
   "snakesfoxes",
+  "stations",
   "sunclock",
   "timer",
   "turmite",

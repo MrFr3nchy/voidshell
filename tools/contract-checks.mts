@@ -30,7 +30,7 @@ const PORTABLE = [
   "calculator", "dashboards", "driftfield", "flock", "harmonograph", "horizon",
   "lavalamp", "loom",
   "lunaria", "mycelia", "orrery", "portal", "ripple", "sandbox", "settings", "snakesfoxes",
-  "sunclock",
+  "stations", "sunclock",
   "timer", "turmite",
 ];
 

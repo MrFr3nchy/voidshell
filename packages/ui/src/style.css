@@ -128,6 +128,10 @@ button {
   content: " \2609";
   color: var(--ember);
 }
+.vs-panel.docked .vs-panel-title::after {
+  content: " \2693";
+  color: var(--cyan);
+}
 .vs-panel.pinned {
   border-style: dashed;
 }
@@ -2201,6 +2205,83 @@ body.vs-dropping #void::after {
   padding: 7px 8px;
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+/* ---------- Stations ---------- */
+.stn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.stn-empty {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.stn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--glass);
+}
+.stn-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stn-icon-btn {
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.stn-icon-btn:hover {
+  border-color: var(--cyan);
+  color: var(--text);
+}
+.stn-travel {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 5px 10px;
+  font-size: 10px;
+}
+.stn-travel:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.stn-pick {
+  flex: 0 0 auto;
+  width: 108px;
+  margin-bottom: 0;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+.stn-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--void-1);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 /* ---------- Boot ignition ---------- */
