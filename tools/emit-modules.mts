@@ -47,6 +47,7 @@ export const STOCK_IDS = [
   "calculator",
   "chaos",
   "chronos",
+  "constellation",
   "cosmos",
   "cradle",
   "dashboards",
