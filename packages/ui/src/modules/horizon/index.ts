@@ -29,6 +29,7 @@ const KEYS = {
   driftAmount: "world.driftAmount",
   meteorRate: "world.meteorRate",
   starTwinkle: "world.starTwinkle",
+  bloom: "world.bloom",
 } as const;
 
 const TOGGLES: {
@@ -87,6 +88,30 @@ const TOGGLES: {
     def: false,
     order: 64,
   },
+  {
+    key: "world.cameraRoll",
+    patch: "cameraRoll",
+    label: "camera roll",
+    hint: "a slight bank into a fast turn, like a ship rather than a menu",
+    def: true,
+    order: 7,
+  },
+  {
+    key: "world.clickEcho",
+    patch: "clickEcho",
+    label: "click echo",
+    hint: "a soft ring where you click in open space",
+    def: true,
+    order: 8,
+  },
+  {
+    key: "world.inertia",
+    patch: "inertia",
+    label: "window inertia",
+    hint: "a thrown window keeps a little momentum instead of stopping dead",
+    def: true,
+    order: 26,
+  },
 ];
 
 const KNOBS: Knob[] = [
@@ -100,6 +125,7 @@ const KNOBS: Knob[] = [
   { key: "driftAmount", patch: "driftAmount", label: "drift amount", min: 0, max: 4, step: 0.05, def: 1, order: 62 },
   { key: "meteorRate", patch: "meteorRate", label: "meteor rate", min: 1, max: 20, step: 1, def: 6, order: 65, hint: "meteors per minute, on average, while the shower is on" },
   { key: "starTwinkle", patch: "starTwinkle", label: "star twinkle", min: 0, max: 1, step: 0.05, def: 0, order: 68, hint: "a faint shimmer in the starfield behind the nebula" },
+  { key: "bloom", patch: "bloom", label: "bloom", min: 0.5, max: 2.5, step: 0.05, def: 1, order: 24, hint: "brightens the nebula and every glow together" },
 ];
 
 const LINK_KNOBS: {
@@ -127,6 +153,14 @@ const LINK_TOGGLES: {
   order: number;
 }[] = [
   { key: "links.labels", patch: "linkLabels", label: "show constellation names", def: true, order: 14 },
+  {
+    key: "links.pulse",
+    patch: "linkPulse",
+    label: "thread pulse",
+    hint: "brightness breathes instead of sitting flat",
+    def: false,
+    order: 15,
+  },
   {
     key: "links.orbit",
     patch: "linkOrbit",
@@ -352,6 +386,47 @@ export const horizon: VoidModule = {
     offs.push(ctx.state.subscribe("world.screensaver", wake));
     offs.push(ctx.state.subscribe("world.screensaverMinutes", armIdleTimer));
     armIdleTimer();
+
+    // Depth haze and the compass trail are CSS-only: no compositor tunable to
+    // own, just a root custom property the stylesheet already multiplies by
+    // (--vs-depth-fade, --pip-speed), so patchWorld has nothing to do here.
+    ctx.defineSetting({
+      key: "world.depthHaze",
+      label: "depth haze",
+      hint: "distant windows lose a little colour, as if seen through more space",
+      kind: "toggle",
+      group: "World",
+      order: 27,
+      default: false,
+    });
+    ctx.defineSetting({
+      key: "world.compassTrail",
+      label: "compass trail",
+      hint: "an off-screen window swinging past fast glows on its edge pip",
+      kind: "toggle",
+      group: "World",
+      order: 28,
+      default: true,
+    });
+    const root = document.documentElement;
+    const applyHaze = () =>
+      root.style.setProperty(
+        "--vs-haze",
+        ctx.state.get<boolean>("world.depthHaze", false) ? "1" : "0"
+      );
+    const applyCompassTrail = () =>
+      root.style.setProperty(
+        "--vs-compass-trail",
+        ctx.state.get<boolean>("world.compassTrail", true) ? "1" : "0"
+      );
+    offs.push(ctx.state.subscribe("world.depthHaze", applyHaze));
+    offs.push(ctx.state.subscribe("world.compassTrail", applyCompassTrail));
+    offs.push(() => {
+      root.style.removeProperty("--vs-haze");
+      root.style.removeProperty("--vs-compass-trail");
+    });
+    applyHaze();
+    applyCompassTrail();
 
     for (const a of ARRANGEMENTS) {
       ctx.defineCommand({
