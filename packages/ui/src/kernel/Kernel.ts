@@ -1169,13 +1169,29 @@ export class Kernel {
 
     // Founded before any window that might dock onto or orbit one — a
     // window's own restore below needs the real id this session gets back.
-    const stationIds = stations.map((s) =>
-      this.compositor.spawnStation?.(s.kind, s.name, {
-        x: s.position[0],
-        y: s.position[1],
-        z: s.position[2],
-      }) ?? ""
-    );
+    //
+    // The saved blob is whatever the store handed back, unvalidated — a
+    // hand-edited or corrupted session could carry a malformed entry. Kept
+    // to "" (skip spawning, but still occupy the slot) rather than thrown,
+    // so one bad station can't take the rest of the window layout down with
+    // it via a crash mid-restore; the index alignment below depends on
+    // every entry still occupying its original position.
+    const isStationKind = (k: unknown): k is StationKind =>
+      k === "rock" || k === "giant" || k === "ring";
+    const isFiniteVec3 = (p: unknown): p is [number, number, number] =>
+      Array.isArray(p) && p.length === 3 && p.every((n) => typeof n === "number" && Number.isFinite(n));
+    const stationIds = stations.map((s) => {
+      if (!s || typeof s !== "object" || !isStationKind(s.kind) || typeof s.name !== "string" || !isFiniteVec3(s.position)) {
+        return "";
+      }
+      return (
+        this.compositor.spawnStation?.(s.kind, s.name, {
+          x: s.position[0],
+          y: s.position[1],
+          z: s.position[2],
+        }) ?? ""
+      );
+    });
 
     const members = new Map<number, string[]>();
 
