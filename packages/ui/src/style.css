@@ -560,6 +560,20 @@ body.vs-exposed .vs-panel:hover {
 .vs-compass-pip.is-group {
   border-color: color-mix(in srgb, var(--magenta) 55%, var(--edge));
 }
+/* A founded place, not a window: blend both compass hues, sit a touch
+   brighter at rest, and ring the pip so it reads as a destination you
+   commit to rather than one you merely turn toward. */
+.vs-compass-pip.is-station {
+  border-color: color-mix(in srgb, var(--cyan) 60%, var(--magenta));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cyan) 22%, transparent);
+  color: var(--text);
+}
+.vs-compass-pip.is-station.live {
+  opacity: 0.92;
+}
+.vs-compass-pip.is-station .pip-arrow {
+  color: color-mix(in srgb, var(--cyan) 60%, var(--magenta));
+}
 .vs-compass-pip.is-behind .pip-arrow {
   opacity: 0.55;
 }
