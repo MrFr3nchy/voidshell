@@ -15,6 +15,7 @@ import type {
 import { nebulaFragment, nebulaVertex } from "../world/nebulaShader";
 import { giantFragment, planetVertex, rockFragment } from "../world/planetShader";
 import { Compass, type CompassItem } from "../ui/compass";
+import { Radar, type RadarBlip } from "../ui/radar";
 import { showContextMenu } from "../ui/contextMenu";
 import {
   GROUP_COLORS,
@@ -277,6 +278,7 @@ export class ThreeCompositor implements Compositor {
   private clock = new THREE.Clock();
   private overlay!: HTMLElement;
   private compass!: Compass;
+  private radar!: Radar;
 
   private nebula!: THREE.Mesh;
   private particles!: THREE.Points;
@@ -363,6 +365,7 @@ export class ThreeCompositor implements Compositor {
     linkPulse: false,
     warp: false,
     compass: true,
+    radar: true,
     tethers: true,
     baseIntensity: 1,
     // Constellations
@@ -493,6 +496,17 @@ export class ThreeCompositor implements Compositor {
       else if (kind === "group") this.lookAtGroup(id);
       else this.lookAtSurface(id);
     });
+
+    this.radar = new Radar(mounts.hud, (kind, id) => {
+      if (kind === "home") this.travelHome();
+      else if (kind === "station") this.travelTo(id);
+      else if (kind === "group") this.lookAtGroup(id);
+      else if (kind === "body") {
+        const b = this.bodies.get(id);
+        this.aimAt(b ? b.position : ORIGIN);
+      } else this.lookAtSurface(id);
+    });
+    this.radar.setEnabled(this.cfg.radar);
 
     this.bindInput(this.renderer.domElement);
     window.addEventListener("resize", this.onResize);
@@ -1191,6 +1205,7 @@ export class ThreeCompositor implements Compositor {
       "meteors",
       "warp",
       "compass",
+      "radar",
       "tethers",
       "cameraRoll",
       "inertia",
@@ -1213,6 +1228,7 @@ export class ThreeCompositor implements Compositor {
     }
 
     this.compass?.setEnabled(this.cfg.compass);
+    this.radar?.setEnabled(this.cfg.radar);
     if (!this.cfg.tethers) this.tethers.clear();
   }
 
@@ -2608,6 +2624,7 @@ export class ThreeCompositor implements Compositor {
       this.projectAnchors();
       this.drawTethers();
       this.updateCompass();
+      this.updateRadar();
     };
     loop();
   }
@@ -2970,6 +2987,83 @@ export class ThreeCompositor implements Compositor {
     }
 
     this.compass.sync(items);
+  }
+
+  /**
+   * Feed the radar the whole layout — every window, constellation, station and
+   * body, plus the origin sun — as world-space blips. Unlike the compass this
+   * reports things that are *on* screen too: the radar is a map, not a set of
+   * "you can't see this" arrows.
+   */
+  private updateRadar(): void {
+    if (!this.cfg.radar) return;
+    const cam = this.camera.position;
+    const blips: RadarBlip[] = [];
+    const claimed = new Set<string>();
+
+    for (const g of this.groups.values()) {
+      for (const m of g.members) claimed.add(m);
+      const centre = this.groupCentre(g);
+      if (!centre) continue;
+      blips.push({
+        id: g.id,
+        kind: "group",
+        label: g.name,
+        x: centre.x,
+        y: centre.y,
+        z: centre.z,
+      });
+    }
+
+    for (const p of this.panels.values()) {
+      if (p.pinned || p.snap || claimed.has(p.id)) continue;
+      const w = this.worldOf(p, new THREE.Vector3());
+      blips.push({
+        id: p.id,
+        kind: "surface",
+        label: p.title,
+        x: w.x,
+        y: w.y,
+        z: w.z,
+      });
+    }
+
+    for (const b of this.bodies.values()) {
+      if (b.station) {
+        blips.push({
+          id: b.id,
+          kind: "station",
+          label: b.name,
+          glyph: STATION_GLYPH[b.kind as StationKind] ?? "○",
+          here: b.id === this.atStation,
+          x: b.position.x,
+          y: b.position.y,
+          z: b.position.z,
+        });
+      } else {
+        blips.push({
+          id: b.id,
+          kind: "body",
+          label: b.name || b.kind,
+          x: b.position.x,
+          y: b.position.y,
+          z: b.position.z,
+        });
+      }
+    }
+
+    // Home is the origin sun — one blip, drawn as a star, that flies you back.
+    blips.push({ id: "home", kind: "home", label: "home", sun: true, x: 0, y: 0, z: 0 });
+
+    this.radar.sync({
+      camX: cam.x,
+      camY: cam.y,
+      camZ: cam.z,
+      yaw: this.yaw,
+      fov: this.cfg.fov,
+      atOrigin: cam.length() < 240,
+      blips,
+    });
   }
 
   /**
@@ -3565,6 +3659,7 @@ export class ThreeCompositor implements Compositor {
     for (const b of this.bodies.values()) if (b.station) disposeGroup(b.group);
     this.travelState = null;
     this.compass?.dispose();
+    this.radar?.dispose();
     this.renderer.dispose();
   }
 }

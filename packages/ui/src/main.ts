@@ -524,6 +524,13 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
       ctx.expose();
       return;
     }
+    if (mod && e.shiftKey && e.key.toLowerCase() === "m") {
+      e.preventDefault();
+      const on = !ctx.state.get<boolean>("world.radar", true);
+      ctx.state.set("world.radar", on);
+      ctx.notify(on ? "radar on" : "radar off", "good");
+      return;
+    }
     if (e.key === "Escape") {
       palette.toggle(false);
       drawer.toggle(false);

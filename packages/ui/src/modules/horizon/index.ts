@@ -49,6 +49,14 @@ const TOGGLES: {
     order: 5,
   },
   {
+    key: "world.radar",
+    patch: "radar",
+    label: "spatial radar",
+    hint: "a heading-up minimap of the void in the corner \u2014 click a blip to fly or face it",
+    def: true,
+    order: 6,
+  },
+  {
     key: "world.tethers",
     patch: "tethers",
     label: "constellation threads",
