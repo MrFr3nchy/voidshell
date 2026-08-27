@@ -488,7 +488,8 @@ export class ThreeCompositor implements Compositor {
     this.overlay.appendChild(this.snapGhost);
 
     this.compass = new Compass(mounts.hud, (kind, id) => {
-      if (kind === "station") this.travelTo(id);
+      if (kind === "home") this.travelHome();
+      else if (kind === "station") this.travelTo(id);
       else if (kind === "group") this.lookAtGroup(id);
       else this.lookAtSurface(id);
     });
@@ -2643,6 +2644,24 @@ export class ThreeCompositor implements Compositor {
         dist: b.position.distanceTo(camPos),
         behind: bearing.behind,
       });
+    }
+
+    // Home is the one place travel could always reach but never point at —
+    // it isn't a body, so nothing put a chevron on it. Once you've left the
+    // sun's own core (boot parks the camera ~6 units out; travelHome lands
+    // back inside it) an off-screen origin gets a "home" pip of its own.
+    if (camPos.length() > 240) {
+      const homeBearing = this.bearingOf(ORIGIN);
+      if (homeBearing) {
+        items.push({
+          id: "home",
+          kind: "home",
+          label: "⌂ home",
+          angle: homeBearing.angle,
+          dist: camPos.length(),
+          behind: homeBearing.behind,
+        });
+      }
     }
 
     this.compass.sync(items);

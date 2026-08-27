@@ -338,6 +338,16 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
     procs.textContent = `⌘ ${running}`;
 
     up.textContent = `up ${humanUptime(ctx.uptime())}`;
+
+    // Which station you're standing in, always visible — the popover already
+    // answers "which stations exist", but only while it's open, and nothing
+    // otherwise says where "here" is once you've travelled somewhere.
+    const here = ctx.currentStation();
+    const at = here ? ctx.listStations().find((s) => s.id === here) : null;
+    stations.textContent = at
+      ? `${STATION_KINDS.find((k) => k.kind === at.kind)?.glyph ?? "⦸"} ${at.name}`
+      : "⦸";
+    stations.classList.toggle("is-parked", Boolean(at));
   };
 
   paint();

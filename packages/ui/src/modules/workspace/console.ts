@@ -210,7 +210,7 @@ windows      wins  go <surface-id>  home  arrange <arc|wall|ring|scatter>
 links        link <id> <id> [...]  groups  unlink <group-id>
 world        spawn <sun|moon|planet|singularity>  bodies  merge <surf> <body>
              sky <0..1.5>  say <text>
-stations     station <rock|giant|ring> [name]  stations  travel <id>
+stations     station <rock|giant|ring> [name]  stations  travel <id|name>
              travelhome  dock <surf> <station>  orbit <surf> <body>  release <surf>
 system       apps  open <id>  set <k> <v>  get <k>  settings [filter]
              lock  reboot  shutdown  history  clear  help
@@ -904,11 +904,21 @@ export function createConsole(
           break;
         }
 
-        case "travel":
-          if (!arg) throw new Error("usage: travel <station-id>");
-          ctx.travelTo(arg);
-          out(`travelling → ${arg}`, "muted");
+        case "travel": {
+          if (!arg) throw new Error("usage: travel <station-id-or-name>");
+          // An id hits exactly; anything else is matched against station
+          // names, case-folded, substring — `travel way` is enough when the
+          // only station is a waystation.
+          const stations = ctx.listStations();
+          const needle = arg.toLowerCase();
+          const target =
+            stations.find((s) => s.id === arg) ??
+            stations.find((s) => s.name.toLowerCase().includes(needle));
+          if (!target) throw new Error(`no station matches "${arg}"`);
+          ctx.travelTo(target.id);
+          out(`travelling → ${target.name}`, "muted");
           break;
+        }
 
         case "travelhome":
           ctx.travelHome();
