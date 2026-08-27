@@ -488,7 +488,9 @@ export class ThreeCompositor implements Compositor {
     this.overlay.appendChild(this.snapGhost);
 
     this.compass = new Compass(mounts.hud, (kind, id) => {
-      if (kind === "group") this.lookAtGroup(id);
+      if (kind === "home") this.travelHome();
+      else if (kind === "station") this.travelTo(id);
+      else if (kind === "group") this.lookAtGroup(id);
       else this.lookAtSurface(id);
     });
 
@@ -2624,6 +2626,44 @@ export class ThreeCompositor implements Compositor {
       });
     }
 
+    // Every station you founded but aren't standing in keeps an edge bearing,
+    // the same as an off-screen window — except a station's chevron travels
+    // you there rather than turning to face it. The one you're parked at is
+    // skipped even when the orbit has drifted it off-screen: its pip would
+    // only offer a trip you're already on.
+    for (const b of this.bodies.values()) {
+      if (!b.station || b.id === this.atStation) continue;
+      const bearing = this.bearingOf(b.position);
+      if (!bearing) continue;
+      const glyph = STATION_GLYPH[b.kind as StationKind] ?? "○";
+      items.push({
+        id: b.id,
+        kind: "station",
+        label: `${glyph} ${b.name}`,
+        angle: bearing.angle,
+        dist: b.position.distanceTo(camPos),
+        behind: bearing.behind,
+      });
+    }
+
+    // Home is the one place travel could always reach but never point at —
+    // it isn't a body, so nothing put a chevron on it. Once you've left the
+    // sun's own core (boot parks the camera ~6 units out; travelHome lands
+    // back inside it) an off-screen origin gets a "home" pip of its own.
+    if (camPos.length() > 240) {
+      const homeBearing = this.bearingOf(ORIGIN);
+      if (homeBearing) {
+        items.push({
+          id: "home",
+          kind: "home",
+          label: "⌂ home",
+          angle: homeBearing.angle,
+          dist: camPos.length(),
+          behind: homeBearing.behind,
+        });
+      }
+    }
+
     this.compass.sync(items);
   }
 
@@ -3272,6 +3312,17 @@ const STATION_NAMES: Record<StationKind, string> = {
   rock: "outpost",
   giant: "refinery",
   ring: "waystation",
+};
+
+/**
+ * The glyph each station kind shows on its compass chevron — the same marks
+ * the status bar's station list uses, so a place reads identically wherever
+ * it's listed.
+ */
+const STATION_GLYPH: Record<StationKind, string> = {
+  rock: "◉",
+  giant: "◕",
+  ring: "⦸",
 };
 
 function defaultStationName(kind: StationKind, n: number): string {

@@ -431,6 +431,29 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
     ctx.lookAt(next.id);
   };
 
+  /**
+   * Warp through the founded places without reaching for the status bar: home
+   * first, then every station in the order `listStations` reports them. The
+   * same stable-walk reasoning as `cycleWindows` — with positions in three
+   * dimensions, an order you can predict beats "nearest", which reshuffles
+   * itself every time you move.
+   */
+  const cycleStations = (dir: number) => {
+    const stops = ["home", ...ctx.listStations().map((s) => s.id)];
+    if (stops.length < 2) return;
+    const here = ctx.currentStation() ?? "home";
+    const at = stops.indexOf(here);
+    const next = stops[((at < 0 ? 0 : at) + dir + stops.length) % stops.length];
+    if (next === "home") {
+      ctx.travelHome();
+      ctx.notify("warping home…", "good");
+      return;
+    }
+    ctx.travelTo(next);
+    const s = ctx.listStations().find((x) => x.id === next);
+    ctx.notify(`warping to ${s?.name ?? next}…`, "good");
+  };
+
   window.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
 
@@ -503,6 +526,15 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
       return;
     }
     if (typing(e.target)) return;
+
+    // Walk the founded places. Below the typing guard on purpose — a bare
+    // bracket is a common keystroke in an editor, and warping the whole void
+    // mid-edit is not what you meant by it.
+    if (mod && (e.key === "[" || e.key === "]")) {
+      e.preventDefault();
+      cycleStations(e.key === "[" ? -1 : 1);
+      return;
+    }
 
     if (e.code === "Space") {
       e.preventDefault();

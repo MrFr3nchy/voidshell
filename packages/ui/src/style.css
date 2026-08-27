@@ -560,6 +560,33 @@ body.vs-exposed .vs-panel:hover {
 .vs-compass-pip.is-group {
   border-color: color-mix(in srgb, var(--magenta) 55%, var(--edge));
 }
+/* A founded place, not a window: blend both compass hues, sit a touch
+   brighter at rest, and ring the pip so it reads as a destination you
+   commit to rather than one you merely turn toward. */
+.vs-compass-pip.is-station {
+  border-color: color-mix(in srgb, var(--cyan) 60%, var(--magenta));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cyan) 22%, transparent);
+  color: var(--text);
+}
+.vs-compass-pip.is-station.live {
+  opacity: 0.92;
+}
+.vs-compass-pip.is-station .pip-arrow {
+  color: color-mix(in srgb, var(--cyan) 60%, var(--magenta));
+}
+/* Home: the one fixed point the whole void is arranged around. Warmest,
+   steadiest pip — full-strength border, no blend, brighter at rest. */
+.vs-compass-pip.is-home {
+  border-color: var(--cyan);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cyan) 30%, transparent);
+  color: var(--text);
+}
+.vs-compass-pip.is-home.live {
+  opacity: 1;
+}
+.vs-compass-pip.is-home .pip-arrow {
+  color: var(--cyan);
+}
 .vs-compass-pip.is-behind .pip-arrow {
   opacity: 0.55;
 }
@@ -2454,6 +2481,11 @@ body.vs-dropping #void::after {
 .sb-stations,
 .sb-home {
   font-size: 12px;
+}
+/* Standing in a station: the item stops being a bare glyph and carries the
+   place's name, so it earns a readable colour the way sb-who does. */
+.sb-stations.is-parked {
+  color: var(--cyan);
 }
 .sb-bell {
   position: relative;

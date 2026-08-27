@@ -5,10 +5,16 @@
  *
  * This is the piece that makes an infinite space navigable. Without it, "look
  * around" is a memory game; with it, nothing you opened is ever really lost.
+ *
+ * Stations ride the same rail. A station is thousands of units off — too far
+ * to "turn and face" as anything but a speck — so a station chevron travels
+ * you there instead. Every place you founded keeps a bearing on the edge of
+ * the screen until you're standing in it, and once you've left the origin a
+ * "home" chevron points the way back.
  */
 export interface CompassItem {
   id: string;
-  kind: "surface" | "group";
+  kind: "surface" | "group" | "station" | "home";
   label: string;
   /** Screen-space bearing in radians, 0 = right, CCW positive. */
   angle: number;
@@ -72,6 +78,8 @@ export class Compass {
       const label = node.querySelector(".pip-label");
       if (label && label.textContent !== item.label) label.textContent = item.label;
       node.classList.toggle("is-group", item.kind === "group");
+      node.classList.toggle("is-station", item.kind === "station");
+      node.classList.toggle("is-home", item.kind === "home");
       node.classList.toggle("is-behind", item.behind);
 
       // Screen y grows downward, so the bearing is negated when placing.
