@@ -6,6 +6,7 @@ import type {
   CompositorStats,
   GroupInfo,
   GroupStyle,
+  StationKind,
   Surface,
   SurfacePlacement,
   Vec3,
@@ -862,6 +863,37 @@ export class DomCompositor implements Compositor {
 
   listBodies(): { id: string; kind: BodyKind }[] {
     return [];
+  }
+
+  // Stations are the same honest refusal as spawnBody, for the same reason:
+  // a station is a fixed point you travel to in three dimensions, and a
+  // plane has no direction called "there" that isn't already "here".
+  spawnStation(): string {
+    return "";
+  }
+
+  listStations(): { id: string; kind: StationKind; name: string; position: Vec3 }[] {
+    return [];
+  }
+
+  surfaceStationLink(): null {
+    return null;
+  }
+
+  renameStation(): void {}
+
+  destroyStation(): void {}
+
+  travelTo(): void {}
+
+  travelHome(): void {}
+
+  dockSurface(): void {}
+
+  orbitSurface(): void {}
+
+  currentStation(): string | null {
+    return null;
   }
 
   /* ------------------------------------------------------------------ */

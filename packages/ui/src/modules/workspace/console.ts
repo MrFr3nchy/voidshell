@@ -1,4 +1,10 @@
-import type { ArrangeMode, BodyKind, KernelContext, LogLevel } from "../../kernel/types";
+import type {
+  ArrangeMode,
+  BodyKind,
+  KernelContext,
+  LogLevel,
+  StationKind,
+} from "../../kernel/types";
 import { normalize } from "../../kernel/vfs";
 import { ProcTable } from "../../kernel/procs";
 import {
@@ -204,6 +210,8 @@ windows      wins  go <surface-id>  home  arrange <arc|wall|ring|scatter>
 links        link <id> <id> [...]  groups  unlink <group-id>
 world        spawn <sun|moon|planet|singularity>  bodies  merge <surf> <body>
              sky <0..1.5>  say <text>
+stations     station <rock|giant|ring> [name]  stations  travel <id>
+             travelhome  dock <surf> <station>  orbit <surf> <body>  release <surf>
 system       apps  open <id>  set <k> <v>  get <k>  settings [filter]
              lock  reboot  shutdown  history  clear  help
 the system   ls /proc · cat /proc/uptime · cat /etc/autostart · /var/log
@@ -215,7 +223,8 @@ const BUILTINS = [
   "help", "pwd", "cd", "ls", "tree", "cat", "head", "tail", "write", "touch",
   "mkdir", "rm", "mv", "find", "df", "grep", "sort", "uniq", "wc", "run",
   "edit", "launch", "apps", "open", "wins", "go", "home", "arrange", "link",
-  "groups", "unlink", "spawn", "bodies", "merge", "set", "get", "settings",
+  "groups", "unlink", "spawn", "bodies", "merge", "station", "stations",
+  "travel", "travelhome", "dock", "orbit", "release", "set", "get", "settings",
   "say", "sky", "echo", "clear", "history", "app", "jobs", "kill",
   "ps", "uptime", "free", "dmesg", "mount", "env", "export", "unset",
   "whoami", "hostname", "trash", "restore", "lock", "reboot", "shutdown",
@@ -876,6 +885,50 @@ export function createConsole(
         case "merge":
           if (rest.length < 2) throw new Error("usage: merge <surface-id> <body-id>");
           ctx.attachSurface(rest[0], rest[1]);
+          break;
+
+        case "station": {
+          const kinds: StationKind[] = ["rock", "giant", "ring"];
+          const kind = kinds.find((k) => k === rest[0]);
+          if (!kind) throw new Error(`usage: station <${kinds.join("|")}> [name]`);
+          out(`→ ${ctx.spawnStation(kind, rest.slice(1).join(" "))}`, "muted");
+          break;
+        }
+
+        case "stations": {
+          const here = ctx.currentStation();
+          const list = ctx.listStations();
+          if (!list.length) out("nothing founded yet", "muted");
+          for (const s of list)
+            out(`${pad(s.id, 12)} ${pad(s.kind, 8)} ${s.name}${s.id === here ? "  (here)" : ""}`);
+          break;
+        }
+
+        case "travel":
+          if (!arg) throw new Error("usage: travel <station-id>");
+          ctx.travelTo(arg);
+          out(`travelling → ${arg}`, "muted");
+          break;
+
+        case "travelhome":
+          ctx.travelHome();
+          out("travelling home", "muted");
+          break;
+
+        case "dock":
+          if (rest.length < 2) throw new Error("usage: dock <surface-id> <station-id>");
+          ctx.dockSurface(rest[0], rest[1]);
+          break;
+
+        case "orbit":
+          if (rest.length < 2) throw new Error("usage: orbit <surface-id> <body-id>");
+          ctx.orbitSurface(rest[0], rest[1]);
+          break;
+
+        case "release":
+          if (!arg) throw new Error("usage: release <surface-id>");
+          ctx.dockSurface(arg, null);
+          ctx.orbitSurface(arg, null);
           break;
 
         case "set": {

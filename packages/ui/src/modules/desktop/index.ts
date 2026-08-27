@@ -1,4 +1,11 @@
-import type { AnchorHandle, FsEntry, KernelContext, VoidModule, Vec3 } from "../../kernel/types";
+import type {
+  AnchorHandle,
+  FsEntry,
+  KernelContext,
+  StationKind,
+  VoidModule,
+  Vec3,
+} from "../../kernel/types";
 import { basename } from "../../kernel/vfs";
 import { copyRecursive, transferInto, uniqueName } from "../../kernel/fsutil";
 import { fileTypeFor } from "../../kernel/filetypes";
@@ -22,6 +29,12 @@ import { newMenuItems, showFileInfo, showFileMenu, trashWithUndo } from "../../u
 const DESKTOP_DIR = "/home/void/Desktop";
 /** Icon positions, kept beside the directory the way a real OS does. */
 const LAYOUT_FILE = "/home/void/.desktop-layout.json";
+
+const STATION_KINDS: { kind: StationKind; label: string }[] = [
+  { kind: "rock", label: "Rocky Outpost" },
+  { kind: "giant", label: "Gas Giant" },
+  { kind: "ring", label: "Ring Waystation" },
+];
 
 type Layout = Record<string, Vec3>;
 
@@ -312,6 +325,16 @@ export const desktop: VoidModule = {
               : `Paste "${basename(item.path)}"`
             : "Paste",
           action: item ? () => paste(e.clientX, e.clientY) : undefined,
+        },
+        {
+          label: "Found a Station",
+          submenu: STATION_KINDS.map((k) => ({
+            label: k.label,
+            action: () => {
+              ctx.spawnStation(k.kind);
+              ctx.notify("founded — check the stations pill in the status bar", "good");
+            },
+          })),
         },
         {
           label: "Open Files Here",

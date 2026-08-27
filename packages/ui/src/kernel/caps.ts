@@ -309,11 +309,26 @@ export function restrict(ctx: KernelContext, opts: RestrictOptions): KernelConte
     /* ---------------- the world ---------------- */
 
     patchWorld: (patch) => need("world", "change the world", () => ctx.patchWorld(patch)),
-    spawnBody: (kind) => need("world", "spawn a body", () => ctx.spawnBody(kind)),
+    spawnBody: (kind, orbitCenter) =>
+      need("world", "spawn a body", () => ctx.spawnBody(kind, orbitCenter)),
     destroyBody: (id) => need("world", "destroy a body", () => ctx.destroyBody(id)),
     attachSurface: (sid, bid) =>
       need("world", "attach a window to a body", () => ctx.attachSurface(sid, bid)),
     listBodies: () => need("world", "list bodies", () => ctx.listBodies()),
+    spawnStation: (kind, name, position) =>
+      need("world", "found a station", () => ctx.spawnStation(kind, name, position)),
+    listStations: () => need("world", "list stations", () => ctx.listStations()),
+    renameStation: (id, name) =>
+      need("world", "rename a station", () => ctx.renameStation(id, name)),
+    destroyStation: (id) => need("world", "destroy a station", () => ctx.destroyStation(id)),
+    travelTo: (id) => need("world", "travel to a station", () => ctx.travelTo(id)),
+    travelHome: () => need("world", "travel home", () => ctx.travelHome()),
+    dockSurface: (sid, stid) =>
+      need("world", "dock a window onto a station", () => ctx.dockSurface(sid, stid)),
+    orbitSurface: (sid, bid) =>
+      need("world", "send a window into orbit", () => ctx.orbitSurface(sid, bid)),
+    currentStation: () =>
+      need("world", "read the current station", () => ctx.currentStation()),
     linkSurfaces: (ids, name, style) =>
       need("world", "link windows", () => ctx.linkSurfaces(ids, name, style)),
     unlinkGroup: (id) => need("world", "unlink a constellation", () => ctx.unlinkGroup(id)),

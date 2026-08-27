@@ -133,6 +133,10 @@ button {
   content: " \2609";
   color: var(--ember);
 }
+.vs-panel.docked .vs-panel-title::after {
+  content: " \2693";
+  color: var(--cyan);
+}
 .vs-panel.pinned {
   border-style: dashed;
 }
@@ -2245,6 +2249,83 @@ body.vs-dropping #void::after {
   font-size: 12px;
 }
 
+/* ---------- Stations ---------- */
+.stn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.stn-empty {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.stn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--glass);
+}
+.stn-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stn-icon-btn {
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.stn-icon-btn:hover {
+  border-color: var(--cyan);
+  color: var(--text);
+}
+.stn-travel {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 5px 10px;
+  font-size: 10px;
+}
+.stn-travel:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.stn-pick {
+  flex: 0 0 auto;
+  width: 108px;
+  margin-bottom: 0;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+.stn-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--void-1);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 /* ---------- Boot ignition ---------- */
 .boot-veil {
   position: fixed;
@@ -2349,7 +2430,9 @@ body.vs-dropping #void::after {
   letter-spacing: 0.18em;
 }
 .sb-procs,
-.sb-bell {
+.sb-bell,
+.sb-stations,
+.sb-home {
   border: 0;
   background: none;
   padding: 0;
@@ -2362,8 +2445,15 @@ body.vs-dropping #void::after {
 }
 .sb-procs:hover,
 .sb-bell:hover,
-.sb-bell.open {
+.sb-bell.open,
+.sb-stations:hover,
+.sb-stations.open,
+.sb-home:hover {
   color: var(--cyan);
+}
+.sb-stations,
+.sb-home {
+  font-size: 12px;
 }
 .sb-bell {
   position: relative;
@@ -2468,6 +2558,94 @@ body.vs-dropping #void::after {
 .sb-pop-more:hover {
   color: var(--cyan);
   background: var(--glass-hi);
+}
+
+.sb-station-found {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px 10px;
+}
+.sb-station-kind {
+  flex: 1;
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 0;
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sb-station-kind:hover {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 8%, transparent);
+}
+.sb-station-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  font-size: 11px;
+  border-top: 1px solid rgba(150, 185, 255, 0.08);
+  color: var(--text);
+}
+.sb-station-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-station-travel {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sb-station-travel:hover {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 8%, transparent);
+}
+.sb-station-travel:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.sb-station-icon,
+.sb-station-kill {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 1px;
+}
+.sb-station-icon:hover {
+  color: var(--cyan);
+}
+.sb-station-kill:hover {
+  color: var(--ember);
+}
+.sb-station-rename {
+  flex: 1;
+  min-width: 0;
+  background: var(--void-1);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 /* ---------- Lock / power ---------- */

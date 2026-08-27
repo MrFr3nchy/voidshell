@@ -50,9 +50,11 @@ import type {
   NotifyOptions,
   SettingDef,
   StageApi,
+  StationKind,
   Surface,
   SurfacePlacement,
   SurfaceRequest,
+  Vec3,
   VoidModule,
 } from "./types";
 
@@ -90,6 +92,9 @@ interface SessionEntry {
   args?: LaunchArgs;
   /** Index into the session's `groups`, when this window was in one. */
   group?: number;
+  /** Index into the session's `stations`, when this window was docked onto
+   *  or orbiting one — not a decorative body, which never survives reload. */
+  station?: { index: number; mode: "dock" | "orbit" };
 }
 
 /** A constellation, as written down. */
@@ -99,16 +104,25 @@ interface SessionGroup {
   rigid?: boolean;
 }
 
+/** A station, as written down — enough to found it again in the same place. */
+interface SessionStation {
+  kind: StationKind;
+  name: string;
+  position: [number, number, number];
+}
+
 /**
  * The session file.
  *
  * Older sessions are a bare array of windows, from before constellations were
  * written down. Restore accepts both rather than discarding a layout on the
- * first boot after an upgrade.
+ * first boot after an upgrade. `stations` is newer still and optional for the
+ * same reason — a session written before it existed just restores with none.
  */
 interface SavedSession {
   windows: SessionEntry[];
   groups: SessionGroup[];
+  stations?: SessionStation[];
 }
 
 /** A window that was closed and could be brought back. */
@@ -462,10 +476,21 @@ export class Kernel {
       lookAtGroup: (id) => this.compositor.lookAtGroup?.(id),
       resetView: () => this.compositor.resetView?.(),
       patchWorld: (patch) => this.compositor.applyWorldPatch?.(patch),
-      spawnBody: (kind: BodyKind) => this.compositor.spawnBody?.(kind) ?? "",
+      spawnBody: (kind: BodyKind, orbitCenter?: string) =>
+        this.compositor.spawnBody?.(kind, orbitCenter) ?? "",
       destroyBody: (id) => this.compositor.destroyBody?.(id),
       attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
       listBodies: () => this.compositor.listBodies?.() ?? [],
+      spawnStation: (kind: StationKind, name?: string, position?: Vec3) =>
+        this.compositor.spawnStation?.(kind, name, position) ?? "",
+      listStations: () => this.compositor.listStations?.() ?? [],
+      renameStation: (id, name) => this.compositor.renameStation?.(id, name),
+      destroyStation: (id) => this.compositor.destroyStation?.(id),
+      travelTo: (id) => this.compositor.travelTo?.(id),
+      travelHome: () => this.compositor.travelHome?.(),
+      dockSurface: (sid, stid) => this.compositor.dockSurface?.(sid, stid),
+      orbitSurface: (sid, bid) => this.compositor.orbitSurface?.(sid, bid),
+      currentStation: () => this.compositor.currentStation?.() ?? null,
       linkSurfaces: (ids, name) =>
         this.compositor.linkSurfaces?.(ids, name) ?? "",
       unlinkGroup: (id) => this.compositor.unlinkGroup?.(id),
@@ -1080,7 +1105,9 @@ export class Kernel {
     const places = this.compositor.snapshot?.() ?? {};
 
     // Constellations are recorded by index rather than by id: compositor group
-    // ids are minted per session and mean nothing on the next boot.
+    // ids are minted per session and mean nothing on the next boot. Stations
+    // are the same problem for the same reason — "station-7" means nothing
+    // once the sky is rebuilt from scratch.
     const live = this.compositor.listGroups?.() ?? [];
     const groups: SessionGroup[] = live.map((g) => ({
       name: g.name,
@@ -1092,19 +1119,32 @@ export class Kernel {
       for (const m of g.members) groupOf.set(m, i);
     });
 
+    const liveStations = this.compositor.listStations?.() ?? [];
+    const stations: SessionStation[] = liveStations.map((s) => ({
+      kind: s.kind,
+      name: s.name,
+      position: [s.position.x, s.position.y, s.position.z],
+    }));
+    const stationIndexOf = new Map<string, number>();
+    liveStations.forEach((s, i) => stationIndexOf.set(s.id, i));
+
     const windows: SessionEntry[] = [];
     for (const s of this.surfaces.values()) {
       const place = places[s.id];
       if (!place) continue;
+      const link = this.compositor.surfaceStationLink?.(s.id) ?? null;
+      const stationIndex = link ? stationIndexOf.get(link.stationId) : undefined;
       windows.push({
         moduleId: s.moduleId,
         place,
         title: s.title,
         args: jsonSafe(this.surfaceArgs.get(s.id)),
         group: groupOf.get(s.id),
+        station:
+          link && stationIndex !== undefined ? { index: stationIndex, mode: link.mode } : undefined,
       });
     }
-    this.store.set(SESSION_KEY, { windows, groups } satisfies SavedSession);
+    this.store.set(SESSION_KEY, { windows, groups, stations } satisfies SavedSession);
   }
 
   /**
@@ -1120,11 +1160,38 @@ export class Kernel {
       windows: [],
       groups: [],
     });
-    // Sessions written before constellations were recorded are a bare array.
-    const { windows, groups } = Array.isArray(saved)
-      ? { windows: saved, groups: [] as SessionGroup[] }
-      : saved;
+    // Sessions written before constellations — or stations — were recorded
+    // restore with none of either, rather than discarding the whole layout.
+    const { windows, groups, stations } = Array.isArray(saved)
+      ? { windows: saved, groups: [] as SessionGroup[], stations: [] as SessionStation[] }
+      : { stations: [] as SessionStation[], ...saved };
     if (!Array.isArray(windows) || windows.length === 0) return;
+
+    // Founded before any window that might dock onto or orbit one — a
+    // window's own restore below needs the real id this session gets back.
+    //
+    // The saved blob is whatever the store handed back, unvalidated — a
+    // hand-edited or corrupted session could carry a malformed entry. Kept
+    // to "" (skip spawning, but still occupy the slot) rather than thrown,
+    // so one bad station can't take the rest of the window layout down with
+    // it via a crash mid-restore; the index alignment below depends on
+    // every entry still occupying its original position.
+    const isStationKind = (k: unknown): k is StationKind =>
+      k === "rock" || k === "giant" || k === "ring";
+    const isFiniteVec3 = (p: unknown): p is [number, number, number] =>
+      Array.isArray(p) && p.length === 3 && p.every((n) => typeof n === "number" && Number.isFinite(n));
+    const stationIds = stations.map((s) => {
+      if (!s || typeof s !== "object" || !isStationKind(s.kind) || typeof s.name !== "string" || !isFiniteVec3(s.position)) {
+        return "";
+      }
+      return (
+        this.compositor.spawnStation?.(s.kind, s.name, {
+          x: s.position[0],
+          y: s.position[1],
+          z: s.position[2],
+        }) ?? ""
+      );
+    });
 
     const members = new Map<number, string[]>();
 
@@ -1140,6 +1207,15 @@ export class Kernel {
       // assuming a single window.
       const opened = [...this.surfaces.keys()].filter((id) => !before.has(id));
       if (entry.title) for (const id of opened) this.setTitle(id, entry.title);
+
+      const stationId = entry.station ? stationIds[entry.station.index] : undefined;
+      if (stationId) {
+        for (const id of opened) {
+          if (entry.station!.mode === "dock") this.compositor.dockSurface?.(id, stationId);
+          else this.compositor.orbitSurface?.(id, stationId);
+        }
+      }
+
       if (entry.group === undefined) continue;
       const bucket = members.get(entry.group) ?? [];
       bucket.push(...opened);

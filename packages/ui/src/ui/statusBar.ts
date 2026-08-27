@@ -1,5 +1,17 @@
-import type { KernelContext, KernelEvent, LogEntry, NotifyKind } from "../kernel/types";
+import type {
+  KernelContext,
+  KernelEvent,
+  NotifyKind,
+  LogEntry,
+  StationKind,
+} from "../kernel/types";
 import { DEFAULT_HOSTNAME, DEFAULT_USER, HOSTNAME_KEY, USER_KEY } from "../kernel/sysfs";
+
+const STATION_KINDS: { kind: StationKind; glyph: string; title: string }[] = [
+  { kind: "rock", glyph: "◉", title: "found a rocky outpost" },
+  { kind: "giant", glyph: "◕", title: "found a gas giant" },
+  { kind: "ring", glyph: "⦸", title: "found a ring waystation" },
+];
 
 /**
  * The status bar.
@@ -43,6 +55,24 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
   const up = document.createElement("span");
   up.className = "sb-item sb-up";
 
+  const stations = document.createElement("button");
+  stations.className = "sb-item sb-stations";
+  stations.type = "button";
+  stations.title = "stations — found one, or travel to one you have";
+  stations.textContent = "⦸";
+
+  // Travel only ever pointed at a station — nothing pointed back. One click,
+  // no popover: the origin isn't a list of one, it's always just "home".
+  const home = document.createElement("button");
+  home.className = "sb-item sb-home";
+  home.type = "button";
+  home.title = "travel home — back to the sun at the origin";
+  home.textContent = "☉";
+  home.addEventListener("click", () => {
+    ctx.travelHome();
+    ctx.notify("travelling home…", "good");
+  });
+
   const clock = document.createElement("span");
   clock.className = "sb-item sb-clock";
 
@@ -56,7 +86,7 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
   badge.className = "sb-badge";
   bell.append(bellGlyph, badge);
 
-  bar.append(who, procs, up, clock, bell);
+  bar.append(who, procs, up, home, stations, clock, bell);
 
   /* ---------------- the notice history popover ---------------- */
 
@@ -134,13 +164,156 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
 
   bell.addEventListener("click", (e) => {
     e.stopPropagation();
+    toggleStationsPopover(false);
     togglePopover();
   });
   procs.addEventListener("click", () => ctx.launch("monitor"));
 
+  /* ---------------- stations: found one, travel to one ----------------
+   *
+   * This lives here rather than in a window because a window is exactly
+   * what travel used to require staying open: the trip is instant to
+   * trigger but takes a couple of seconds to land, and closing (or just
+   * losing track of) the one app that could send you anywhere else made
+   * every subsequent trip a re-open. The status bar never closes.
+   */
+  const stationsPopover = document.createElement("div");
+  stationsPopover.className = "sb-popover sb-stations-pop";
+  stationsPopover.hidden = true;
+  // A row's own click handler can repaint the popover (found/destroy both
+  // do), which detaches the very button that was clicked before the event
+  // finishes bubbling — the document-level dismiss handler then sees a
+  // target that's no longer inside the popover and closes it mid-click.
+  // Stopped once here rather than per-button, so it can't regress quietly
+  // when a new row is added later.
+  stationsPopover.addEventListener("click", (e) => e.stopPropagation());
+
+  const paintStations = () => {
+    stationsPopover.replaceChildren();
+
+    const title = document.createElement("div");
+    title.className = "sb-pop-title";
+    title.textContent = "found a station";
+    stationsPopover.appendChild(title);
+
+    const foundRow = document.createElement("div");
+    foundRow.className = "sb-station-found";
+    for (const k of STATION_KINDS) {
+      const b = document.createElement("button");
+      b.className = "sb-station-kind";
+      b.type = "button";
+      b.title = k.title;
+      b.textContent = k.glyph;
+      b.addEventListener("click", () => {
+        ctx.spawnStation(k.kind);
+        paintStations();
+      });
+      foundRow.appendChild(b);
+    }
+    stationsPopover.appendChild(foundRow);
+
+    const listTitle = document.createElement("div");
+    listTitle.className = "sb-pop-title";
+    listTitle.textContent = "your stations";
+    stationsPopover.appendChild(listTitle);
+
+    const here = ctx.currentStation();
+    const list = ctx.listStations();
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "sb-pop-empty";
+      empty.textContent = "nothing founded yet";
+      stationsPopover.appendChild(empty);
+    }
+    for (const s of list) {
+      const glyph = STATION_KINDS.find((k) => k.kind === s.kind)?.glyph ?? "○";
+      const row = document.createElement("div");
+      row.className = "sb-station-row";
+
+      const name = document.createElement("span");
+      name.className = "sb-station-name";
+      name.textContent = `${glyph} ${s.name}`;
+      name.title = "double-click to rename";
+      // renameStation has always existed on the syscall surface; nothing
+      // anywhere ever called it. This is the one place a name is worth
+      // changing from.
+      name.addEventListener("dblclick", () => {
+        const input = document.createElement("input");
+        input.className = "sb-station-rename";
+        input.value = s.name;
+        const commit = () => {
+          ctx.renameStation(s.id, input.value);
+          paintStations();
+        };
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") paintStations();
+        });
+        input.addEventListener("blur", commit);
+        row.replaceChild(input, name);
+        input.focus();
+        input.select();
+      });
+
+      const travel = document.createElement("button");
+      travel.className = "sb-station-travel";
+      travel.type = "button";
+      if (s.id === here) {
+        travel.textContent = "here";
+        travel.disabled = true;
+      } else {
+        travel.textContent = "travel";
+        travel.addEventListener("click", () => {
+          ctx.travelTo(s.id);
+          ctx.notify(`travelling to ${s.name}…`, "good");
+          toggleStationsPopover(false);
+        });
+      }
+
+      const moon = document.createElement("button");
+      moon.className = "sb-station-icon";
+      moon.type = "button";
+      moon.textContent = "☽+";
+      moon.title = "add a moon in orbit";
+      moon.addEventListener("click", () => {
+        ctx.spawnBody("moon", s.id);
+        ctx.notify(`a moon joins ${s.name}`, "good");
+      });
+
+      const kill = document.createElement("button");
+      kill.className = "sb-station-kill";
+      kill.type = "button";
+      kill.textContent = "✕";
+      kill.title = "destroy this station";
+      kill.addEventListener("click", () => {
+        ctx.destroyStation(s.id);
+        paintStations();
+      });
+
+      row.append(name, moon, travel, kill);
+      stationsPopover.appendChild(row);
+    }
+  };
+
+  const toggleStationsPopover = (next?: boolean) => {
+    const open = next ?? stationsPopover.hidden;
+    stationsPopover.hidden = !open;
+    stations.classList.toggle("open", open);
+    if (open) paintStations();
+  };
+
+  stations.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePopover(false);
+    toggleStationsPopover();
+  });
+
   // Clicking anywhere else dismisses it, the way every notification tray does.
   const onDocClick = (e: MouseEvent) => {
     if (!popover.hidden && !popover.contains(e.target as Node)) togglePopover(false);
+    if (!stationsPopover.hidden && !stationsPopover.contains(e.target as Node)) {
+      toggleStationsPopover(false);
+    }
   };
   document.addEventListener("click", onDocClick);
 
@@ -193,6 +366,7 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
 
   bar.hidden = !ctx.state.get<boolean>(STATUSBAR_KEY, true);
   bar.appendChild(popover);
+  bar.appendChild(stationsPopover);
   hud.appendChild(bar);
 
   return {
