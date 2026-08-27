@@ -2619,6 +2619,7 @@ body.vs-dropping #void::after {
   opacity: 0.45;
   cursor: default;
 }
+.sb-station-icon,
 .sb-station-kill {
   flex: 0 0 auto;
   appearance: none;
@@ -2629,8 +2630,22 @@ body.vs-dropping #void::after {
   cursor: pointer;
   padding: 0 1px;
 }
+.sb-station-icon:hover {
+  color: var(--cyan);
+}
 .sb-station-kill:hover {
   color: var(--ember);
+}
+.sb-station-rename {
+  flex: 1;
+  min-width: 0;
+  background: var(--void-1);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 /* ---------- Lock / power ---------- */

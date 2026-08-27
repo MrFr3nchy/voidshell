@@ -233,6 +233,27 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
       const name = document.createElement("span");
       name.className = "sb-station-name";
       name.textContent = `${glyph} ${s.name}`;
+      name.title = "double-click to rename";
+      // renameStation has always existed on the syscall surface; nothing
+      // anywhere ever called it. This is the one place a name is worth
+      // changing from.
+      name.addEventListener("dblclick", () => {
+        const input = document.createElement("input");
+        input.className = "sb-station-rename";
+        input.value = s.name;
+        const commit = () => {
+          ctx.renameStation(s.id, input.value);
+          paintStations();
+        };
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") paintStations();
+        });
+        input.addEventListener("blur", commit);
+        row.replaceChild(input, name);
+        input.focus();
+        input.select();
+      });
 
       const travel = document.createElement("button");
       travel.className = "sb-station-travel";
@@ -250,7 +271,7 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
       }
 
       const moon = document.createElement("button");
-      moon.className = "sb-station-kill";
+      moon.className = "sb-station-icon";
       moon.type = "button";
       moon.textContent = "☽+";
       moon.title = "add a moon in orbit";

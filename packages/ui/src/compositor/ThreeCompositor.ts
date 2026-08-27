@@ -54,6 +54,9 @@ interface PanelEntry {
   dockStationId: string | null;
   dockLat: number;
   dockLon: number;
+  /** Which numbered surface slot this is — so a freed slot (undock) can be
+   *  reused instead of `freeDockSlot` handing out one already taken. */
+  dockSlotIndex: number;
   groupId: string | null;
   /** Pinned panels leave the world and stick to the glass of the screen. */
   pinned: boolean;
@@ -377,6 +380,11 @@ export class ThreeCompositor implements Compositor {
     duration: number;
     targetYaw: number;
     targetPitch: number;
+    /** What `cfg.warp` was before *this whole trip* started — not just
+     *  before the most recent redirect, so retargeting mid-flight restores
+     *  the setting the user actually had rather than the "true" the first
+     *  leg forced it to. */
+    warpBefore: boolean;
     onArrive: () => void;
   } | null = null;
   /**
@@ -697,6 +705,7 @@ export class ThreeCompositor implements Compositor {
       dockStationId: null,
       dockLat: 0,
       dockLon: 0,
+      dockSlotIndex: 0,
       groupId: null,
       pinned: false,
       pinX: 0,
@@ -1512,6 +1521,11 @@ export class ThreeCompositor implements Compositor {
   travelTo(id: string): void {
     const b = this.bodies.get(id);
     if (!b?.station) return;
+    // Already parked here and not mid-trip: re-running the same arrival
+    // would snap the camera back to the canonical approach angle, undoing
+    // whatever you'd dragged it to since you got here — a real risk from
+    // double-clicking a station you're already at.
+    if (this.atStation === id && !this.travelState) return;
     this.beginTravel(b.position, b.radius * 2.6, b.radius * 0.55, () => {
       this.atStation = id;
     });
@@ -1559,7 +1573,12 @@ export class ThreeCompositor implements Compositor {
     const targetYaw = Math.atan2(-arriveDir.x, -arriveDir.z);
     const targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, arriveDir.y)))));
 
-    const prevWarp = this.cfg.warp;
+    // If a trip is already underway, this is a redirect, not a fresh
+    // departure — warp was already forced on for the leg in progress, so
+    // reading `cfg.warp` here would capture "true" and, on arrival, leave
+    // warp stuck on for anyone who didn't have it enabled to begin with.
+    // The value worth restoring is whatever it was before the *first* leg.
+    const warpBefore = this.travelState?.warpBefore ?? this.cfg.warp;
     this.cfg.warp = true;
     this.travelState = {
       from: this.camera.position.clone(),
@@ -1568,8 +1587,9 @@ export class ThreeCompositor implements Compositor {
       duration: 1.9,
       targetYaw,
       targetPitch,
+      warpBefore,
       onArrive: () => {
-        this.cfg.warp = prevWarp;
+        this.cfg.warp = warpBefore;
         // Parked in orbit around the target rather than merely facing it —
         // drag now swings the camera around it at a fixed distance, the way
         // arriving somewhere should feel, instead of spinning the camera in
@@ -1595,7 +1615,7 @@ export class ThreeCompositor implements Compositor {
       // becomes unclickable exactly when a shortcut to it matters most.
       const camPos = this.camera.position;
       const dist = b.position.distanceTo(camPos);
-      const onScreenR = Math.max(24, (b.radius / Math.max(1, dist)) * 760);
+      const onScreenR = Math.max(24, (b.visualRadius / Math.max(1, dist)) * 760);
       if (d <= onScreenR && d < bestD) {
         best = b;
         bestD = d;
@@ -1604,13 +1624,29 @@ export class ThreeCompositor implements Compositor {
     return best;
   }
 
-  private freeDockSlot(stationId: string): { lat: number; lon: number } {
-    const count = [...this.panels.values()].filter(
-      (p) => p.dockStationId === stationId
-    ).length;
+  /**
+   * The first slot index not already taken on this station — not just the
+   * next one after however many are docked right now. Those aren't the same
+   * thing once anything's ever been undocked: three windows docked, the
+   * first released, and counting live occupants alone hands the next window
+   * the same index the third one already holds, so both land on the exact
+   * same point on the globe.
+   */
+  private freeDockSlot(stationId: string): { lat: number; lon: number; index: number } {
+    const used = new Set(
+      [...this.panels.values()]
+        .filter((p) => p.dockStationId === stationId)
+        .map((p) => p.dockSlotIndex)
+    );
+    let index = 0;
+    while (used.has(index)) index++;
     const GOLDEN = 2.399963; // golden angle, radians — spreads slots without overlap
-    const lat = 0.9 - (count % 5) * 0.42;
-    return { lat: Math.max(-1.1, Math.min(1.1, lat)), lon: count * GOLDEN };
+    // Slot 0 is the common case — the very first window anyone docks. Kept
+    // low enough that its title bar lands on-screen from the standard
+    // arrival angle instead of past the top edge; verified live that 0.9
+    // rad put it off-screen while this stays clear.
+    const lat = 0.48 - (index % 5) * 0.34;
+    return { lat: Math.max(-1.1, Math.min(1.1, lat)), lon: index * GOLDEN, index };
   }
 
   dockSurface(surfaceId: string, stationId: string | null): void {
@@ -1624,6 +1660,7 @@ export class ThreeCompositor implements Compositor {
       p.dockStationId = stationId;
       p.dockLat = slot.lat;
       p.dockLon = slot.lon;
+      p.dockSlotIndex = slot.index;
       p.el.classList.add("docked");
     } else if (p.dockStationId) {
       this.worldOf(p, p.anchor);
@@ -2587,7 +2624,16 @@ export class ThreeCompositor implements Compositor {
         return;
       }
 
+      // Neither of these does anything unless the panel is actually merged,
+      // orbiting or docked — whichever applies (they're mutually exclusive)
+      // releases it and syncs `anchor` to where it visually was, the same
+      // "picked up from here" reasoning the snap tear-off above already
+      // uses. Without this, dragging a docked window's title bar used to be
+      // a dead gesture: nothing here ever cleared `dockStationId`, so
+      // `worldOf` kept overriding `anchor` with the dock position no matter
+      // where the drag moved it.
       this.freeFromBody(p);
+      this.dockSurface(id, null);
       dist = p.anchor.distanceTo(this.camera.position);
       grabX = e.clientX - p.sx;
       grabY = e.clientY - p.sy;
@@ -2766,6 +2812,11 @@ export class ThreeCompositor implements Compositor {
       } else {
         const body = this.bodies.get(target.id);
         if (body?.kind === "singularity") this.consume(id);
+        // A station's merge offset is fixed at ~192 units regardless of the
+        // body — smaller than even a rock station's own 240 radius, so a
+        // dropped window would render inside the mesh, permanently hidden.
+        // Orbiting is the shape that actually scales to the body it lands on.
+        else if (body?.station) this.orbitSurface(id, target.id);
         else this.attachSurface(id, target.id);
       }
     };
