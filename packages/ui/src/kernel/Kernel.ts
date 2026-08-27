@@ -1177,7 +1177,13 @@ export class Kernel {
     // it via a crash mid-restore; the index alignment below depends on
     // every entry still occupying its original position.
     const isStationKind = (k: unknown): k is StationKind =>
-      k === "rock" || k === "giant" || k === "ring";
+      k === "rock" ||
+      k === "giant" ||
+      k === "ring" ||
+      k === "beacon" ||
+      k === "garden" ||
+      k === "forge" ||
+      k === "relay";
     const isFiniteVec3 = (p: unknown): p is [number, number, number] =>
       Array.isArray(p) && p.length === 3 && p.every((n) => typeof n === "number" && Number.isFinite(n));
     const stationIds = stations.map((s) => {

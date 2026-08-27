@@ -11,6 +11,10 @@ const STATION_KINDS: { kind: StationKind; glyph: string; title: string }[] = [
   { kind: "rock", glyph: "◉", title: "found a rocky outpost" },
   { kind: "giant", glyph: "◕", title: "found a gas giant" },
   { kind: "ring", glyph: "⦸", title: "found a ring waystation" },
+  { kind: "beacon", glyph: "✦", title: "found a beacon — a sweeping pharos light" },
+  { kind: "garden", glyph: "❀", title: "found a garden — a breathing biosphere dome" },
+  { kind: "forge", glyph: "✷", title: "found a forge — a molten foundry throwing embers" },
+  { kind: "relay", glyph: "≋", title: "found a relay — a dish array pinging the dark" },
 ];
 
 /**

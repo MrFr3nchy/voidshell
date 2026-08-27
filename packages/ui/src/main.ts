@@ -242,6 +242,12 @@ async function runShell(gl: HTMLElement, hud: HTMLElement, session: Session): Pr
 
   await kernel.boot({ gl, overlay, hud });
 
+  // Dev-only handle so a browser test (and a curious console) can reach the
+  // live kernel and compositor without any production surface exposing them.
+  if (import.meta.env.DEV) {
+    (window as unknown as { voidshell?: unknown }).voidshell = { kernel, compositor };
+  }
+
   // First-run only: leave something in the home directory so it isn't a void
   // inside the void. Guarded on existence so it never clobbers real edits.
   if (!kernel.fs.exists("/home/void/welcome.md")) {

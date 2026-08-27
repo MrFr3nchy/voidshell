@@ -2594,11 +2594,13 @@ body.vs-dropping #void::after {
 
 .sb-station-found {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 0 4px 10px;
 }
 .sb-station-kind {
-  flex: 1;
+  flex: 1 1 40px;
+  min-width: 40px;
   appearance: none;
   border: 1px solid var(--edge);
   background: var(--glass);

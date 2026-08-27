@@ -1428,6 +1428,289 @@ export class ThreeCompositor implements Compositor {
       return g;
     }
 
+    if (kind === "beacon") {
+      // A pharos: a squat lit foot, a glass shaft, and a lamp that throws a
+      // single hard beam sweeping the dark — the one station you can pick out
+      // by the light it drags across everything else.
+      g.add(this.shadedSphere(120, { a: 0x3b4a63, b: 0x8fa4c8, accent: 0xdfeeff }, lightDir));
+
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(26, 44, 300, 16, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0xbfe8ff,
+          transparent: true,
+          opacity: 0.22,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      shaft.position.y = 150;
+      g.add(shaft);
+
+      const lampY = 300;
+      const lampGlow = glowSphere(64, 0xd8f2ff, 0.5);
+      lampGlow.position.y = lampY;
+      g.add(lampGlow);
+      const lampCore = new THREE.Mesh(
+        new THREE.SphereGeometry(24, 20, 20),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      lampCore.position.y = lampY;
+      g.add(lampCore);
+
+      // The beam is an open cone laid on its side, apex at the lamp, wide end
+      // flung outward. A pivot group at the lamp carries the sweep so the
+      // cone geometry itself never has to move.
+      const beamPivot = new THREE.Group();
+      beamPivot.position.y = lampY;
+      const beamLen = 620;
+      const beam = new THREE.Mesh(
+        new THREE.ConeGeometry(120, beamLen, 28, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0x9fd8ff,
+          transparent: true,
+          opacity: 0.14,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      beam.rotation.z = -Math.PI / 2;
+      beam.position.x = beamLen / 2;
+      beamPivot.add(beam);
+      g.add(beamPivot);
+
+      g.userData.animate = (t: number) => {
+        beamPivot.rotation.y = t * 0.9;
+        const pulse = Math.sin(t * 3) * 0.5 + 0.5;
+        (lampGlow.material as THREE.MeshBasicMaterial).opacity = 0.32 + 0.3 * pulse;
+        (beam.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.09 * pulse;
+      };
+      return g;
+    }
+
+    if (kind === "garden") {
+      // A biosphere: a green-lit core under a faceted glass dome that breathes
+      // — a slow in-out swell — with a haze of motes turning inside it.
+      g.add(this.shadedSphere(150, { a: 0x2f6b45, b: 0x8fd6a2, accent: 0xe4ffd0 }, lightDir));
+
+      const innerGlow = glowSphere(160, 0x7cffb0, 0.18);
+      g.add(innerGlow);
+
+      const dome = new THREE.Group();
+      const shell = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(240, 1),
+        new THREE.MeshBasicMaterial({
+          color: 0xaef0c8,
+          transparent: true,
+          opacity: 0.06,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      dome.add(shell);
+      const struts = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(242, 1),
+        new THREE.MeshBasicMaterial({
+          color: 0x9fe8c0,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.4,
+        })
+      );
+      dome.add(struts);
+      g.add(dome);
+
+      const moteCount = 44;
+      const mp = new Float32Array(moteCount * 3);
+      for (let i = 0; i < moteCount; i++) {
+        const v = new THREE.Vector3(
+          Math.random() - 0.5,
+          Math.random() - 0.5,
+          Math.random() - 0.5
+        )
+          .normalize()
+          .multiplyScalar(80 + Math.random() * 150);
+        mp.set([v.x, v.y, v.z], i * 3);
+      }
+      const motes = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute(
+          "position",
+          new THREE.BufferAttribute(mp, 3)
+        ),
+        new THREE.PointsMaterial({
+          color: 0xe0ffe6,
+          size: 7,
+          transparent: true,
+          opacity: 0.8,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      g.add(motes);
+
+      g.userData.animate = (t: number) => {
+        const breath = Math.sin(t * 0.8);
+        dome.scale.setScalar(1 + 0.03 * breath);
+        (innerGlow.material as THREE.MeshBasicMaterial).opacity = 0.14 + 0.08 * (breath * 0.5 + 0.5);
+        motes.rotation.y = t * 0.16;
+        motes.rotation.x = Math.sin(t * 0.11) * 0.35;
+        (motes.material as THREE.PointsMaterial).opacity = 0.55 + 0.4 * (Math.sin(t * 2) * 0.5 + 0.5);
+      };
+      return g;
+    }
+
+    if (kind === "forge") {
+      // A foundry: a molten core caged in dark broken plates, spitting embers
+      // that climb and peel away. Reads as "working" from any distance.
+      g.add(
+        this.shadedSphere(150, { a: 0x2e1f18, b: 0x5a3520, accent: 0xff6a1f }, lightDir)
+      );
+      const coreGlow = glowSphere(180, 0xff5a1e, 0.35);
+      g.add(coreGlow);
+
+      const plates = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        // A curved-ish shell fragment held off the core, not a slab through it
+        // — the gaps between the three are where the glow leaks out.
+        const dir = new THREE.Vector3(
+          Math.random() - 0.5,
+          Math.random() - 0.5,
+          Math.random() - 0.5
+        ).normalize();
+        const plate = new THREE.Mesh(
+          new THREE.BoxGeometry(300, 22, 300),
+          new THREE.MeshBasicMaterial({ color: 0x1b1611 })
+        );
+        plate.position.copy(dir.clone().multiplyScalar(120));
+        plate.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        plates.add(plate);
+        const vent = glowSphere(30, 0xffb060, 0.6);
+        vent.position.copy(dir.clone().multiplyScalar(150));
+        g.add(vent);
+      }
+      g.add(plates);
+
+      const emberCount = 70;
+      const ep = new Float32Array(emberCount * 3);
+      const evel = new Float32Array(emberCount);
+      const seedEmber = (i: number) => {
+        const a = Math.random() * Math.PI * 2;
+        const r = 40 + Math.random() * 90;
+        ep.set([Math.cos(a) * r, -120 - Math.random() * 80, Math.sin(a) * r], i * 3);
+        evel[i] = 60 + Math.random() * 120;
+      };
+      for (let i = 0; i < emberCount; i++) seedEmber(i);
+      const embers = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute(
+          "position",
+          new THREE.BufferAttribute(ep, 3)
+        ),
+        new THREE.PointsMaterial({
+          color: 0xff8a3a,
+          size: 6,
+          transparent: true,
+          opacity: 0.9,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      g.add(embers);
+
+      g.userData.animate = (t: number, dt: number) => {
+        const throb = Math.pow(Math.sin(t * 1.7) * 0.5 + 0.5, 2);
+        (coreGlow.material as THREE.MeshBasicMaterial).opacity = 0.26 + 0.24 * throb;
+        plates.rotation.y = t * 0.05;
+        plates.rotation.x = Math.sin(t * 0.07) * 0.2;
+        const pos = embers.geometry.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i < emberCount; i++) {
+          let y = pos.getY(i) + evel[i] * dt;
+          let x = pos.getX(i) * (1 + dt * 0.4);
+          let z = pos.getZ(i) * (1 + dt * 0.4);
+          if (y > 300) {
+            seedEmber(i);
+            x = ep[i * 3];
+            y = ep[i * 3 + 1];
+            z = ep[i * 3 + 2];
+          }
+          pos.setXYZ(i, x, y, z);
+        }
+        pos.needsUpdate = true;
+      };
+      return g;
+    }
+
+    if (kind === "relay") {
+      // A dish array: a small hub, three faces aimed outward, thin scan rings
+      // turning against each other, and a ping that rolls off the hull and
+      // fades — a station that is visibly listening.
+      g.add(this.shadedSphere(88, { a: 0x3a4760, b: 0x8fa4c8, accent: 0xdfeeff }, lightDir));
+      g.add(glowSphere(120, 0x9fd8ff, 0.14));
+
+      const dishes = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        const dir = new THREE.Vector3(Math.cos(a), 0.35 * (i - 1), Math.sin(a)).normalize();
+        const arm = new THREE.Mesh(
+          new THREE.CylinderGeometry(5, 5, 150, 8),
+          new THREE.MeshBasicMaterial({ color: 0x8fa4c8 })
+        );
+        arm.position.copy(dir.clone().multiplyScalar(110));
+        arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        dishes.add(arm);
+        const dish = new THREE.Mesh(
+          new THREE.ConeGeometry(72, 56, 24, 1, true),
+          new THREE.MeshBasicMaterial({
+            color: 0xcfe0ff,
+            transparent: true,
+            opacity: 0.85,
+            side: THREE.DoubleSide,
+          })
+        );
+        dish.position.copy(dir.clone().multiplyScalar(200));
+        dish.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+        dishes.add(dish);
+      }
+      g.add(dishes);
+
+      const ringA = new THREE.Mesh(
+        new THREE.TorusGeometry(155, 2.5, 8, 72),
+        new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.5 })
+      );
+      const ringB = new THREE.Mesh(
+        new THREE.TorusGeometry(205, 2, 8, 72),
+        new THREE.MeshBasicMaterial({ color: 0xbcd6ff, transparent: true, opacity: 0.35 })
+      );
+      ringB.rotation.x = Math.PI * 0.4;
+      g.add(ringA, ringB);
+
+      const ping = new THREE.Mesh(
+        new THREE.RingGeometry(22, 30, 64),
+        new THREE.MeshBasicMaterial({
+          color: 0x9fd8ff,
+          transparent: true,
+          opacity: 0.5,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      ping.rotation.x = Math.PI / 2;
+      g.add(ping);
+
+      g.userData.animate = (t: number) => {
+        ringA.rotation.z = t * 0.6;
+        ringA.rotation.y = t * 0.2;
+        ringB.rotation.x = Math.PI * 0.4 - t * 0.4;
+        dishes.rotation.y = Math.sin(t * 0.2) * 0.4;
+        const p = (t % 2.6) / 2.6;
+        ping.scale.setScalar(1 + p * 11);
+        (ping.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - p);
+      };
+      return g;
+    }
+
     const rock = kind === "rock";
     const palette = rock
       ? { a: 0x5d7ba3, b: 0x9fc09a, accent: 0xdfe9c4 }
@@ -1450,7 +1733,22 @@ export class ThreeCompositor implements Compositor {
   }
 
   private stationRadius(kind: StationKind): number {
-    return kind === "giant" ? 320 : kind === "ring" ? 260 : 240;
+    switch (kind) {
+      case "giant":
+        return 320;
+      case "ring":
+        return 260;
+      case "beacon":
+        return 230;
+      case "garden":
+        return 250;
+      case "forge":
+        return 250;
+      case "relay":
+        return 250;
+      default:
+        return 240;
+    }
   }
 
   spawnStation(kind: StationKind, name?: string, at?: Vec3): string {
@@ -2268,6 +2566,13 @@ export class ThreeCompositor implements Compositor {
           // of the light from the moment it was founded.
           (mat.uniforms.uLightDir.value as THREE.Vector3).copy(ORIGIN).sub(b.position).normalize();
         }
+        // A station kind can hang its own per-frame motion — a sweeping beam,
+        // a breathing dome, rising embers — off the group it built. Runs after
+        // the shared spin so child-local turns compose on top of it.
+        const animate = b.group.userData.animate as
+          | ((t: number, dt: number) => void)
+          | undefined;
+        if (animate) animate(this.uniforms.uTime.value, dt);
       }
 
       if (this.travelState) {
@@ -3312,6 +3617,10 @@ const STATION_NAMES: Record<StationKind, string> = {
   rock: "outpost",
   giant: "refinery",
   ring: "waystation",
+  beacon: "pharos",
+  garden: "biosphere",
+  forge: "foundry",
+  relay: "array",
 };
 
 /**
@@ -3323,6 +3632,10 @@ const STATION_GLYPH: Record<StationKind, string> = {
   rock: "◉",
   giant: "◕",
   ring: "⦸",
+  beacon: "✦",
+  garden: "❀",
+  forge: "✷",
+  relay: "≋",
 };
 
 function defaultStationName(kind: StationKind, n: number): string {
@@ -3339,7 +3652,11 @@ function defaultStationName(kind: StationKind, n: number): string {
  */
 function disposeGroup(g: THREE.Object3D): void {
   g.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) {
+    if (
+      obj instanceof THREE.Mesh ||
+      obj instanceof THREE.Points ||
+      obj instanceof THREE.Line
+    ) {
       obj.geometry.dispose();
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const m of mats) m.dispose();
