@@ -237,6 +237,16 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
         });
       }
 
+      const moon = document.createElement("button");
+      moon.className = "sb-station-kill";
+      moon.type = "button";
+      moon.textContent = "☽+";
+      moon.title = "add a moon in orbit";
+      moon.addEventListener("click", () => {
+        ctx.spawnBody("moon", s.id);
+        ctx.notify(`a moon joins ${s.name}`, "good");
+      });
+
       const kill = document.createElement("button");
       kill.className = "sb-station-kill";
       kill.type = "button";
@@ -247,7 +257,7 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
         paintStations();
       });
 
-      row.append(name, travel, kill);
+      row.append(name, moon, travel, kill);
       stationsPopover.appendChild(row);
     }
   };

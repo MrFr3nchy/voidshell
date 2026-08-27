@@ -309,7 +309,8 @@ export function restrict(ctx: KernelContext, opts: RestrictOptions): KernelConte
     /* ---------------- the world ---------------- */
 
     patchWorld: (patch) => need("world", "change the world", () => ctx.patchWorld(patch)),
-    spawnBody: (kind) => need("world", "spawn a body", () => ctx.spawnBody(kind)),
+    spawnBody: (kind, orbitCenter) =>
+      need("world", "spawn a body", () => ctx.spawnBody(kind, orbitCenter)),
     destroyBody: (id) => need("world", "destroy a body", () => ctx.destroyBody(id)),
     attachSurface: (sid, bid) =>
       need("world", "attach a window to a body", () => ctx.attachSurface(sid, bid)),

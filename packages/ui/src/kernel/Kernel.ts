@@ -463,7 +463,8 @@ export class Kernel {
       lookAtGroup: (id) => this.compositor.lookAtGroup?.(id),
       resetView: () => this.compositor.resetView?.(),
       patchWorld: (patch) => this.compositor.applyWorldPatch?.(patch),
-      spawnBody: (kind: BodyKind) => this.compositor.spawnBody?.(kind) ?? "",
+      spawnBody: (kind: BodyKind, orbitCenter?: string) =>
+        this.compositor.spawnBody?.(kind, orbitCenter) ?? "",
       destroyBody: (id) => this.compositor.destroyBody?.(id),
       attachSurface: (sid, bid) => this.compositor.attachSurface?.(sid, bid),
       listBodies: () => this.compositor.listBodies?.() ?? [],

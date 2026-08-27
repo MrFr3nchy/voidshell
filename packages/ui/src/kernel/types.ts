@@ -144,8 +144,11 @@ export interface Compositor {
   resetView?(): void;
   /** The world can be mutated by modules (fog, sky, gravity...). Free-form. */
   applyWorldPatch?(patch: Record<string, unknown>): void;
-  /** Spawn a celestial body. Returns its id. */
-  spawnBody?(kind: BodyKind): string;
+  /**
+   * Spawn a celestial body. Returns its id. `orbitCenter` makes it a moon
+   * of another body (a station, typically) instead of the origin.
+   */
+  spawnBody?(kind: BodyKind, orbitCenter?: string): string;
   /** Remove a celestial body and release anything riding it. */
   destroyBody?(id: string): void;
   /** Anchor a surface onto a body so it rides along, or pass null to release it. */
@@ -494,8 +497,12 @@ export interface KernelContext {
   resetView(): void;
   /** Ask the active compositor to mutate the world. */
   patchWorld(patch: Record<string, unknown>): void;
-  /** Spawn a celestial body; returns its id (empty string if unsupported). */
-  spawnBody(kind: BodyKind): string;
+  /**
+   * Spawn a celestial body; returns its id (empty string if unsupported).
+   * `orbitCenter` makes it a moon of another body — a station, typically —
+   * instead of the origin.
+   */
+  spawnBody(kind: BodyKind, orbitCenter?: string): string;
   destroyBody(id: string): void;
   /** Merge a window onto a body so it rides along, or null to release it. */
   attachSurface(surfaceId: string, bodyId: string | null): void;

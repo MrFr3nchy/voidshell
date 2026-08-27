@@ -127,7 +127,16 @@ interface BodyEntry {
   kind: BodyKind | StationKind;
   group: THREE.Group;
   position: THREE.Vector3;
+  /**
+   * Distance from the origin (decorative bodies) or from `orbitCenter`
+   * (moons) — the *orbit's* radius, not the body's own size. A station's
+   * happens to equal its visual size only because a station never orbits
+   * anything, so nothing else ever reads this field for it.
+   */
   radius: number;
+  /** How big the body actually renders — what a moon or docked window needs
+   *  to clear its silhouette by, distinct from `radius` above. */
+  visualRadius: number;
   elevation: number;
   phase: number;
   speed: number;
@@ -142,6 +151,8 @@ interface BodyEntry {
   fixed: boolean;
   /** A station, as opposed to one of Cosmos's decorative orbiters. */
   station: boolean;
+  /** Orbits this body instead of the origin — a moon founded on a station. */
+  orbitCenter: string | null;
   name: string;
 }
 
@@ -164,6 +175,15 @@ interface GroupEntry {
 }
 
 const PLANET_COLORS = [0x6ec6ff, 0xb98cff, 0x5fd6a8, 0xff9d6e];
+
+/** Mirrors the literal radii in `makeBody` — the one place a decorative
+ *  body's actual on-screen size is knowable without re-measuring the mesh. */
+const BODY_VISUAL_RADIUS: Record<BodyKind, number> = {
+  sun: 72,
+  moon: 48,
+  planet: 60,
+  singularity: 54,
+};
 
 // Depth range a panel can be scrolled through. Chosen to line up with the
 // on-screen scale clamp in projectPanels, so every notch of the wheel produces
@@ -347,6 +367,13 @@ export class ThreeCompositor implements Compositor {
     targetPitch: number;
     onArrive: () => void;
   } | null = null;
+  /**
+   * Set once travel lands. While non-null, drag orbits the camera around
+   * this point at a fixed radius instead of spinning it in place — cleared
+   * only by the next travel, which re-parks it around the new station.
+   */
+  private orbitTarget: THREE.Vector3 | null = null;
+  private orbitRadius = 0;
   /** Eased bank angle, driven by how fast yaw is currently changing. */
   private roll = 0;
   private lastYaw = 0;
@@ -1205,12 +1232,27 @@ export class ThreeCompositor implements Compositor {
   /* Bodies                                                              */
   /* ------------------------------------------------------------------ */
 
-  spawnBody(kind: BodyKind): string {
+  /**
+   * `orbitCenter` is how a station gets a moon: a decorative body, same as
+   * Cosmos spawns, just orbiting a founded place instead of the origin —
+   * closer in and on a tighter ring, scaled to what it's actually orbiting
+   * rather than the wide berth that suits circling the whole void.
+   */
+  spawnBody(kind: BodyKind, orbitCenter?: string): string {
     const id = `body-${++this.bodyCounter}`;
     const group = this.makeBody(kind);
+    const center = orbitCenter ? this.bodies.get(orbitCenter) : null;
 
-    const radius = 950 + Math.random() * 700;
-    const elevation = (Math.random() - 0.5) * 700;
+    // A station is normally viewed from ~2.6x its own radius away (see
+    // travelTo's standoff) — a moon's own orbit has to stay well inside
+    // that or it swings out past the camera's position and off screen for
+    // part of every lap.
+    const radius = center
+      ? center.visualRadius * 1.1 + 70 + Math.random() * 50
+      : 950 + Math.random() * 700;
+    const elevation = center
+      ? (Math.random() - 0.5) * center.visualRadius * 0.4
+      : (Math.random() - 0.5) * 700;
     const phase = Math.random() * Math.PI * 2;
 
     const entry: BodyEntry = {
@@ -1219,9 +1261,10 @@ export class ThreeCompositor implements Compositor {
       group,
       position: new THREE.Vector3(),
       radius,
+      visualRadius: BODY_VISUAL_RADIUS[kind],
       elevation,
       phase,
-      speed: 0.02 + Math.random() * 0.04,
+      speed: center ? 0.12 + Math.random() * 0.15 : 0.02 + Math.random() * 0.04,
       spin: 0.12 + Math.random() * 0.25,
       spinAngle: 0,
       sx: 0,
@@ -1229,6 +1272,7 @@ export class ThreeCompositor implements Compositor {
       onScreen: false,
       fixed: false,
       station: false,
+      orbitCenter: center ? orbitCenter! : null,
       name: "",
     };
     this.positionBody(entry);
@@ -1247,14 +1291,42 @@ export class ThreeCompositor implements Compositor {
 
   /* ---------------- stations: fixed places you can travel to ---------------- */
 
-  private makeStation(kind: StationKind): THREE.Group {
+  /**
+   * `lightDir` favours whichever side the camera was on at founding — see
+   * `spawnStation` — rather than a fixed direction every station shares,
+   * which read as "usually the dark side" more often than chance should
+   * allow once you actually travel back to look at one.
+   */
+  private makeStation(kind: StationKind, lightDir: THREE.Vector3): THREE.Group {
     const g = new THREE.Group();
     const seed = Math.random() * 1000;
 
+    const shadedSphere = (radius: number, palette: { a: number; b: number; accent: number }) => {
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: planetVertex,
+        fragmentShader: kind === "giant" ? giantFragment : rockFragment,
+        uniforms: {
+          uTime: { value: 0 },
+          uSeed: { value: seed },
+          uColorA: { value: new THREE.Color(palette.a) },
+          uColorB: { value: new THREE.Color(palette.b) },
+          uColorAccent: { value: new THREE.Color(palette.accent) },
+          uLightDir: { value: lightDir.clone() },
+        },
+      });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 48), mat);
+      // `userData` carries the material back to the per-frame time update
+      // and to disposal, without a parallel map keyed by body id.
+      body.userData.shaderMat = mat;
+      return body;
+    };
+
     if (kind === "ring") {
-      // A hub with a wide habitat ring, not a shaded sphere — the geometry
-      // alone reads as built rather than natural, no shader needed.
-      g.add(sphere(70, 0x8fa4c8));
+      // A shaded hub rather than a flat-shaded sphere, so it doesn't read as
+      // half-finished next to a rock or a giant — plus a scatter of small
+      // hull modules around the ring, which is what actually sells "built"
+      // over "natural" rather than the ring geometry doing that alone.
+      g.add(shadedSphere(70, { a: 0x4a5568, b: 0x8fa4c8, accent: 0xdfeeff }));
       g.add(glowSphere(96, 0x9fd8ff, 0.16));
       for (const [inner, outer, color, tilt] of [
         [190, 260, 0xbcd6ff, 0.06],
@@ -1272,33 +1344,26 @@ export class ThreeCompositor implements Compositor {
         ring.rotation.x = Math.PI * 0.5 + tilt;
         g.add(ring);
       }
+      const moduleCount = 6;
+      for (let i = 0; i < moduleCount; i++) {
+        const a = (i / moduleCount) * Math.PI * 2;
+        const r = 225;
+        const mod = new THREE.Mesh(
+          new THREE.BoxGeometry(16, 10, 10),
+          new THREE.MeshBasicMaterial({ color: 0xdfeeff })
+        );
+        mod.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+        mod.rotation.y = -a;
+        g.add(mod);
+      }
       return g;
     }
 
     const rock = kind === "rock";
     const palette = rock
-      ? { a: 0x3d5a80, b: 0x8ea888, accent: 0xdfe9c4 }
+      ? { a: 0x5d7ba3, b: 0x9fc09a, accent: 0xdfe9c4 }
       : { a: 0xb9793f, b: 0xe8c27a, accent: 0xffe9b0 };
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: planetVertex,
-      fragmentShader: rock ? rockFragment : giantFragment,
-      uniforms: {
-        uTime: { value: 0 },
-        uSeed: { value: seed },
-        uColorA: { value: new THREE.Color(palette.a) },
-        uColorB: { value: new THREE.Color(palette.b) },
-        uColorAccent: { value: new THREE.Color(palette.accent) },
-        uLightDir: { value: new THREE.Vector3(0.6, 0.45, 0.65).normalize() },
-      },
-    });
-    const body = new THREE.Mesh(
-      new THREE.SphereGeometry(rock ? 240 : 320, 48, 48),
-      mat
-    );
-    // `userData` carries the material back to the per-frame time update and
-    // to disposal, without a parallel map keyed by body id.
-    body.userData.shaderMat = mat;
-    g.add(body);
+    g.add(shadedSphere(rock ? 240 : 320, palette));
     if (!rock) {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(400, 480, 96),
@@ -1321,9 +1386,13 @@ export class ThreeCompositor implements Compositor {
 
   spawnStation(kind: StationKind, name?: string): string {
     const id = `station-${++this.bodyCounter}`;
-    const group = this.makeStation(kind);
-    const dist = 3200 + Math.random() * 900;
+    const dist = 2000 + Math.random() * 500;
     const position = this.forward().multiplyScalar(dist).add(this.camera.position);
+    // Light comes from roughly where the camera is standing right now, so
+    // the side you're looking at when you found it is the side that's lit —
+    // a fixed world direction meant the far side showed up as often as not.
+    const lightDir = this.camera.position.clone().sub(position).normalize();
+    const group = this.makeStation(kind, lightDir);
 
     const entry: BodyEntry = {
       id,
@@ -1331,6 +1400,7 @@ export class ThreeCompositor implements Compositor {
       group,
       position,
       radius: this.stationRadius(kind),
+      visualRadius: this.stationRadius(kind),
       elevation: 0,
       phase: 0,
       speed: 0,
@@ -1341,6 +1411,7 @@ export class ThreeCompositor implements Compositor {
       onScreen: false,
       fixed: true,
       station: true,
+      orbitCenter: null,
       name: name?.trim() || defaultStationName(kind, this.bodyCounter),
     };
     group.position.copy(position);
@@ -1380,6 +1451,7 @@ export class ThreeCompositor implements Compositor {
     disposeGroup(b.group);
     this.bodies.delete(id);
     if (this.atStation === id) this.atStation = null;
+    if (this.orbitTarget && this.orbitTarget.equals(b.position)) this.orbitTarget = null;
   }
 
   currentStation(): string | null {
@@ -1396,9 +1468,9 @@ export class ThreeCompositor implements Compositor {
 
     // Back off along the approach line and lift a little, so arrival reads
     // as pulling into orbit rather than flying straight into the globe.
-    const standoff = b.radius * 5.2;
+    const standoff = b.radius * 2.6;
     const to = b.position.clone().addScaledVector(dir, -standoff);
-    to.y += b.radius * 0.9;
+    to.y += b.radius * 0.55;
 
     // The bearing is fixed once, from where the camera will end up — not
     // re-derived every frame from where it currently is. Chasing a moving
@@ -1423,8 +1495,37 @@ export class ThreeCompositor implements Compositor {
       onArrive: () => {
         this.cfg.warp = prevWarp;
         this.atStation = id;
+        // Parked in orbit around the station rather than merely facing it —
+        // drag now swings the camera around the body at a fixed distance,
+        // the way arriving somewhere should feel, instead of spinning the
+        // camera in place while the station itself stays screen-fixed.
+        this.orbitTarget = b.position.clone();
+        this.orbitRadius = this.camera.position.distanceTo(b.position);
       },
     };
+  }
+
+  /** Found within a station's own on-screen radius — for double-click travel. */
+  private stationAt(sx: number, sy: number): BodyEntry | null {
+    let best: BodyEntry | null = null;
+    let bestD = Infinity;
+    for (const b of this.bodies.values()) {
+      if (!b.station || !b.onScreen) continue;
+      const dx = b.sx - sx;
+      const dy = b.sy - sy;
+      const d = Math.hypot(dx, dy);
+      // The body's own projected radius stands in for its hit box, plus a
+      // fixed pad — a distant station shrinks to a speck otherwise and
+      // becomes unclickable exactly when a shortcut to it matters most.
+      const camPos = this.camera.position;
+      const dist = b.position.distanceTo(camPos);
+      const onScreenR = Math.max(24, (b.radius / Math.max(1, dist)) * 760);
+      if (d <= onScreenR && d < bestD) {
+        best = b;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   private freeDockSlot(stationId: string): { lat: number; lon: number } {
@@ -1472,7 +1573,7 @@ export class ThreeCompositor implements Compositor {
       p.phase = Math.random() * Math.PI * 2;
       // Scaled to the body: a decorative moon's tilt should be a fraction of
       // its own small radius, not the same fixed wobble a station gets.
-      p.offset.set(0, (Math.random() - 0.5) * target.radius * 0.5, 0);
+      p.offset.set(0, (Math.random() - 0.5) * target.visualRadius * 0.5, 0);
       p.el.classList.add("merged");
     } else {
       this.freeFromBody(p);
@@ -1525,10 +1626,13 @@ export class ThreeCompositor implements Compositor {
   }
 
   private positionBody(b: BodyEntry): void {
+    // A moon orbits whatever founded it, not the origin — falls back to the
+    // origin if that body is gone, rather than crashing on a stale id.
+    const center = b.orbitCenter ? this.bodies.get(b.orbitCenter)?.position : null;
     b.position.set(
-      Math.cos(b.phase) * b.radius,
-      b.elevation,
-      Math.sin(b.phase) * b.radius
+      (center?.x ?? 0) + Math.cos(b.phase) * b.radius,
+      (center?.y ?? 0) + b.elevation,
+      (center?.z ?? 0) + Math.sin(b.phase) * b.radius
     );
     b.group.position.copy(b.position);
   }
@@ -1895,6 +1999,16 @@ export class ThreeCompositor implements Compositor {
       this.lastYaw = this.yaw;
       this.camera.rotation.set(this.pitch, this.yaw, this.roll, "YXZ");
 
+      // Parked at a station: the same drag that would otherwise spin the
+      // camera in place instead orbits it around the target at a fixed
+      // radius, always facing in — so the station swings past as you look
+      // around it, rather than sitting screen-fixed while the sky spins.
+      if (this.orbitTarget && !this.travelState) {
+        this.camera.position
+          .copy(this.orbitTarget)
+          .addScaledVector(this.forward(), -this.orbitRadius);
+      }
+
       // The void turns, not the viewer.
       this.nebula.rotation.y += dt * 0.015 * this.cfg.nebulaSpin;
       this.particles.rotation.y += dt * 0.01 * this.cfg.nebulaSpin;
@@ -2028,7 +2142,7 @@ export class ThreeCompositor implements Compositor {
     if (p.dockStationId) {
       const b = this.bodies.get(p.dockStationId);
       if (b) {
-        const local = sphericalOffset(p.dockLat, p.dockLon, b.radius + 46);
+        const local = sphericalOffset(p.dockLat, p.dockLon, b.visualRadius + 46);
         local.applyAxisAngle(UP_AXIS, b.spinAngle);
         return out.copy(b.position).add(local);
       }
@@ -2040,8 +2154,11 @@ export class ThreeCompositor implements Compositor {
           const ang = p.phase + this.uniforms.uTime.value * p.orbitSpeed;
           // Comfortably clear of the body's own silhouette — a moon that
           // orbits inside its planet's radius just reads as glued to it,
-          // since a DOM panel has no real depth occlusion against the mesh.
-          const r = b.radius * 2.2 + 70;
+          // since a DOM panel has no real depth occlusion against the mesh —
+          // but well inside a station's ~2.6x viewing distance (travelTo's
+          // standoff), or the window swings out past the camera itself for
+          // part of every lap instead of staying in view.
+          const r = b.visualRadius * 1.4 + 60;
           return out.set(
             b.position.x + Math.cos(ang) * r,
             b.position.y + p.offset.y,
@@ -2811,6 +2928,11 @@ export class ThreeCompositor implements Compositor {
     };
     el.addEventListener("pointerup", end);
     el.addEventListener("pointercancel", end);
+
+    el.addEventListener("dblclick", (e) => {
+      const hit = this.stationAt(e.clientX, e.clientY);
+      if (hit) this.travelTo(hit.id);
+    });
   }
 
   private spawnClickEcho(x: number, y: number): void {

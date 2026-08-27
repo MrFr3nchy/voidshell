@@ -61,11 +61,21 @@ const HEADER = /* glsl */ `
   uniform vec3 uLightDir;
 `;
 
-/** A terminator and a rim glow, shared by every station kind. */
+/**
+ * A terminator and a rim glow, shared by every station kind.
+ *
+ * There are no THREE.Lights in this scene at all — every body shades itself.
+ * uLightDir is picked per-station at spawn time to favour whichever side the
+ * camera was on when it was founded, but a fixed direction still means the
+ * far side goes dark sometime. The floor here is a deliberate ambient fill
+ * rather than true night — this is a station meant to be looked at, not a
+ * photometrically honest planet, so it stays readable even facing away
+ * from its light.
+ */
 const LIGHTING = /* glsl */ `
   float lit = dot(n, normalize(uLightDir));
-  float wrap = smoothstep(-0.2, 0.35, lit);
-  vec3 col = mix(base * 0.05, base * (0.4 + 0.9 * max(lit, 0.0)), wrap);
+  float wrap = smoothstep(-0.35, 0.5, lit);
+  vec3 col = mix(base * 0.48, base * (0.75 + 0.85 * max(lit, 0.0)), wrap);
 
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
   float fres = pow(1.0 - max(dot(n, viewDir), 0.0), 2.4);
