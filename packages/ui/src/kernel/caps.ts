@@ -315,8 +315,8 @@ export function restrict(ctx: KernelContext, opts: RestrictOptions): KernelConte
     attachSurface: (sid, bid) =>
       need("world", "attach a window to a body", () => ctx.attachSurface(sid, bid)),
     listBodies: () => need("world", "list bodies", () => ctx.listBodies()),
-    spawnStation: (kind, name) =>
-      need("world", "found a station", () => ctx.spawnStation(kind, name)),
+    spawnStation: (kind, name, position) =>
+      need("world", "found a station", () => ctx.spawnStation(kind, name, position)),
     listStations: () => need("world", "list stations", () => ctx.listStations()),
     renameStation: (id, name) =>
       need("world", "rename a station", () => ctx.renameStation(id, name)),

@@ -155,10 +155,21 @@ export interface Compositor {
   attachSurface?(surfaceId: string, bodyId: string | null): void;
   /** Everything currently orbiting out there. */
   listBodies?(): { id: string; kind: BodyKind }[];
-  /** Found a station at a fixed point in the void. Returns its id. */
-  spawnStation?(kind: StationKind, name?: string): string;
+  /**
+   * Found a station at a fixed point in the void. Returns its id. `position`
+   * is for session restore — placing it exactly where it was, rather than
+   * wherever the reloaded camera happens to be looking.
+   */
+  spawnStation?(kind: StationKind, name?: string, position?: Vec3): string;
   /** Every station that's been founded. */
-  listStations?(): { id: string; kind: StationKind; name: string }[];
+  listStations?(): { id: string; kind: StationKind; name: string; position: Vec3 }[];
+  /**
+   * Whether a surface is docked or orbiting a *station* specifically (not a
+   * decorative body) — Kernel-internal, for writing the session down. Not on
+   * `KernelContext`: a module has `dockSurface`/`orbitSurface` to set this,
+   * never a reason to read it back.
+   */
+  surfaceStationLink?(surfaceId: string): { stationId: string; mode: "dock" | "orbit" } | null;
   renameStation?(id: string, name: string): void;
   /** Remove a station and release anything docked or orbiting it. */
   destroyStation?(id: string): void;
@@ -516,9 +527,9 @@ export interface KernelContext {
    * fixed position, so it's a place you can `travelTo` rather than something
    * that drifts past. Returns its id (empty string if unsupported).
    */
-  spawnStation(kind: StationKind, name?: string): string;
+  spawnStation(kind: StationKind, name?: string, position?: Vec3): string;
   /** Every station that's been founded. */
-  listStations(): { id: string; kind: StationKind; name: string }[];
+  listStations(): { id: string; kind: StationKind; name: string; position: Vec3 }[];
   renameStation(id: string, name: string): void;
   /** Remove a station and release anything docked or orbiting it. */
   destroyStation(id: string): void;

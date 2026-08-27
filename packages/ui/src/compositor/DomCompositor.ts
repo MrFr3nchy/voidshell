@@ -872,8 +872,12 @@ export class DomCompositor implements Compositor {
     return "";
   }
 
-  listStations(): { id: string; kind: StationKind; name: string }[] {
+  listStations(): { id: string; kind: StationKind; name: string; position: Vec3 }[] {
     return [];
+  }
+
+  surfaceStationLink(): null {
+    return null;
   }
 
   renameStation(): void {}

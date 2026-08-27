@@ -1414,10 +1414,15 @@ export class ThreeCompositor implements Compositor {
     return kind === "giant" ? 320 : kind === "ring" ? 260 : 240;
   }
 
-  spawnStation(kind: StationKind, name?: string): string {
+  spawnStation(kind: StationKind, name?: string, at?: Vec3): string {
     const id = `station-${++this.bodyCounter}`;
-    const dist = 2000 + Math.random() * 500;
-    const position = this.forward().multiplyScalar(dist).add(this.camera.position);
+    // An explicit position is session restore putting it back exactly where
+    // it was, rather than the camera picking a fresh spot in front of it.
+    const position = at
+      ? new THREE.Vector3(at.x, at.y, at.z)
+      : this.forward()
+          .multiplyScalar(2000 + Math.random() * 500)
+          .add(this.camera.position);
     // The per-frame update loop overwrites this every frame from the
     // origin sun's actual direction — this initial value is never visible
     // for longer than the first frame.
@@ -1451,10 +1456,26 @@ export class ThreeCompositor implements Compositor {
     return id;
   }
 
-  listStations(): { id: string; kind: StationKind; name: string }[] {
+  listStations(): { id: string; kind: StationKind; name: string; position: Vec3 }[] {
     return [...this.bodies.values()]
       .filter((b) => b.station)
-      .map((b) => ({ id: b.id, kind: b.kind as StationKind, name: b.name }));
+      .map((b) => ({
+        id: b.id,
+        kind: b.kind as StationKind,
+        name: b.name,
+        position: { x: b.position.x, y: b.position.y, z: b.position.z },
+      }));
+  }
+
+  /** Kernel-internal, for writing the session down — see the interface doc. */
+  surfaceStationLink(surfaceId: string): { stationId: string; mode: "dock" | "orbit" } | null {
+    const p = this.panels.get(surfaceId);
+    if (!p) return null;
+    if (p.dockStationId) return { stationId: p.dockStationId, mode: "dock" };
+    if (p.orbiting && p.bodyId && this.bodies.get(p.bodyId)?.station) {
+      return { stationId: p.bodyId, mode: "orbit" };
+    }
+    return null;
   }
 
   renameStation(id: string, name: string): void {
