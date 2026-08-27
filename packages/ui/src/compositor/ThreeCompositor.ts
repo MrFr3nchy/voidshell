@@ -423,6 +423,16 @@ export class ThreeCompositor implements Compositor {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(w, h);
     mounts.gl.appendChild(this.renderer.domElement);
+    // Firefox and Safari both treat a <canvas> as a draggable image by
+    // default — grab it mid look-drag (easy to do, the canvas is the whole
+    // background) and the browser hijacks the gesture into a native
+    // drag-the-picture-off-the-page operation instead of our own pointer
+    // handling, which reads as the view freezing until you let go.
+    const canvas = this.renderer.domElement;
+    canvas.setAttribute("draggable", "false");
+    canvas.style.userSelect = "none";
+    canvas.style.setProperty("-webkit-user-drag", "none");
+    canvas.addEventListener("dragstart", (e) => e.preventDefault());
 
     this.nebula = new THREE.Mesh(
       new THREE.SphereGeometry(6000, 48, 48),
@@ -1539,6 +1549,12 @@ export class ThreeCompositor implements Compositor {
   travelHome(): void {
     this.beginTravel(ORIGIN, 900, 260, () => {
       this.atStation = null;
+      // beginTravel always parks arrival in orbit around its target, which
+      // is right for a station — it's a *place* you circle. Home isn't a
+      // station; it's free-look, the same as before any station existed.
+      // Left as an orbit target, dragging here would spin you around the
+      // sun exactly like being parked at a station.
+      this.orbitTarget = null;
     });
   }
 
@@ -2353,6 +2369,20 @@ export class ThreeCompositor implements Compositor {
         this.place(p, p.pinX, p.pinY, 1);
         p.el.style.zIndex = `${Z_PINNED + this.focusBump(p)}`;
         p.el.style.setProperty("--vs-depth-fade", "1");
+        continue;
+      }
+
+      // A window docked to, or orbiting, a station belongs to that station.
+      // Projecting it anyway from anywhere else in the void — home, or a
+      // different station entirely — reads as every window somehow being
+      // wherever you are, which undoes the entire point of a station being
+      // a place. Hidden rather than merely faded: still clickable through
+      // fade otherwise.
+      const ownerStation =
+        p.dockStationId ?? (p.orbiting && p.bodyId && this.bodies.get(p.bodyId)?.station ? p.bodyId : null);
+      if (ownerStation && ownerStation !== this.atStation) {
+        p.onScreen = false;
+        p.el.style.display = "none";
         continue;
       }
 
