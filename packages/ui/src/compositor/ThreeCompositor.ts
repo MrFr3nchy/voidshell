@@ -57,6 +57,22 @@ interface PanelEntry {
   /** Which numbered surface slot this is — so a freed slot (undock) can be
    *  reused instead of `freeDockSlot` handing out one already taken. */
   dockSlotIndex: number;
+  /**
+   * The station this window was opened at, or null for home — home is a
+   * place too, not a wildcard, so this is never treated as "no tie". Set
+   * once at open time, independent of dockStationId/orbiting: most windows
+   * are never explicitly docked or sent into orbit, just opened while
+   * standing somewhere. Ignored once `stationFree` is true.
+   */
+  homeStation: string | null;
+  /**
+   * True once the window has actually been picked up and moved by hand —
+   * the only way a window stops belonging to wherever it was opened and
+   * becomes visible everywhere, the same "picked up from here" release
+   * dock/orbit already use. Needed because `homeStation: null` already
+   * means "belongs to home", so it can't also mean "belongs nowhere".
+   */
+  stationFree: boolean;
   groupId: string | null;
   /** Pinned panels leave the world and stick to the glass of the screen. */
   pinned: boolean;
@@ -716,6 +732,8 @@ export class ThreeCompositor implements Compositor {
       dockLat: 0,
       dockLon: 0,
       dockSlotIndex: 0,
+      homeStation: this.atStation,
+      stationFree: false,
       groupId: null,
       pinned: false,
       pinX: 0,
@@ -1547,15 +1565,31 @@ export class ThreeCompositor implements Compositor {
    * never point back at without a body to travel *to*.
    */
   travelHome(): void {
-    this.beginTravel(ORIGIN, 900, 260, () => {
-      this.atStation = null;
-      // beginTravel always parks arrival in orbit around its target, which
-      // is right for a station — it's a *place* you circle. Home isn't a
-      // station; it's free-look, the same as before any station existed.
-      // Left as an orbit target, dragging here would spin you around the
-      // sun exactly like being parked at a station.
-      this.orbitTarget = null;
-    });
+    // A tiny standoff, not a station-sized one: boot itself starts the
+    // camera almost exactly at the origin (0,0,0.01), inside the sun's own
+    // 72-unit core. Parking hundreds of units back to "look at" the sun
+    // like a destination is what made home read as just another station —
+    // and left the windows that live near the origin looking small and far
+    // off instead of close by, the way they were at boot. Landing inside
+    // the sun instead puts the camera back where those windows already
+    // are; the sun itself needs no special-case hiding for this, since a
+    // sphere with default front-face culling simply stops rendering once
+    // the camera is inside it.
+    this.beginTravel(
+      ORIGIN,
+      6,
+      0,
+      () => {
+        this.atStation = null;
+        // beginTravel always parks arrival in orbit around its target, which
+        // is right for a station — it's a *place* you circle. Home isn't a
+        // station; it's free-look, the same as before any station existed.
+        // Left as an orbit target, dragging here would spin you around the
+        // sun exactly like being parked at a station.
+        this.orbitTarget = null;
+      },
+      { yaw: 0, pitch: 0 }
+    );
   }
 
   /**
@@ -1574,7 +1608,13 @@ export class ThreeCompositor implements Compositor {
     target: THREE.Vector3,
     standoff: number,
     lift: number,
-    onArrive: () => void
+    onArrive: () => void,
+    // Home is the one trip that shouldn't face the thing it arrives at —
+    // arriving "looking at the origin" points wherever you happened to
+    // approach from, which is almost never the direction the windows you
+    // started with were placed in. Passing the boot orientation here instead
+    // returns you to literally the view you started with, not just the spot.
+    facing?: { yaw: number; pitch: number }
   ): void {
     let dir = target.clone().sub(this.camera.position);
     if (dir.lengthSq() < 1) dir = this.forward();
@@ -1585,9 +1625,27 @@ export class ThreeCompositor implements Compositor {
     const to = target.clone().addScaledVector(dir, -standoff);
     to.y += lift;
 
-    const arriveDir = target.clone().sub(to).normalize();
-    const targetYaw = Math.atan2(-arriveDir.x, -arriveDir.z);
-    const targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, arriveDir.y)))));
+    let targetYaw: number;
+    let targetPitch: number;
+    if (facing) {
+      targetYaw = facing.yaw;
+      targetPitch = facing.pitch;
+    } else {
+      const arriveDir = target.clone().sub(to).normalize();
+      targetYaw = Math.atan2(-arriveDir.x, -arriveDir.z);
+      targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, arriveDir.y)))));
+    }
+
+    // atan2 (and the fixed home facing) hand back a yaw in (-pi, pi],
+    // wrapped independently of wherever the camera is currently pointed.
+    // The smoothing step below just eases toward this value with no idea
+    // it's circular, so a target on the far side of the wrap from the
+    // current yaw made it spin the long way around the whole sky before
+    // settling — this is the "screen turns the other way first" bug.
+    // Re-expressed as the equivalent angle nearest the current yaw, the
+    // short way is always the one taken.
+    while (targetYaw - this.yaw > Math.PI) targetYaw -= Math.PI * 2;
+    while (targetYaw - this.yaw < -Math.PI) targetYaw += Math.PI * 2;
 
     // If a trip is already underway, this is a redirect, not a fresh
     // departure — warp was already forced on for the leg in progress, so
@@ -2372,18 +2430,30 @@ export class ThreeCompositor implements Compositor {
         continue;
       }
 
-      // A window docked to, or orbiting, a station belongs to that station.
-      // Projecting it anyway from anywhere else in the void — home, or a
-      // different station entirely — reads as every window somehow being
-      // wherever you are, which undoes the entire point of a station being
-      // a place. Hidden rather than merely faded: still clickable through
-      // fade otherwise.
-      const ownerStation =
-        p.dockStationId ?? (p.orbiting && p.bodyId && this.bodies.get(p.bodyId)?.station ? p.bodyId : null);
-      if (ownerStation && ownerStation !== this.atStation) {
-        p.onScreen = false;
-        p.el.style.display = "none";
-        continue;
+      // A window docked to, or orbiting, a station belongs to that station —
+      // and so does an ordinary window that was simply opened there (or at
+      // home) and never touched since. Projecting it anyway from anywhere
+      // else in the void reads as every window somehow being wherever you
+      // are, which undoes the entire point of a place being a place — home
+      // included: home's own windows sitting there, plainly clickable,
+      // right through a station's mesh, is what made the station itself
+      // read as transparent. Hidden rather than merely faded: still
+      // clickable through fade otherwise. `stationFree` is the one real
+      // exemption — a window actually picked up and moved by hand belongs
+      // nowhere and stays visible everywhere, same as it always has. The
+      // overview is the other: it exists to show you literally everything
+      // you have open so you can pick one, and hiding most of it just
+      // because you're not standing in the right place would defeat that.
+      if (!this.exposed && !p.stationFree) {
+        const ownerStation =
+          p.dockStationId ??
+          (p.orbiting && p.bodyId && this.bodies.get(p.bodyId)?.station ? p.bodyId : null) ??
+          p.homeStation;
+        if (ownerStation !== this.atStation) {
+          p.onScreen = false;
+          p.el.style.display = "none";
+          continue;
+        }
       }
 
       this.worldOf(p, this.tmpWorld);
@@ -2664,6 +2734,11 @@ export class ThreeCompositor implements Compositor {
       // where the drag moved it.
       this.freeFromBody(p);
       this.dockSurface(id, null);
+      // Also clears the *implicit* station tie — a window opened somewhere
+      // (including home) and never formally docked still belonged to that
+      // place until it was actually moved by hand. Once you've grabbed it,
+      // it's yours, visible wherever it now sits.
+      p.stationFree = true;
       dist = p.anchor.distanceTo(this.camera.position);
       grabX = e.clientX - p.sx;
       grabY = e.clientY - p.sy;
