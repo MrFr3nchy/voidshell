@@ -61,6 +61,18 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
   stations.title = "stations — found one, or travel to one you have";
   stations.textContent = "⦸";
 
+  // Travel only ever pointed at a station — nothing pointed back. One click,
+  // no popover: the origin isn't a list of one, it's always just "home".
+  const home = document.createElement("button");
+  home.className = "sb-item sb-home";
+  home.type = "button";
+  home.title = "travel home — back to the sun at the origin";
+  home.textContent = "☉";
+  home.addEventListener("click", () => {
+    ctx.travelHome();
+    ctx.notify("travelling home…", "good");
+  });
+
   const clock = document.createElement("span");
   clock.className = "sb-item sb-clock";
 
@@ -74,7 +86,7 @@ export function createStatusBar(hud: HTMLElement, ctx: KernelContext): StatusBar
   badge.className = "sb-badge";
   bell.append(bellGlyph, badge);
 
-  bar.append(who, procs, up, stations, clock, bell);
+  bar.append(who, procs, up, home, stations, clock, bell);
 
   /* ---------------- the notice history popover ---------------- */
 

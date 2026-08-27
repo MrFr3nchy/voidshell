@@ -474,6 +474,7 @@ export class Kernel {
       renameStation: (id, name) => this.compositor.renameStation?.(id, name),
       destroyStation: (id) => this.compositor.destroyStation?.(id),
       travelTo: (id) => this.compositor.travelTo?.(id),
+      travelHome: () => this.compositor.travelHome?.(),
       dockSurface: (sid, stid) => this.compositor.dockSurface?.(sid, stid),
       orbitSurface: (sid, bid) => this.compositor.orbitSurface?.(sid, bid),
       currentStation: () => this.compositor.currentStation?.() ?? null,

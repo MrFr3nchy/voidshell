@@ -882,6 +882,8 @@ export class DomCompositor implements Compositor {
 
   travelTo(): void {}
 
+  travelHome(): void {}
+
   dockSurface(): void {}
 
   orbitSurface(): void {}

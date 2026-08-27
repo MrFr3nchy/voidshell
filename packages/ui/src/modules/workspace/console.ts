@@ -211,7 +211,7 @@ links        link <id> <id> [...]  groups  unlink <group-id>
 world        spawn <sun|moon|planet|singularity>  bodies  merge <surf> <body>
              sky <0..1.5>  say <text>
 stations     station <rock|giant|ring> [name]  stations  travel <id>
-             dock <surf> <station>  orbit <surf> <body>  release <surf>
+             travelhome  dock <surf> <station>  orbit <surf> <body>  release <surf>
 system       apps  open <id>  set <k> <v>  get <k>  settings [filter]
              lock  reboot  shutdown  history  clear  help
 the system   ls /proc · cat /proc/uptime · cat /etc/autostart · /var/log
@@ -224,7 +224,7 @@ const BUILTINS = [
   "mkdir", "rm", "mv", "find", "df", "grep", "sort", "uniq", "wc", "run",
   "edit", "launch", "apps", "open", "wins", "go", "home", "arrange", "link",
   "groups", "unlink", "spawn", "bodies", "merge", "station", "stations",
-  "travel", "dock", "orbit", "release", "set", "get", "settings",
+  "travel", "travelhome", "dock", "orbit", "release", "set", "get", "settings",
   "say", "sky", "echo", "clear", "history", "app", "jobs", "kill",
   "ps", "uptime", "free", "dmesg", "mount", "env", "export", "unset",
   "whoami", "hostname", "trash", "restore", "lock", "reboot", "shutdown",
@@ -908,6 +908,11 @@ export function createConsole(
           if (!arg) throw new Error("usage: travel <station-id>");
           ctx.travelTo(arg);
           out(`travelling → ${arg}`, "muted");
+          break;
+
+        case "travelhome":
+          ctx.travelHome();
+          out("travelling home", "muted");
           break;
 
         case "dock":

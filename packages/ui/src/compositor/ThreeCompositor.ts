@@ -174,7 +174,14 @@ interface GroupEntry {
   rigid: boolean;
 }
 
-const PLANET_COLORS = [0x6ec6ff, 0xb98cff, 0x5fd6a8, 0xff9d6e];
+const PLANET_PALETTES: { a: number; b: number; accent: number }[] = [
+  { a: 0x6ec6ff, b: 0x3a5f8a, accent: 0xdcefff },
+  { a: 0xb98cff, b: 0x6a4a99, accent: 0xead9ff },
+  { a: 0x5fd6a8, b: 0x2f6b56, accent: 0xd7fff0 },
+  { a: 0xff9d6e, b: 0x9c5030, accent: 0xffe3cf },
+];
+
+const MOON_PALETTE = { a: 0x9aa4b8, b: 0xccd0dc, accent: 0xe8ecf5 };
 
 /** Mirrors the literal radii in `makeBody` — the one place a decorative
  *  body's actual on-screen size is knowable without re-measuring the mesh. */
@@ -191,6 +198,9 @@ const BODY_VISUAL_RADIUS: Record<BodyKind, number> = {
 const MIN_DEPTH = 480;
 const MAX_DEPTH = 2200;
 const REST_DEPTH = 620;
+
+/** Where the permanent sun lives, and what "home" means to travelHome. */
+const ORIGIN = new THREE.Vector3(0, 0, 0);
 
 // Distance fade. Starts past the spawn depth so a freshly summoned panel is
 // always fully opaque, and bottoms out before MAX_DEPTH so a pushed-away panel
@@ -259,6 +269,8 @@ export class ThreeCompositor implements Compositor {
    * sitting back near the origin instead of around the viewer.
    */
   private voidGroup = new THREE.Group();
+  /** The permanent light source at the origin. World-space, unlike voidGroup's contents. */
+  private originSun!: THREE.Group;
   private tethers!: TetherLayer;
   private snapGhost!: HTMLElement;
 
@@ -422,6 +434,13 @@ export class ThreeCompositor implements Compositor {
 
     this.warpField = this.makeWarpField(ThreeCompositor.WARP_COUNT);
     this.voidGroup.add(this.warpField);
+
+    // The one light source everything else reacts to — permanent, never
+    // founded or destroyed, always at the origin. "Home" is where it is,
+    // and every shaded body's lighting is computed relative to it every
+    // frame instead of a direction picked once at spawn.
+    this.originSun = this.makeBody("sun");
+    this.scene.add(this.originSun);
 
     // Tethers live under the panels so a link line never eats a click. The
     // threads are also controls: clicking one hardens or loosens that bond.
@@ -646,9 +665,15 @@ export class ThreeCompositor implements Compositor {
       this.anchorFromScreen(anchor, this.spawnHint.x, this.spawnHint.y, REST_DEPTH);
       this.spawnHint = null;
     } else {
+      // In front of wherever the camera actually is, not the origin — that
+      // distinction didn't exist before travel did, when the camera could
+      // never be anywhere else. Missing `.add(camera.position)` here is
+      // exactly why a window opened at a station used to land back at the
+      // very first vantage instead.
       anchor
         .copy(this.forward())
         .multiplyScalar(560)
+        .add(this.camera.position)
         .add(
           new THREE.Vector3(
             (Math.random() - 0.5) * 160,
@@ -1292,41 +1317,46 @@ export class ThreeCompositor implements Compositor {
   /* ---------------- stations: fixed places you can travel to ---------------- */
 
   /**
-   * `lightDir` favours whichever side the camera was on at founding — see
-   * `spawnStation` — rather than a fixed direction every station shares,
-   * which read as "usually the dark side" more often than chance should
-   * allow once you actually travel back to look at one.
+   * One shaded, terrain-noise sphere, shared by stations, moons and Cosmos's
+   * planets — the same shader everything that isn't glow-only or a hole in
+   * the world uses. `lightDir`'s initial value barely matters: the per-frame
+   * loop overwrites every shaded body's `uLightDir` from the origin sun's
+   * actual direction, every frame, from the moment it exists.
    */
+  private shadedSphere(
+    radius: number,
+    palette: { a: number; b: number; accent: number },
+    lightDir: THREE.Vector3,
+    banded = false
+  ): THREE.Mesh {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: planetVertex,
+      fragmentShader: banded ? giantFragment : rockFragment,
+      uniforms: {
+        uTime: { value: 0 },
+        uSeed: { value: Math.random() * 1000 },
+        uColorA: { value: new THREE.Color(palette.a) },
+        uColorB: { value: new THREE.Color(palette.b) },
+        uColorAccent: { value: new THREE.Color(palette.accent) },
+        uLightDir: { value: lightDir.clone() },
+      },
+    });
+    const body = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 48), mat);
+    // `userData` carries the material back to the per-frame time/light
+    // update and to disposal, without a parallel map keyed by body id.
+    body.userData.shaderMat = mat;
+    return body;
+  }
+
   private makeStation(kind: StationKind, lightDir: THREE.Vector3): THREE.Group {
     const g = new THREE.Group();
-    const seed = Math.random() * 1000;
-
-    const shadedSphere = (radius: number, palette: { a: number; b: number; accent: number }) => {
-      const mat = new THREE.ShaderMaterial({
-        vertexShader: planetVertex,
-        fragmentShader: kind === "giant" ? giantFragment : rockFragment,
-        uniforms: {
-          uTime: { value: 0 },
-          uSeed: { value: seed },
-          uColorA: { value: new THREE.Color(palette.a) },
-          uColorB: { value: new THREE.Color(palette.b) },
-          uColorAccent: { value: new THREE.Color(palette.accent) },
-          uLightDir: { value: lightDir.clone() },
-        },
-      });
-      const body = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 48), mat);
-      // `userData` carries the material back to the per-frame time update
-      // and to disposal, without a parallel map keyed by body id.
-      body.userData.shaderMat = mat;
-      return body;
-    };
 
     if (kind === "ring") {
       // A shaded hub rather than a flat-shaded sphere, so it doesn't read as
       // half-finished next to a rock or a giant — plus a scatter of small
       // hull modules around the ring, which is what actually sells "built"
       // over "natural" rather than the ring geometry doing that alone.
-      g.add(shadedSphere(70, { a: 0x4a5568, b: 0x8fa4c8, accent: 0xdfeeff }));
+      g.add(this.shadedSphere(70, { a: 0x4a5568, b: 0x8fa4c8, accent: 0xdfeeff }, lightDir));
       g.add(glowSphere(96, 0x9fd8ff, 0.16));
       for (const [inner, outer, color, tilt] of [
         [190, 260, 0xbcd6ff, 0.06],
@@ -1363,7 +1393,7 @@ export class ThreeCompositor implements Compositor {
     const palette = rock
       ? { a: 0x5d7ba3, b: 0x9fc09a, accent: 0xdfe9c4 }
       : { a: 0xb9793f, b: 0xe8c27a, accent: 0xffe9b0 };
-    g.add(shadedSphere(rock ? 240 : 320, palette));
+    g.add(this.shadedSphere(rock ? 240 : 320, palette, lightDir, !rock));
     if (!rock) {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(400, 480, 96),
@@ -1388,10 +1418,10 @@ export class ThreeCompositor implements Compositor {
     const id = `station-${++this.bodyCounter}`;
     const dist = 2000 + Math.random() * 500;
     const position = this.forward().multiplyScalar(dist).add(this.camera.position);
-    // Light comes from roughly where the camera is standing right now, so
-    // the side you're looking at when you found it is the side that's lit —
-    // a fixed world direction meant the far side showed up as often as not.
-    const lightDir = this.camera.position.clone().sub(position).normalize();
+    // The per-frame update loop overwrites this every frame from the
+    // origin sun's actual direction — this initial value is never visible
+    // for longer than the first frame.
+    const lightDir = ORIGIN.clone().sub(position).normalize();
     const group = this.makeStation(kind, lightDir);
 
     const entry: BodyEntry = {
@@ -1461,25 +1491,50 @@ export class ThreeCompositor implements Compositor {
   travelTo(id: string): void {
     const b = this.bodies.get(id);
     if (!b?.station) return;
+    this.beginTravel(b.position, b.radius * 2.6, b.radius * 0.55, () => {
+      this.atStation = id;
+    });
+  }
 
-    let dir = b.position.clone().sub(this.camera.position);
+  /**
+   * Home is the origin, where the permanent sun sits — the one place every
+   * station's founding put the camera near, and the one place travel could
+   * never point back at without a body to travel *to*.
+   */
+  travelHome(): void {
+    this.beginTravel(ORIGIN, 900, 260, () => {
+      this.atStation = null;
+    });
+  }
+
+  /**
+   * Shared by every kind of trip: ease the camera to a fixed standoff from
+   * `target`, facing it, warp engaged, arriving parked in orbit around it.
+   *
+   * The bearing is fixed once, from where the camera will end up — not
+   * re-derived every frame from where it currently is. Chasing a moving
+   * target's bearing mid-flight is what made travel read as swinging around
+   * the viewer instead of flying toward the destination: the angle to a
+   * point you're approaching off-axis sweeps hard near closest approach. A
+   * single target, eased by the same smoothing normal look-around uses,
+   * turns once and settles instead of tracking continuously.
+   */
+  private beginTravel(
+    target: THREE.Vector3,
+    standoff: number,
+    lift: number,
+    onArrive: () => void
+  ): void {
+    let dir = target.clone().sub(this.camera.position);
     if (dir.lengthSq() < 1) dir = this.forward();
     dir.normalize();
 
     // Back off along the approach line and lift a little, so arrival reads
     // as pulling into orbit rather than flying straight into the globe.
-    const standoff = b.radius * 2.6;
-    const to = b.position.clone().addScaledVector(dir, -standoff);
-    to.y += b.radius * 0.55;
+    const to = target.clone().addScaledVector(dir, -standoff);
+    to.y += lift;
 
-    // The bearing is fixed once, from where the camera will end up — not
-    // re-derived every frame from where it currently is. Chasing a moving
-    // target's bearing mid-flight is what made travel read as swinging
-    // around the viewer instead of flying toward the station: the angle to
-    // a point you're approaching off-axis sweeps hard near closest approach.
-    // A single target, eased by the same smoothing normal look-around uses,
-    // turns once and settles instead of tracking continuously.
-    const arriveDir = b.position.clone().sub(to).normalize();
+    const arriveDir = target.clone().sub(to).normalize();
     const targetYaw = Math.atan2(-arriveDir.x, -arriveDir.z);
     const targetPitch = Math.max(-1.2, Math.min(1.2, Math.asin(Math.max(-1, Math.min(1, arriveDir.y)))));
 
@@ -1494,13 +1549,13 @@ export class ThreeCompositor implements Compositor {
       targetPitch,
       onArrive: () => {
         this.cfg.warp = prevWarp;
-        this.atStation = id;
-        // Parked in orbit around the station rather than merely facing it —
-        // drag now swings the camera around the body at a fixed distance,
-        // the way arriving somewhere should feel, instead of spinning the
-        // camera in place while the station itself stays screen-fixed.
-        this.orbitTarget = b.position.clone();
-        this.orbitRadius = this.camera.position.distanceTo(b.position);
+        // Parked in orbit around the target rather than merely facing it —
+        // drag now swings the camera around it at a fixed distance, the way
+        // arriving somewhere should feel, instead of spinning the camera in
+        // place while the target itself stays screen-fixed.
+        this.orbitTarget = target.clone();
+        this.orbitRadius = this.camera.position.distanceTo(target);
+        onArrive();
       },
     };
   }
@@ -1582,12 +1637,15 @@ export class ThreeCompositor implements Compositor {
 
   private makeBody(kind: BodyKind): THREE.Group {
     const g = new THREE.Group();
+    // Overwritten by the origin sun's real direction on the very next
+    // frame — this only has to be a unit vector, not a correct one.
+    const lightDir = new THREE.Vector3(0.5, 0.4, 0.6).normalize();
     if (kind === "sun") {
       g.add(sphere(72, 0xffd7a0));
       g.add(glowSphere(120, 0xff9d5c, 0.22));
       g.add(glowSphere(190, 0xffb066, 0.1));
     } else if (kind === "moon") {
-      g.add(sphere(48, 0xccd0dc));
+      g.add(this.shadedSphere(48, MOON_PALETTE, lightDir));
       g.add(glowSphere(58, 0x9fb2ff, 0.08));
     } else if (kind === "singularity") {
       // A hole in the world: pure black core, violent accretion ring. This is
@@ -1608,8 +1666,8 @@ export class ThreeCompositor implements Compositor {
       ring.rotation.x = Math.PI * 0.5;
       g.add(ring);
     } else {
-      const color = PLANET_COLORS[this.bodyCounter % PLANET_COLORS.length];
-      g.add(sphere(60, color));
+      const palette = PLANET_PALETTES[this.bodyCounter % PLANET_PALETTES.length];
+      g.add(this.shadedSphere(60, palette, lightDir));
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(84, 120, 60),
         new THREE.MeshBasicMaterial({
@@ -2068,7 +2126,14 @@ export class ThreeCompositor implements Compositor {
         b.group.rotation.y = b.spinAngle;
         const mat = b.group.children.find((c) => c.userData.shaderMat)?.userData
           .shaderMat as THREE.ShaderMaterial | undefined;
-        if (mat) mat.uniforms.uTime.value = this.uniforms.uTime.value;
+        if (mat) {
+          mat.uniforms.uTime.value = this.uniforms.uTime.value;
+          // Lit from the origin, where the permanent sun lives — recomputed
+          // every frame rather than fixed at spawn, so a body genuinely
+          // reacts to where it actually sits instead of carrying a snapshot
+          // of the light from the moment it was founded.
+          (mat.uniforms.uLightDir.value as THREE.Vector3).copy(ORIGIN).sub(b.position).normalize();
+        }
       }
 
       if (this.travelState) {
@@ -2269,22 +2334,29 @@ export class ThreeCompositor implements Compositor {
       const fade =
         1 - Math.min(this.cfg.fade, Math.max(0, (dist - FADE_START) / FADE_RANGE));
 
-      // A moon swinging around the far side of its body has no real depth
-      // test against the mesh to hide behind — panels are DOM, composited
-      // over the WebGL canvas — so this fades it out as an approximation,
-      // rather than letting it float in front of a planet it should be
-      // behind for half of every orbit.
+      // Panels are DOM, composited over the WebGL canvas, with no real depth
+      // test against a body's mesh — a window sitting behind a planet from
+      // here would otherwise float in front of it, fully visible and fully
+      // clickable, for as long as it stayed there. Screen-space stand-in:
+      // any body nearer than this panel that visually covers this point on
+      // screen occludes it, softened toward the silhouette's edge rather
+      // than a hard cutoff.
       let occl = 1;
-      if (p.orbiting && p.bodyId) {
-        const b = this.bodies.get(p.bodyId);
-        if (b) {
-          const toPanel = this.tmpCam.copy(this.tmpWorld).sub(b.position).normalize();
-          const toCam = this.tmpNdc.copy(camPos).sub(b.position).normalize();
-          const facing = toPanel.dot(toCam);
-          occl = facing > 0 ? 1 : Math.max(0.2, 1 + facing * 1.4);
+      for (const b of this.bodies.values()) {
+        if (!b.onScreen) continue;
+        const bodyDist = b.position.distanceTo(camPos);
+        if (bodyDist >= dist) continue;
+        const onScreenR = Math.max(20, (b.visualRadius / Math.max(1, bodyDist)) * 760);
+        const sd = Math.hypot(b.sx - x, b.sy - y);
+        if (sd < onScreenR) {
+          occl = Math.min(occl, Math.max(0.12, sd / onScreenR));
         }
       }
-      p.el.style.setProperty("--vs-depth-fade", (fade * occl).toFixed(3));
+      const combined = fade * occl;
+      p.el.style.setProperty("--vs-depth-fade", combined.toFixed(3));
+      // A near-invisible window still eating clicks reads as broken, not
+      // merely dim — this is the difference between "faded" and "not there".
+      p.el.style.pointerEvents = combined < 0.22 ? "none" : "";
     }
   }
 

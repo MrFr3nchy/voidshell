@@ -322,6 +322,7 @@ export function restrict(ctx: KernelContext, opts: RestrictOptions): KernelConte
       need("world", "rename a station", () => ctx.renameStation(id, name)),
     destroyStation: (id) => need("world", "destroy a station", () => ctx.destroyStation(id)),
     travelTo: (id) => need("world", "travel to a station", () => ctx.travelTo(id)),
+    travelHome: () => need("world", "travel home", () => ctx.travelHome()),
     dockSurface: (sid, stid) =>
       need("world", "dock a window onto a station", () => ctx.dockSurface(sid, stid)),
     orbitSurface: (sid, bid) =>

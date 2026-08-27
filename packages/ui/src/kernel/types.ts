@@ -164,6 +164,9 @@ export interface Compositor {
   destroyStation?(id: string): void;
   /** Ease the camera to a station, warping for the trip. */
   travelTo?(id: string): void;
+  /** Ease the camera back to the origin, the one place every station's
+   *  founding put it near and travel alone could never point back at. */
+  travelHome?(): void;
   /**
    * Fix a surface onto a station's surface, seen from orbit rather than
    * riding along — pass null to release it.
@@ -521,6 +524,9 @@ export interface KernelContext {
   destroyStation(id: string): void;
   /** Ease the camera to a station over a few seconds, warping for the trip. */
   travelTo(id: string): void;
+  /** Ease the camera back to the origin — the one destination that isn't a
+   *  station, and the one place travel alone could never point back at. */
+  travelHome(): void;
   /**
    * Fix a window onto a station's surface — seen from orbit, not riding
    * along with it — or pass null to release it.

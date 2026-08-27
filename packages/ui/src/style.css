@@ -2431,7 +2431,8 @@ body.vs-dropping #void::after {
 }
 .sb-procs,
 .sb-bell,
-.sb-stations {
+.sb-stations,
+.sb-home {
   border: 0;
   background: none;
   padding: 0;
@@ -2446,10 +2447,12 @@ body.vs-dropping #void::after {
 .sb-bell:hover,
 .sb-bell.open,
 .sb-stations:hover,
-.sb-stations.open {
+.sb-stations.open,
+.sb-home:hover {
   color: var(--cyan);
 }
-.sb-stations {
+.sb-stations,
+.sb-home {
   font-size: 12px;
 }
 .sb-bell {

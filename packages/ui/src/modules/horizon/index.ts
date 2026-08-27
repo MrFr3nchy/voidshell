@@ -472,6 +472,17 @@ export const horizon: VoidModule = {
       });
     }
 
+    ctx.defineCommand({
+      id: "horizon.travelHome",
+      label: "travel home",
+      hint: "back to the sun at the origin, from wherever you've travelled to",
+      glyph: "\u2609",
+      run: (c) => {
+        c.travelHome();
+        c.notify("travelling home\u2026", "good");
+      },
+    });
+
     ctx.defineSetting({
       key: "world.arrange",
       label: "arrange every window",
