@@ -30,7 +30,14 @@ export type BodyKind = "sun" | "moon" | "planet" | "singularity";
  * of orbiting the origin, so it's something you can travel *to* rather than
  * just something that drifts past.
  */
-export type StationKind = "rock" | "giant" | "ring";
+export type StationKind =
+  | "rock"
+  | "giant"
+  | "ring"
+  | "beacon"
+  | "garden"
+  | "forge"
+  | "relay";
 
 /** How `arrange` should re-lay-out every open window at once. */
 export type ArrangeMode = "arc" | "ring" | "wall" | "scatter";

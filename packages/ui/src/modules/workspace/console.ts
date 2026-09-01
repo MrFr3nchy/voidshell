@@ -210,7 +210,8 @@ windows      wins  go <surface-id>  home  arrange <arc|wall|ring|scatter>
 links        link <id> <id> [...]  groups  unlink <group-id>
 world        spawn <sun|moon|planet|singularity>  bodies  merge <surf> <body>
              sky <0..1.5>  say <text>
-stations     station <rock|giant|ring> [name]  stations  travel <id|name>
+stations     station <rock|giant|ring|beacon|garden|forge|relay> [name]
+             stations  travel <id|name>
              travelhome  dock <surf> <station>  orbit <surf> <body>  release <surf>
 system       apps  open <id>  set <k> <v>  get <k>  settings [filter]
              lock  reboot  shutdown  history  clear  help
@@ -888,7 +889,15 @@ export function createConsole(
           break;
 
         case "station": {
-          const kinds: StationKind[] = ["rock", "giant", "ring"];
+          const kinds: StationKind[] = [
+            "rock",
+            "giant",
+            "ring",
+            "beacon",
+            "garden",
+            "forge",
+            "relay",
+          ];
           const kind = kinds.find((k) => k === rest[0]);
           if (!kind) throw new Error(`usage: station <${kinds.join("|")}> [name]`);
           out(`→ ${ctx.spawnStation(kind, rest.slice(1).join(" "))}`, "muted");

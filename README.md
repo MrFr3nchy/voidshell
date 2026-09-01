@@ -55,6 +55,7 @@ two commands to run it.
 | **⌘/ctrl + shift + T** | reopen the last closed window |
 | **⌘/ctrl + `** | step through the open windows |
 | **⌘/ctrl + shift + E** | see every window at once |
+| **⌘/ctrl + shift + M** | show / hide the spatial radar |
 | **home** | recentre the view |
 | drag a title bar | move a window through space |
 | double-click a title bar | fill the screen / put it back |
@@ -70,6 +71,13 @@ two commands to run it.
 Nothing is ever lost. Any window that drifts out of view puts a chevron on the
 edge of the screen pointing at it — click it and the void rotates until you're
 facing it again. Constellations report as one destination instead of four.
+
+The **spatial radar** in the bottom-left corner is the wider view: a heading-up
+minimap of the whole void — every window, constellation, station and body, your
+field-of-view wedge, and a stalk on anything sitting above or below your plane.
+Click a blip to fly or turn to it, the same as its compass chevron. It rides the
+same setting registry as everything else (`world.radar`), so **⌘/ctrl + shift +
+M** or the World tab in settings turns it off.
 
 ## Guest sessions
 
